@@ -30553,12 +30553,12 @@ function lex(line, grammar, dateOrder = "dmy") {
     }
     const last = tokens[tokens.length - 1];
     const prev = tokens[tokens.length - 2];
-    const inDivisionChain = prev?.kind === "op" && prev.op === "/";
-    if (last.plainInt && !inDivisionChain && line[i2] === "/") {
+    const prevBindsTighter = prev?.kind === "op" && (prev.op === "/" || prev.op === "^");
+    if (last.plainInt && !prevBindsTighter && line[i2] === "/") {
       const fm = /^\/(\d+)/.exec(line.slice(i2));
       if (fm) {
         const after = line[i2 + fm[0].length];
-        const blocked = after !== void 0 && (isDigit(after) || after === "/" || after === "." || after === "," || after === "'");
+        const blocked = after !== void 0 && (isDigit(after) || after === "/" || after === "." || after === "," || after === "'" || after === "^" || after === "\u02C6" || after === "!" || after === "*" && line[i2 + fm[0].length + 1] === "*");
         if (!blocked) {
           i2 += fm[0].length;
           tokens.pop();
@@ -32082,13 +32082,16 @@ server.registerTool(
       ...args.financial && { financial: { currency: args.currency ?? "CHF" } },
       ...snapshot !== null && { rates: createSnapshotProvider(snapshot) }
     };
+    const t0 = performance.now();
     const sheet = createEngine(context).evaluateSheet(args.text);
+    const engineMs = performance.now() - t0;
     const hasError = sheet.lines.some((l2) => l2.diagnostics.some((d2) => d2.severity === "error"));
     const provenance = [
       `clock: ${now} (${context.timezone})`,
       `fx: ${ratesNote}`,
       `holidays: ${context.region}`,
-      ...args.financial ? [`financial mode: ${args.currency ?? "CHF"}`] : []
+      ...args.financial ? [`financial mode: ${args.currency ?? "CHF"}`] : [],
+      `engine: ${engineMs.toFixed(1)} ms`
     ].join(" | ");
     return {
       content: [
@@ -32106,7 +32109,7 @@ server.registerTool(
           diagnostics: l2.diagnostics,
           references: l2.references
         })),
-        provenance: { now, timezone: context.timezone, rates: ratesNote, region: context.region }
+        provenance: { now, timezone: context.timezone, rates: ratesNote, region: context.region, engineMs }
       },
       isError: false,
       _meta: { hasLineErrors: hasError }

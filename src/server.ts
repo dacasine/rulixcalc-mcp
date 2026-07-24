@@ -128,7 +128,9 @@ server.registerTool(
       ...(snapshot !== null && { rates: createSnapshotProvider(snapshot) }),
     };
 
+    const t0 = performance.now();
     const sheet = createEngine(context).evaluateSheet(args.text);
+    const engineMs = performance.now() - t0;
     const hasError = sheet.lines.some((l) => l.diagnostics.some((d) => d.severity === 'error'));
 
     const provenance = [
@@ -136,6 +138,7 @@ server.registerTool(
       `fx: ${ratesNote}`,
       `holidays: ${context.region}`,
       ...(args.financial ? [`financial mode: ${args.currency ?? 'CHF'}`] : []),
+      `engine: ${engineMs.toFixed(1)} ms`,
     ].join(' | ');
 
     return {
@@ -152,7 +155,7 @@ server.registerTool(
           diagnostics: l.diagnostics,
           references: l.references,
         })),
-        provenance: { now, timezone: context.timezone, rates: ratesNote, region: context.region },
+        provenance: { now, timezone: context.timezone, rates: ratesNote, region: context.region, engineMs },
       },
       isError: false,
       _meta: { hasLineErrors: hasError },
