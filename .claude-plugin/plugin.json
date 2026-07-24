@@ -1,0 +1,13 @@
+{
+  "name": "rulixcalc",
+  "version": "0.1.0",
+  "description": "Exact, typed, auditable calculation for Claude: decimal-exact arithmetic, contextual percentages, units, official CHF/EUR rates (OFDF/ECB, dated), true calendar math in FR/EN/DE, Swiss workdays with cantonal holidays, finance phrases. Typed errors — never a confident wrong number.",
+  "author": {
+    "name": "Damien Hottelier"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/dacasine/rulixcalc-mcp",
+  "repository": "https://github.com/dacasine/rulixcalc-mcp",
+  "keywords": ["calculator", "mcp", "decimal", "currency", "dates", "switzerland"],
+  "mcpServers": [".mcp.json"]
+}

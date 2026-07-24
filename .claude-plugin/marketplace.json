@@ -1,0 +1,15 @@
+{
+  "name": "rulixcalc",
+  "owner": {
+    "name": "Damien Hottelier"
+  },
+  "plugins": [
+    {
+      "name": "rulixcalc",
+      "source": "./",
+      "description": "Exact, typed, auditable calculation: decimal-exact arithmetic, percentages, units, official FX rates (OFDF/ECB), Swiss workdays & holidays, finance phrases — typed errors, never a confident wrong number.",
+      "version": "0.1.0",
+      "author": { "name": "Damien Hottelier" }
+    }
+  ]
+}
