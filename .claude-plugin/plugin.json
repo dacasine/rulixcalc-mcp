@@ -8,6 +8,5 @@
   "license": "MIT",
   "homepage": "https://github.com/dacasine/rulixcalc-mcp",
   "repository": "https://github.com/dacasine/rulixcalc-mcp",
-  "keywords": ["calculator", "mcp", "decimal", "currency", "dates", "switzerland"],
-  "mcpServers": [".mcp.json"]
+  "keywords": ["calculator", "mcp", "decimal", "currency", "dates", "switzerland"]
 }
