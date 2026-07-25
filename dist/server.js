@@ -30622,6 +30622,10 @@ function lex(line, grammar, dateOrder = "dmy") {
       i2 += 2;
       continue;
     }
+    if (c2 === "/" && line[i2 + 1] === "/") {
+      tokens.push({ kind: "comment", text: line.slice(i2), start, end: line.length });
+      break;
+    }
     const op = OP_ALIASES[c2];
     if (op) {
       tokens.push({ kind: "op", text: c2, start, end: i2 + 1, op });
@@ -31574,7 +31578,29 @@ function extractReferences(tokens, rts, formatting) {
   }
   return refs;
 }
+function stripParentheticalComments(tokens, env) {
+  const out = [...tokens];
+  for (let i2 = 0; i2 < out.length; i2++) {
+    if (out[i2].kind !== "lparen") continue;
+    let depth = 1;
+    let j2 = i2 + 1;
+    while (j2 < out.length && depth > 0) {
+      if (out[j2].kind === "lparen") depth++;
+      else if (out[j2].kind === "rparen") depth--;
+      j2++;
+    }
+    if (depth !== 0) continue;
+    const inner = out.slice(i2 + 1, j2 - 1);
+    if (!hasComputableContent(inner, env)) {
+      out.splice(i2, j2 - i2);
+      i2--;
+    }
+  }
+  return out;
+}
 function prepareTokens(tokens, env, lexicon, violations) {
+  tokens = tokens.filter((t2) => t2.kind !== "comment");
+  tokens = stripParentheticalComments(tokens, env);
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens[colonIdx - 1].kind === "word") tokens = tokens.slice(colonIdx + 1);
   const out = [];
