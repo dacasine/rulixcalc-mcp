@@ -29545,6 +29545,39 @@ function quantityToMinutes(q2) {
   if (!q2.def || !dimEquals(q2.dim, { time: 1 })) return null;
   return convertExact(q2.v, q2.def, lookupUnit("min"));
 }
+var CAL_RATE_DEFS = {
+  day: { id: "cal.day", symbol: "jour", dim: { caldays: 1 }, factor: { n: 1n, d: 1n } },
+  week: { id: "cal.week", symbol: "semaine", dim: { caldays: 1 }, factor: { n: 7n, d: 1n } },
+  month: { id: "cal.month", symbol: "mois", dim: { calmonths: 1 }, factor: { n: 1n, d: 1n } },
+  year: { id: "cal.year", symbol: "an", dim: { calmonths: 1 }, factor: { n: 12n, d: 1n } }
+};
+function spanInCalUnit(c2, den) {
+  const months = (c2.months ?? 0) + 12 * (c2.years ?? 0);
+  const days = (c2.days ?? 0) + 7 * (c2.weeks ?? 0);
+  const isMonthGroup = den.dim["calmonths"] === 1;
+  if (months !== 0 && days !== 0) {
+    return err("anchor-required", "months/years and days/weeks only combine around a date");
+  }
+  const total = isMonthGroup ? months : days;
+  if (isMonthGroup && days !== 0 || !isMonthGroup && months !== 0) {
+    return err("anchor-required", `this timespan does not convert to ${den.symbol} without a date`);
+  }
+  return new DecC(total).times(new DecC(1)).div(new DecC(den.factor.n.toString()).div(den.factor.d.toString()));
+}
+function calUnitForSpan(c2) {
+  const months = (c2.months ?? 0) + 12 * (c2.years ?? 0);
+  const days = (c2.days ?? 0) + 7 * (c2.weeks ?? 0);
+  if (months !== 0 && days !== 0) {
+    return err("anchor-required", "months/years and days/weeks only combine around a date");
+  }
+  if (months !== 0) {
+    return c2.years && !c2.months ? CAL_RATE_DEFS.year : CAL_RATE_DEFS.month;
+  }
+  if (days !== 0) {
+    return c2.weeks && !c2.days ? CAL_RATE_DEFS.week : CAL_RATE_DEFS.day;
+  }
+  return err("division-by-zero");
+}
 var addSpans = (a2, b2, sign2) => {
   const out = {};
   for (const key of ["years", "months", "weeks", "days"]) {
@@ -29739,7 +29772,7 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "e") return e;
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair", "cannot attach a rate unit here");
       const num = lookupUnit(ast.num);
-      const den = lookupUnit(ast.den);
+      const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.den);
       if (num.affine || den.affine || den.currency || den.factorDec) {
         return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate unit`);
       }
@@ -29917,6 +29950,25 @@ function evalAst(ast, env, ctx = {}) {
     case "convertSpan": {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
+      if (e.t === "q" && e.rate && (e.rate.den.dim["calmonths"] === 1 || e.rate.den.dim["caldays"] === 1)) {
+        const target = CAL_RATE_DEFS[ast.unit];
+        const den = e.rate.den;
+        if (!dimEquals(target.dim, den.dim)) {
+          return err("anchor-required", `converting a rate from ${den.symbol} to ${target.symbol} needs a date anchor`);
+        }
+        const ratio = new DecC(target.factor.n.toString()).div(target.factor.d.toString()).div(new DecC(den.factor.n.toString()).div(den.factor.d.toString()));
+        const num = e.rate.num;
+        const dim = dimAdd(num.dim, target.dim, -1);
+        const def = {
+          id: `${num.id}/${target.id}`,
+          symbol: `${num.symbol}/${target.symbol}`,
+          dim,
+          ...num.factor && target.factor && {
+            factor: { n: num.factor.n * target.factor.d, d: num.factor.d * target.factor.n }
+          }
+        };
+        return { t: "q", v: e.v.times(ratio), dim, symbol: def.symbol, def, rate: { num, den: target } };
+      }
       if (e.t !== "ts") return err("unsupported-pair", "only a timespan converts to calendar units");
       if (ast.unit !== "day") {
         return err("not-understood", "only conversion to days is supported for timespans yet");
@@ -30054,6 +30106,39 @@ function evalAst(ast, env, ctx = {}) {
         }
         if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && ast.op === "*") {
           return { ...r3, v: r3.v.times(toDec(l2)) };
+        }
+        {
+          const isErr = (x2) => "t" in x2;
+          const rateSide = l2.t === "q" ? l2 : r3;
+          const otherSide = l2.t === "q" ? r3 : l2;
+          if (otherSide.t === "ts" && ast.op === "*" && rateSide.rate) {
+            const den = rateSide.rate.den;
+            if (den.dim["calmonths"] === 1 || den.dim["caldays"] === 1) {
+              const count = spanInCalUnit(otherSide.c, den);
+              if (isErr(count)) return count;
+              const num = rateSide.rate.num;
+              return { t: "q", v: rateSide.v.times(count), dim: num.dim, symbol: num.symbol, def: num };
+            }
+          }
+          if (l2.t === "q" && r3.t === "ts" && ast.op === "/") {
+            if (l2.rate) return err("unsupported-pair", "this rate already has a denominator");
+            if (!l2.def) return err("unsupported-pair", "compound units cannot form calendar rates");
+            const den = calUnitForSpan(r3.c);
+            if ("t" in den) return den;
+            const count = spanInCalUnit(r3.c, den);
+            if (isErr(count)) return count;
+            if (count.isZero()) return err("division-by-zero");
+            const dim = dimAdd(l2.dim, den.dim, -1);
+            const def = {
+              id: `${l2.def.id}/${den.id}`,
+              symbol: `${l2.def.symbol}/${den.symbol}`,
+              dim,
+              ...l2.def.factor && den.factor && {
+                factor: { n: l2.def.factor.n * den.factor.d, d: l2.def.factor.d * den.factor.n }
+              }
+            };
+            return { t: "q", v: l2.v.div(count), dim, symbol: def.symbol, def, rate: { num: l2.def, den } };
+          }
         }
         return err("unsupported-pair", "this combination of quantity operands is undefined");
       }
@@ -30220,7 +30305,8 @@ function formatRT(rt2, prefs) {
   if (rt2.t === "p") return `${canonDec(rt2.v)}%`;
   if (rt2.t === "ds") return `${rt2.pd.day}.${rt2.pd.month}.${rt2.pd.year}`;
   if (rt2.t === "q") {
-    const qPrefs = prefs?.decimalPlaces !== void 0 || !rt2.def?.currency ? prefs : { ...prefs, decimalPlaces: 2 };
+    const isMoney = rt2.def?.currency !== void 0 || rt2.rate?.num.currency !== void 0;
+    const qPrefs = prefs?.decimalPlaces !== void 0 || !isMoney ? prefs : { ...prefs, decimalPlaces: 2 };
     const inner = formatRT({ t: "d", v: rt2.v }, qPrefs);
     return inner === null ? null : `${inner} ${rt2.symbol}`;
   }
@@ -30985,6 +31071,23 @@ function parse3(tokens) {
     }
     return 0;
   };
+  const tryRateSuffix = (unitNode) => {
+    const slash = tokens[pos];
+    const denTok = tokens[pos + 1];
+    const after = tokens[pos + 2];
+    if (slash?.kind !== "op" || slash.op !== "/" || denTok?.kind !== "word") return unitNode;
+    const denSpan = TIMESPAN_UNITS[denTok.text.toLowerCase()];
+    if (!isUnitWord(denTok.text) && denSpan === void 0) return unitNode;
+    if (after?.kind === "number" || after?.kind === "lparen") return unitNode;
+    pos += 2;
+    return {
+      k: "unitCompound",
+      e: unitNode.e,
+      num: unitNode.word,
+      den: denTok.text,
+      ...denSpan !== void 0 && !isUnitWord(denTok.text) && { denSpan }
+    };
+  };
   const nud = () => {
     const t2 = tokens[pos++];
     if (!t2) throw new ParseError("syntax", "unexpected end of expression");
@@ -31118,7 +31221,7 @@ function parse3(tokens) {
         }
         if (isCurrencyWord(t2.text) && tokens[pos]?.kind === "number") {
           const amount = tokens[pos++];
-          return { k: "unit", e: { k: "num", dec: amount.dec }, word: t2.text };
+          return tryRateSuffix({ k: "unit", e: { k: "num", dec: amount.dec }, word: t2.text });
         }
         const wf = WORD_FRACTIONS[lower];
         if (wf) {
@@ -31185,15 +31288,7 @@ function parse3(tokens) {
           continue;
         }
         if (isUnitWord(t2.text)) {
-          const slash = tokens[pos];
-          const denTok = tokens[pos + 1];
-          const after = tokens[pos + 2];
-          if (slash?.kind === "op" && slash.op === "/" && denTok?.kind === "word" && isUnitWord(denTok.text) && after?.kind !== "number" && after?.kind !== "lparen") {
-            pos += 2;
-            left = { k: "unitCompound", e: left, num: t2.text, den: denTok.text };
-            continue;
-          }
-          left = { k: "unit", e: left, word: t2.text };
+          left = tryRateSuffix({ k: "unit", e: left, word: t2.text });
           continue;
         }
         if (AMPM_WORDS.has(t2.text.toLowerCase()) && left.k === "num") {
