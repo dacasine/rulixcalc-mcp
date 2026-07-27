@@ -29371,7 +29371,7 @@ function parsePowerWord(word) {
   if (!base || base.affine) return void 0;
   if (isDigit2 && !(Object.keys(base.dim).length === 1 && base.dim["length"] === 1)) return void 0;
   const n2 = isDigit2 ? Number(m2[2]) : parseSupInt(m2[2]);
-  if (!Number.isFinite(n2) || n2 === 0 || n2 === 1 || Math.abs(n2) > 99) return void 0;
+  if (!Number.isFinite(n2) || n2 === 0 || n2 === 1 || Math.abs(n2) > 999) return void 0;
   return { base, n: n2 };
 }
 function lookupPowerUnit(word) {
@@ -29540,17 +29540,15 @@ function decToRat(v2) {
   return rnorm({ n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) });
 }
 var ratToDec = (x2) => new DecC(x2.n.toString()).div(x2.d.toString());
-var ratIsExactDec = (x2) => {
-  let d2 = rnorm(x2).d;
-  while (d2 % 2n === 0n) d2 /= 2n;
-  while (d2 % 5n === 0n) d2 /= 5n;
-  return d2 === 1n;
-};
 var qx = (q2) => q2.vx ?? decToRat(q2.v);
 var qv = (x2) => {
   const norm = rnorm(x2);
-  return { v: ratToDec(norm), vx: ratIsExactDec(norm) ? void 0 : norm };
+  const v2 = ratToDec(norm);
+  const back = decToRat(v2);
+  const exact = back.n === norm.n && back.d === norm.d;
+  return { v: v2, vx: exact ? void 0 : norm };
 };
+var ratIsExactDec = (x2) => qv(x2).vx === void 0;
 var ratOfFactor = (f2) => ({ n: f2.n, d: f2.d });
 var gcd = (a2, b2) => {
   a2 = a2 < 0n ? -a2 : a2;
@@ -29570,24 +29568,58 @@ var makeFrac = (n2, d2, origin) => {
   if (d2 === 1n) return { t: "d", v: new DecC(n2.toString()) };
   return { t: "f", n: n2, d: d2, origin };
 };
-var decToFrac = (v2) => {
-  const s2 = v2.toFixed();
-  const neg = s2.startsWith("-");
-  const body = neg ? s2.slice(1) : s2;
-  const [int2, frac = ""] = body.split(".");
-  const n2 = BigInt(int2 + frac);
-  return { n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) };
-};
 var toDec = (rt2) => rt2.t === "f" ? new DecC(rt2.n.toString()).div(rt2.d.toString()) : rt2.v;
 var HUNDRED = new DecC(100);
 var MAX_POW_EXPONENT = 1e6;
-var dec = (v2) => ({ t: "d", v: v2 });
+var isRepresentable = (v2) => v2.isFinite() && Math.abs(v2.e) <= 9999;
+var dec = (v2) => isRepresentable(v2) ? { t: "d", v: v2 } : err("inexact", "result exceeds the representable range (10^\xB19999)");
 function factorial(n2) {
   if (!n2.isInteger() || n2.isNegative()) return err("inexact", "factorial needs a whole number \u2265 0");
   if (n2.gt(500)) return err("inexact", "factorial argument too large");
   let acc = 1n;
   for (let k2 = 2n; k2 <= BigInt(n2.toNumber()); k2++) acc *= k2;
-  return dec(new DecC(acc.toString()));
+  return { t: "d", ...qv({ n: acc, d: 1n }) };
+}
+var numRat = (rt2) => rt2.t === "f" ? rnorm({ n: rt2.n, d: rt2.d }) : rt2.vx ?? decToRat(rt2.v);
+var rCmp = (a2, b2) => {
+  const lhs = a2.n * b2.d;
+  const rhs = b2.n * a2.d;
+  return lhs < rhs ? -1 : lhs > rhs ? 1 : 0;
+};
+var rFloor = (x2) => {
+  const q2 = x2.n / x2.d;
+  return x2.n < 0n && q2 * x2.d !== x2.n ? q2 - 1n : q2;
+};
+function applyExactFunction(fn, rts) {
+  const asF = (x3) => rts.some((r3) => r3.t === "f") ? makeFrac(x3.n, x3.d, "derived") : { t: "d", ...qv(x3) };
+  const x2 = numRat(rts[0]);
+  switch (fn) {
+    case "abs":
+      return asF(x2.n < 0n ? { n: -x2.n, d: x2.d } : x2);
+    case "min":
+      return asF(rts.map(numRat).reduce((a2, b2) => rCmp(b2, a2) < 0 ? b2 : a2));
+    case "max":
+      return asF(rts.map(numRat).reduce((a2, b2) => rCmp(b2, a2) > 0 ? b2 : a2));
+    case "floor":
+      return { t: "d", v: new DecC(rFloor(x2).toString()) };
+    case "ceil":
+    case "ceiling":
+      return { t: "d", v: new DecC((-rFloor({ n: -x2.n, d: x2.d })).toString()) };
+    case "trunc":
+      return { t: "d", v: new DecC((x2.n / x2.d).toString()) };
+    case "round": {
+      const dpRt = rts[1];
+      if (dpRt !== void 0 && (dpRt.t !== "d" || !dpRt.v.isInteger() || dpRt.v.isNegative())) return null;
+      const dp = dpRt === void 0 ? 0n : BigInt(dpRt.v.toFixed());
+      if (dp > 100n) return null;
+      const scale = 10n ** dp;
+      const scaled = { n: x2.n * scale, d: x2.d };
+      const twice = { n: 2n * scaled.n + scaled.d, d: 2n * scaled.d };
+      return { t: "d", ...qv({ n: rFloor(twice), d: scale }) };
+    }
+    default:
+      return null;
+  }
 }
 function applyFunction(fn, args) {
   const x2 = args[0];
@@ -29602,6 +29634,7 @@ function applyFunction(fn, args) {
       case "log": {
         const base = args[1] ?? new DecC(10);
         if (x2.lte(0) || base.lte(0)) return err("inexact", "log needs positive arguments");
+        if (base.eq(1)) return err("inexact", "log base 1 is undefined");
         return dec(DecC.log(x2, base));
       }
       case "log10":
@@ -29666,10 +29699,16 @@ function referencePlainDate(ctx) {
   if (!ctx.now) {
     return err("anchor-required", "date keywords need an injected clock (context.now)");
   }
+  const zone = ctx.timezone ?? "UTC";
   try {
-    if (ctx.timezone) {
-      return Pt.Instant.from(ctx.now).toZonedDateTimeISO(ctx.timezone).toPlainDate();
-    }
+    return Pt.Instant.from(ctx.now).toZonedDateTimeISO(zone).toPlainDate();
+  } catch {
+  }
+  try {
+    return Pt.PlainDateTime.from(ctx.now).toPlainDate();
+  } catch {
+  }
+  try {
     return Pt.PlainDate.from(ctx.now);
   } catch {
     return err("not-understood", `invalid context clock \u201C${ctx.now}\u201D`);
@@ -29680,17 +29719,24 @@ function addWorkdays(ds, n2, sign2, ctx) {
   if (!provider) {
     return err("holidays-unavailable", "workday arithmetic needs a HolidayProvider (context.holidays)");
   }
-  const horizon = Math.ceil(n2 * 2) + 30;
-  const from = sign2 === 1 ? ds.pd : ds.pd.subtract({ days: horizon });
-  const to = sign2 === 1 ? ds.pd.add({ days: horizon }) : ds.pd;
-  const holidaySet = new Set(
+  let horizon = Math.ceil(n2 * 2) + 30;
+  let from = sign2 === 1 ? ds.pd : ds.pd.subtract({ days: horizon });
+  let to = sign2 === 1 ? ds.pd.add({ days: horizon }) : ds.pd;
+  let holidaySet = new Set(
     provider.holidays(from.toString(), to.toString(), ctx.region ?? "CH").map((h2) => h2.date)
   );
   let d2 = ds.pd;
   let remaining = n2;
   let guard = 0;
-  while (remaining > 0 && guard++ < horizon + 10) {
+  const HARD_CAP = Math.max(n2 * 400, 4e4);
+  while (remaining > 0 && guard++ < HARD_CAP) {
     d2 = d2.add({ days: sign2 });
+    if (sign2 === 1 ? Pt.PlainDate.compare(d2, to) >= 0 : Pt.PlainDate.compare(d2, from) <= 0) {
+      horizon += Math.max(horizon, 60);
+      from = sign2 === 1 ? from : ds.pd.subtract({ days: horizon });
+      to = sign2 === 1 ? ds.pd.add({ days: horizon }) : to;
+      holidaySet = new Set(provider.holidays(from.toString(), to.toString(), ctx.region ?? "CH").map((h2) => h2.date));
+    }
     if (d2.dayOfWeek <= 5 && !holidaySet.has(d2.toString())) remaining--;
   }
   if (remaining > 0) return err("inexact", "workday walk exceeded its horizon");
@@ -29714,10 +29760,15 @@ var CAL_RATE_DEFS = {
   month: { id: "cal.month", symbol: "mois", dim: { calmonths: 1 }, factor: { n: 1n, d: 1n } },
   year: { id: "cal.year", symbol: "an", dim: { calmonths: 1 }, factor: { n: 12n, d: 1n } }
 };
-function spanInCalUnit(c2, den) {
+function spanInCalUnit(c2, den, ctx) {
   const months = (c2.months ?? 0) + 12 * (c2.years ?? 0);
   const days = (c2.days ?? 0) + 7 * (c2.weeks ?? 0);
   const isMonthGroup = den.dim["calmonths"] === 1;
+  if (ctx?.monthToDays === "30") {
+    const totalDays = months * 30 + days;
+    const denDays = new DecC(den.factor.n.toString()).div(den.factor.d.toString()).times(isMonthGroup ? 30 : 1);
+    return new DecC(totalDays).div(denDays);
+  }
   if (months !== 0 && days !== 0) {
     return err("anchor-required", "months/years and days/weeks only combine around a date");
   }
@@ -29749,6 +29800,21 @@ var addSpans = (a2, b2, sign2) => {
   }
   return out;
 };
+function fxRat(provider, from, to, ctx) {
+  const direct = provider.rate(from, to);
+  if (direct) {
+    ctx.fxTrace?.push({ from, to, rate: direct.rate, asOf: direct.asOf, source: direct.source });
+    return decToRat(new DecC(direct.rate));
+  }
+  const inverse = provider.rate(to, from);
+  if (inverse) {
+    const rr = decToRat(new DecC(inverse.rate));
+    if (rr.n === 0n) return err("rates-unavailable");
+    ctx.fxTrace?.push({ from: to, to: from, rate: inverse.rate, asOf: inverse.asOf, source: inverse.source });
+    return rDiv({ n: 1n, d: 1n }, rr);
+  }
+  return err("rates-unavailable", `no rate for ${from} \u2192 ${to}`);
+}
 var mkQ = (x2, def) => ({
   t: "q",
   ...qv(x2),
@@ -29780,15 +29846,9 @@ function convertQuantity(rt2, to, ctx) {
     if (!provider) {
       return err("rates-unavailable", `no rate provider for ${from.currency} \u2192 ${to.currency}`);
     }
-    const direct = provider.rate(from.currency, to.currency);
-    if (direct) return mkQ(rMul(qx(rt2), decToRat(new DecC(direct.rate))), to);
-    const inverse = provider.rate(to.currency, from.currency);
-    if (inverse) {
-      const r3 = decToRat(new DecC(inverse.rate));
-      if (r3.n === 0n) return err("rates-unavailable");
-      return mkQ(rDiv(qx(rt2), r3), to);
-    }
-    return err("rates-unavailable", `no rate for ${from.currency} \u2192 ${to.currency}`);
+    const fx = fxRat(provider, from.currency, to.currency, ctx);
+    if ("t" in fx) return fx;
+    return mkQ(rMul(qx(rt2), fx), to);
   }
   const convertible = (u2) => u2.factor !== void 0 || u2.factorDec !== void 0 || u2.affine !== void 0;
   if (!convertible(from) || !convertible(to)) {
@@ -29800,6 +29860,16 @@ function convertQuantity(rt2, to, ctx) {
   }
   return mkQ(x2, to);
 }
+var calDim = (d2) => {
+  if (d2["calmonths"] === void 0) return d2;
+  const out = { ...d2 };
+  const sum2 = (out["caldays"] ?? 0) + out["calmonths"];
+  delete out["calmonths"];
+  if (sum2 === 0) delete out["caldays"];
+  else out["caldays"] = sum2;
+  return out;
+};
+var dimsCompatible = (a2, b2, ctx) => dimEquals(a2, b2) || ctx.monthToDays === "30" && dimEquals(calDim(a2), calDim(b2));
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
   const lc = compsOf(l2);
@@ -29809,8 +29879,11 @@ function alignForAdd(l2, r3, ctx) {
       let rat = { n: 1n, d: 1n };
       let dec2 = null;
       for (const c2 of comps) {
-        if (isPureLinear(c2.def)) rat = rMul(rat, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
-        else if (c2.def.factorDec) {
+        if (isPureLinear(c2.def)) {
+          rat = rMul(rat, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
+          const calM = c2.def.dim["calmonths"];
+          if (ctx.monthToDays === "30" && calM) rat = rMul(rat, rPowInt({ n: 30n, d: 1n }, calM * c2.exp));
+        } else if (c2.def.factorDec) {
           const f2 = new DecC(c2.def.factorDec).pow(c2.exp);
           dec2 = dec2 === null ? f2 : dec2.times(f2);
         } else return null;
@@ -29835,26 +29908,25 @@ function alignForAdd(l2, r3, ctx) {
     };
     for (const lcomp of lc) {
       const lDim = contrib(lcomp);
-      const idx = remaining.findIndex((m3) => dimEquals(contrib(m3), lDim));
+      const idx = remaining.findIndex((m3) => dimsCompatible(contrib(m3), lDim, ctx));
       if (idx < 0) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
       const m2 = remaining.splice(idx, 1)[0];
       if (m2.def.id === lcomp.def.id && m2.exp === lcomp.exp) continue;
       if (isPureLinear(m2.def) && isPureLinear(lcomp.def)) {
-        ratio = rMul(ratio, rDiv(rPowInt(ratOfFactor(m2.def.factor), m2.exp), rPowInt(ratOfFactor(lcomp.def.factor), lcomp.exp)));
+        const f30 = (c2) => {
+          let f2 = rPowInt(ratOfFactor(c2.def.factor), c2.exp);
+          const calM = c2.def.dim["calmonths"];
+          if (ctx.monthToDays === "30" && calM) f2 = rMul(f2, rPowInt({ n: 30n, d: 1n }, calM * c2.exp));
+          return f2;
+        };
+        ratio = rMul(ratio, rDiv(f30(m2), f30(lcomp)));
         continue;
       }
-      if (m2.def.currency && lcomp.def.currency && lcomp.exp === m2.exp && Math.abs(lcomp.exp) === 1) {
+      if (m2.def.currency && lcomp.def.currency && lcomp.exp === m2.exp) {
         const provider = ctx.rates;
         if (!provider) return err("rates-unavailable", `no rate provider for ${m2.def.currency} \u2192 ${lcomp.def.currency}`);
-        const direct = provider.rate(m2.def.currency, lcomp.def.currency);
-        const inverse = direct ? void 0 : provider.rate(lcomp.def.currency, m2.def.currency);
-        let fx;
-        if (direct) fx = decToRat(new DecC(direct.rate));
-        else if (inverse) {
-          const rr = decToRat(new DecC(inverse.rate));
-          if (rr.n === 0n) return err("rates-unavailable");
-          fx = rDiv({ n: 1n, d: 1n }, rr);
-        } else return err("rates-unavailable", `no rate for ${m2.def.currency} \u2192 ${lcomp.def.currency}`);
+        const fx = fxRat(provider, m2.def.currency, lcomp.def.currency, ctx);
+        if ("t" in fx) return fx;
         ratio = rMul(ratio, rPowInt(fx, lcomp.exp));
         continue;
       }
@@ -29954,20 +30026,23 @@ function combineQuantities(l2, r3, op, ctx) {
     comps = comps.filter((c2) => !chosen.has(c2));
   }
   const curComps = comps.filter((c2) => c2.def.currency);
-  if (curComps.length === 2 && dimIsEmpty(dimOfComps(curComps)) && curComps.some((c2) => c2.exp === 1) && curComps.some((c2) => c2.exp === -1)) {
-    const from = curComps.find((c2) => c2.exp === 1).def.currency;
-    const to = curComps.find((c2) => c2.exp === -1).def.currency;
+  if (new Set(curComps.map((c2) => c2.def.currency)).size > 1) {
+    const anchor = curComps[0];
     const provider = ctx.rates;
-    if (!provider) return err("rates-unavailable", `no rate provider for ${from} \u2192 ${to}`);
-    const direct = provider.rate(from, to);
-    const inverse = direct ? void 0 : provider.rate(to, from);
-    if (direct) x2 = rMul(x2, decToRat(new DecC(direct.rate)));
-    else if (inverse) {
-      const rr = decToRat(new DecC(inverse.rate));
-      if (rr.n === 0n) return err("rates-unavailable");
-      x2 = rDiv(x2, rr);
-    } else return err("rates-unavailable", `no rate for ${from} \u2192 ${to}`);
-    comps = comps.filter((c2) => !c2.def.currency);
+    if (!provider) return err("rates-unavailable", `no rate provider for ${curComps[1].def.currency} \u2192 ${anchor.def.currency}`);
+    for (const c2 of curComps.slice(1)) {
+      if (c2.def.currency === anchor.def.currency) {
+        anchor.exp += c2.exp;
+        c2.exp = 0;
+        continue;
+      }
+      const fx = fxRat(provider, c2.def.currency, anchor.def.currency, ctx);
+      if ("t" in fx) return fx;
+      x2 = rMul(x2, rPowInt(fx, c2.exp));
+      anchor.exp += c2.exp;
+      c2.exp = 0;
+    }
+    comps = comps.filter((c2) => c2.exp !== 0);
   }
   const dim = dimOfComps(comps);
   if (dimIsEmpty(dim)) {
@@ -29992,14 +30067,9 @@ function combineQuantities(l2, r3, op, ctx) {
       if (fxFrom === null || fxTo === null) return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       const provider = ctx.rates;
       if (!provider) return err("rates-unavailable", `no rate provider for ${fxFrom} \u2192 ${fxTo}`);
-      const direct = provider.rate(fxFrom, fxTo);
-      const inverse = direct ? void 0 : provider.rate(fxTo, fxFrom);
-      if (direct) x2 = rMul(x2, decToRat(new DecC(direct.rate)));
-      else if (inverse) {
-        const rr = decToRat(new DecC(inverse.rate));
-        if (rr.n === 0n) return err("rates-unavailable");
-        x2 = rDiv(x2, rr);
-      } else return err("rates-unavailable", `no rate for ${fxFrom} \u2192 ${fxTo}`);
+      const fx = fxRat(provider, fxFrom, fxTo, ctx);
+      if ("t" in fx) return fx;
+      x2 = rMul(x2, fx);
     }
     if (decScale !== null) return { t: "d", v: ratToDec(x2).times(decScale) };
     const xn = rnorm(x2);
@@ -30042,8 +30112,11 @@ function addSummable(acc, v2, ctx) {
     if (rhs.t === "e") return rhs;
     return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))) };
   }
-  if (acc.t === "f" && v2.t === "f") return makeFrac(acc.n * v2.d + v2.n * acc.d, acc.d * v2.d, "derived");
-  return { t: "d", v: toDec(acc).plus(toDec(v2)) };
+  const a2 = numRat(acc);
+  const b2 = numRat(v2);
+  const sum2 = rAdd(a2, b2);
+  if (acc.t === "f" || v2.t === "f") return makeFrac(sum2.n, sum2.d, "derived");
+  return { t: "d", ...qv(sum2) };
 }
 function evalAst(ast, env, ctx = {}) {
   switch (ast.k) {
@@ -30088,22 +30161,21 @@ function evalAst(ast, env, ctx = {}) {
             if (!dimEquals(first.dim, val.dim)) return err("unit-mismatch", `a median cannot mix ${first.symbol} and ${val.symbol}`);
             const conv = alignForAdd(first, val, ctx);
             if (conv.t === "e") return conv;
-            items.push({ v: conv.v, rt: conv });
+            items.push({ x: qx(conv), rt: conv });
           } else {
             if (val.t === "q") return err("unit-mismatch", "a median cannot mix quantities and bare numbers");
-            items.push({ v: toDec(val), rt: val });
+            items.push({ x: numRat(val), rt: val });
           }
         }
-        items.sort((a2, b2) => a2.v.cmp(b2.v));
+        items.sort((a2, b2) => rCmp(a2.x, b2.x));
         const mid = items.length >> 1;
         if (items.length % 2 === 1) return items[mid].rt;
+        const meanX = rDiv(rAdd(items[mid - 1].x, items[mid].x), { n: 2n, d: 1n });
         if (first.t === "q") {
-          const m1 = items[mid - 1].rt;
-          const m2 = items[mid].rt;
-          return { ...m1, ...qv(rDiv(rAdd(qx(m1), qx(m2)), { n: 2n, d: 1n })) };
+          return { ...items[mid - 1].rt, ...qv(meanX) };
         }
-        const avg = items[mid - 1].v.plus(items[mid].v).div(2);
-        return { t: "d", v: avg };
+        if (items[mid - 1].rt.t === "f" || items[mid].rt.t === "f") return makeFrac(meanX.n, meanX.d, "derived");
+        return { t: "d", ...qv(meanX) };
       }
       let acc = null;
       for (const v2 of values) {
@@ -30119,7 +30191,9 @@ function evalAst(ast, env, ctx = {}) {
       if (acc === null) return err("not-understood", "nothing to average in this section");
       const n2 = { n: BigInt(values.length), d: 1n };
       if (acc.t === "q") return { ...acc, ...qv(rDiv(qx(acc), n2)) };
-      return { t: "d", v: toDec(acc).div(values.length) };
+      const mean = rDiv(numRat(acc), n2);
+      if (acc.t === "f") return makeFrac(mean.n, mean.d, "derived");
+      return { t: "d", ...qv(mean) };
     }
     case "workdays": {
       const count = evalAst(ast.count, env, ctx);
@@ -30171,21 +30245,24 @@ function evalAst(ast, env, ctx = {}) {
       if (amount.t !== "d" && amount.t !== "f" && amount.t !== "q") {
         return err("unsupported-pair", "finance phrases need an amount");
       }
-      const principal = amount.t === "q" ? amount.v : toDec(amount);
       if (!ast.years.isInteger() || ast.years.lte(0)) return err("inexact", "the duration must be a whole number of years");
-      let result;
+      const principal = amount.t === "q" ? qx(amount) : numRat(amount);
+      const y2 = ast.years.toNumber();
+      const rate = decToRat(ast.rate);
+      const cent = { n: 100n, d: 1n };
+      let out;
       if (ast.fn === "interest") {
-        const growth = new DecC(1).plus(ast.rate.div(HUNDRED)).pow(ast.years.toNumber());
-        result = principal.times(growth.minus(1));
+        const growth = rPowInt(rDiv(rAdd(cent, rate), cent), y2);
+        out = rMul(principal, rSub(growth, { n: 1n, d: 1n }));
       } else {
-        const r3 = ast.rate.div(1200);
-        if (r3.isZero()) result = principal.div(ast.years.times(12));
+        const r3 = rDiv(rate, { n: 1200n, d: 1n });
+        if (r3.n === 0n) out = rDiv(principal, { n: BigInt(y2) * 12n, d: 1n });
         else {
-          const denom = new DecC(1).minus(new DecC(1).plus(r3).pow(-12 * ast.years.toNumber()));
-          result = principal.times(r3).div(denom);
+          const denom = rSub({ n: 1n, d: 1n }, rPowInt(rAdd({ n: 1n, d: 1n }, r3), -12 * y2));
+          out = rDiv(rMul(principal, r3), denom);
         }
       }
-      return amount.t === "q" ? { ...amount, v: result, vx: void 0 } : { t: "d", v: result };
+      return amount.t === "q" ? { ...amount, ...qv(out) } : { t: "d", ...qv(out) };
     }
     case "unitCompound": {
       const e = evalAst(ast.e, env, ctx);
@@ -30225,7 +30302,7 @@ function evalAst(ast, env, ctx = {}) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
       if (base.t === "q") {
-        return { ...base, ...qv(rMul(qx(base), rDiv(rSub({ n: 100n, d: 1n }, decToRat(p2.v)), { n: 100n, d: 1n }))) };
+        return { ...base, ...qv(rMul(qx(base), rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n }))) };
       }
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "discount needs a plain number or quantity");
       return { t: "d", v: toDec(base).times(factor) };
@@ -30248,15 +30325,18 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "e") return e;
       if (e.t === "f") return makeFrac(e.n * 10n ** BigInt(ast.pow10), e.d, "derived");
       if (e.t !== "d" && e.t !== "p") return err("unsupported-pair");
-      const scaled = e.v.times(new DecC(10).pow(ast.pow10));
-      return e.t === "p" ? { t: "p", v: scaled } : { t: "d", v: scaled };
+      const sx = rMul(e.vx ?? decToRat(e.v), rPowInt({ n: 10n, d: 1n }, ast.pow10));
+      const fields = qv(sx);
+      if (!isRepresentable(fields.v)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
+      return e.t === "p" ? { t: "p", ...fields } : { t: "d", ...fields };
     }
     case "pct": {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (e.t === "p") return err("unsupported-pair", "percentage of a percentage needs \u201Cde/of\u201D");
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
-      return { t: "p", v: toDec(e) };
+      const px = numRat(e);
+      return { t: "p", ...qv(px) };
     }
     case "pctOf": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -30269,7 +30349,7 @@ function evalAst(ast, env, ctx = {}) {
       if (base.t === "q" && isOffsetScale(base)) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
-      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(decToRat(p2.v), { n: 100n, d: 1n }))) };
+      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(p2.vx ?? decToRat(p2.v), { n: 100n, d: 1n }))) };
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
       return { t: "d", v: toDec(base).times(factor) };
     }
@@ -30282,7 +30362,7 @@ function evalAst(ast, env, ctx = {}) {
       if (base.t === "q" && isOffsetScale(base)) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
-      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(rAdd({ n: 100n, d: 1n }, decToRat(p2.v)), { n: 100n, d: 1n }))) };
+      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n }))) };
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "markup needs a plain number or quantity");
       return { t: "d", v: toDec(base).times(HUNDRED.plus(p2.v).div(HUNDRED)) };
     }
@@ -30322,6 +30402,28 @@ function evalAst(ast, env, ctx = {}) {
       } catch {
         return err("not-understood", "invalid date");
       }
+    }
+    case "monthDate": {
+      const ref = referencePlainDate(ctx);
+      if (!(ref instanceof Pt.PlainDate)) return ref;
+      let year = ref.year;
+      if (ctx.preferFutureForAmbiguousDates && ast.month < ref.month) year += 1;
+      return { t: "ds", pd: new Pt.PlainDate(year, ast.month, 1), precision: "monthOnly" };
+    }
+    case "pctMoreWhat": {
+      const value = evalAst(ast.value, env, ctx);
+      if (value.t === "e") return value;
+      const p2 = evalAst(ast.pct, env, ctx);
+      if (p2.t === "e") return p2;
+      if (p2.t !== "p") return err("unsupported-pair", "P-7 needs a percentage");
+      if (value.t !== "d" && value.t !== "f" && value.t !== "q") return err("unsupported-pair", "P-7 needs an amount");
+      const cent = { n: 100n, d: 1n };
+      const px = p2.vx ?? decToRat(p2.v);
+      const denom = ast.sign === 1 ? rAdd(cent, px) : rSub(cent, px);
+      if (denom.n === 0n) return err("division-by-zero");
+      const factor = rDiv(cent, denom);
+      if (value.t === "q") return { ...value, ...qv(rMul(qx(value), factor)) };
+      return { t: "d", ...qv(rMul(numRat(value), factor)) };
     }
     case "weekday": {
       const ref = referencePlainDate(ctx);
@@ -30369,18 +30471,21 @@ function evalAst(ast, env, ctx = {}) {
       const n2 = toDec(e);
       if (!n2.isInteger()) return err("inexact", `\u201C${n2.toString()} ${ast.unit}\u201D \u2014 timespan counts must be whole`);
       const count = n2.toNumber();
+      if (!Number.isSafeInteger(count)) return err("inexact", `\u201C${n2.toString()} ${ast.unit}\u201D exceeds the safe timespan range`);
       const key = ast.unit + "s";
       return { t: "ts", c: count === 0 ? {} : { [key]: count } };
     }
     case "call": {
-      const args = [];
+      const rts = [];
       for (const argAst of ast.args) {
         const v2 = evalAst(argAst, env, ctx);
         if (v2.t === "e") return v2;
         if (v2.t !== "d" && v2.t !== "f") return err("unsupported-pair", `${ast.fn}() needs plain numbers`);
-        args.push(toDec(v2));
+        rts.push(v2);
       }
-      return applyFunction(ast.fn, args);
+      const exact = applyExactFunction(ast.fn, rts);
+      if (exact !== null) return exact;
+      return applyFunction(ast.fn, rts.map(toDec));
     }
     case "fact": {
       const e = evalAst(ast.e, env, ctx);
@@ -30450,7 +30555,7 @@ function evalAst(ast, env, ctx = {}) {
       if (ast.denWord !== void 0 || ast.denSpan !== void 0) {
         const num = lookupUnit(ast.word);
         const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.denWord);
-        if (num.affine || den.affine || den.currency) {
+        if (num.affine || den.affine) {
           return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate target`);
         }
         const numComps = unitComps(ast.word) ?? [{ def: num, exp: 1 }];
@@ -30475,7 +30580,7 @@ function evalAst(ast, env, ctx = {}) {
       }
       if (e.t !== "q") return err("unit-mismatch", `only a quantity can be converted to ${symbol}`);
       const dim = dimOfComps(tComps);
-      if (!dimEquals(dim, e.dim)) return err("unit-mismatch", `cannot convert ${e.symbol} to ${symbol}`);
+      if (!dimsCompatible(dim, e.dim, ctx)) return err("unit-mismatch", `cannot convert ${e.symbol} to ${symbol}`);
       const template = {
         t: "q",
         v: new DecC(1),
@@ -30500,7 +30605,7 @@ function evalAst(ast, env, ctx = {}) {
           if (isOffsetScale(l2)) {
             return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
           }
-          const p2 = decToRat(r3.v);
+          const p2 = r3.vx ?? decToRat(r3.v);
           const cent = { n: 100n, d: 1n };
           switch (ast.op) {
             case "+":
@@ -30520,11 +30625,11 @@ function evalAst(ast, env, ctx = {}) {
           if (isOffsetScale(r3)) {
             return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
           }
-          return { ...r3, ...qv(rMul(qx(r3), rDiv(decToRat(l2.v), { n: 100n, d: 1n }))) };
+          return { ...r3, ...qv(rMul(qx(r3), rDiv(l2.vx ?? decToRat(l2.v), { n: 100n, d: 1n }))) };
         }
         if (l2.t === "q" && r3.t === "q") {
           if (ast.op === "+" || ast.op === "-") {
-            if (!dimEquals(l2.dim, r3.dim)) {
+            if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
               return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
             }
             const rhs = alignForAdd(l2, r3, ctx);
@@ -30568,7 +30673,7 @@ function evalAst(ast, env, ctx = {}) {
           if (otherSide.t === "ts" && ast.op === "*" && rateSide.rate) {
             const den = rateSide.rate.den;
             if (den.dim["calmonths"] === 1 || den.dim["caldays"] === 1) {
-              const count = spanInCalUnit(otherSide.c, den);
+              const count = spanInCalUnit(otherSide.c, den, ctx);
               if (isErr(count)) return count;
               const num = rateSide.rate.num;
               return mkQ(rMul(qx(rateSide), decToRat(count)), num);
@@ -30579,7 +30684,7 @@ function evalAst(ast, env, ctx = {}) {
             if (!l2.def) return err("unsupported-pair", "compound units cannot form calendar rates");
             const den = calUnitForSpan(r3.c);
             if ("t" in den) return den;
-            const count = spanInCalUnit(r3.c, den);
+            const count = spanInCalUnit(r3.c, den, ctx);
             if (isErr(count)) return count;
             if (count.isZero()) return err("division-by-zero");
             const dim = dimAdd(l2.dim, den.dim, -1);
@@ -30615,10 +30720,10 @@ function evalAst(ast, env, ctx = {}) {
           if (l2.t !== "ct" && ast.op === "-") return err("unsupported-pair", "cannot subtract a time from a duration");
           const mins = quantityToMinutes(other);
           if (mins === null) return err("unsupported-pair", "clock times only combine with h/min/s durations");
+          if (!mins.isInteger()) return err("inexact", "sub-minute clock arithmetic is not supported");
           const delta = ast.op === "+" ? mins : mins.neg();
           const total = new DecC(clock.mins).plus(delta);
-          const wrapped = (total.toNumber() % 1440 + 1440) % 1440;
-          if (!Number.isInteger(wrapped)) return err("inexact", "sub-minute clock arithmetic is not supported");
+          const wrapped = total.mod(1440).plus(1440).mod(1440).toNumber();
           return { t: "ct", mins: wrapped };
         }
         return err("unsupported-pair", "this combination with a clock time is undefined");
@@ -30678,21 +30783,22 @@ function evalAst(ast, env, ctx = {}) {
           }
         }
         if (r3.t === "p") {
-          const a3 = toDec(l2);
-          const factor = r3.v.div(HUNDRED);
+          const a3 = numRat(l2);
+          const p2 = r3.vx ?? decToRat(r3.v);
+          const cent = { n: 100n, d: 1n };
           switch (ast.op) {
             case "+":
-              return { t: "d", v: a3.times(HUNDRED.plus(r3.v).div(HUNDRED)) };
+              return { t: "d", ...qv(rMul(a3, rDiv(rAdd(cent, p2), cent))) };
             // P-1
             case "-":
-              return { t: "d", v: a3.times(HUNDRED.minus(r3.v).div(HUNDRED)) };
+              return { t: "d", ...qv(rMul(a3, rDiv(rSub(cent, p2), cent))) };
             // P-1
             case "*":
-              return { t: "d", v: a3.times(factor) };
+              return { t: "d", ...qv(rMul(a3, rDiv(p2, cent))) };
             // P-3
             case "/":
-              if (factor.isZero()) return err("division-by-zero");
-              return { t: "d", v: a3.div(factor) };
+              if (p2.n === 0n) return err("division-by-zero");
+              return { t: "d", ...qv(rDiv(a3, rDiv(p2, cent))) };
             // P-3
             default:
               return err("unsupported-pair", "number ^ percentage is undefined");
@@ -30709,10 +30815,9 @@ function evalAst(ast, env, ctx = {}) {
             return err("unsupported-pair", `percentage ${ast.op} number is undefined \u2014 did you mean the reverse order?`);
         }
       }
-      const hasShadow = l2.t === "d" && l2.vx !== void 0 || r3.t === "d" && r3.vx !== void 0;
-      if ((l2.t === "f" || r3.t === "f" || hasShadow) && (l2.t === "f" || l2.t === "d") && (r3.t === "f" || r3.t === "d") && ast.op !== "^") {
-        const a3 = l2.t === "f" ? { n: l2.n, d: l2.d } : l2.vx ?? decToFrac(l2.v);
-        const b3 = r3.t === "f" ? { n: r3.n, d: r3.d } : r3.vx ?? decToFrac(r3.v);
+      if ((l2.t === "f" || l2.t === "d") && (r3.t === "f" || r3.t === "d") && (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/")) {
+        const a3 = numRat(l2);
+        const b3 = numRat(r3);
         let out;
         switch (ast.op) {
           case "+":
@@ -30729,8 +30834,7 @@ function evalAst(ast, env, ctx = {}) {
             out = { n: a3.n * b3.d, d: a3.d * b3.n };
         }
         if (l2.t === "f" || r3.t === "f") return makeFrac(out.n, out.d, "derived");
-        const xn = rnorm(out);
-        return { t: "d", v: ratToDec(xn), ...!ratIsExactDec(xn) && { vx: xn } };
+        return { t: "d", ...qv(out) };
       }
       const a2 = toDec(l2);
       const b2 = toDec(r3);
@@ -30751,7 +30855,7 @@ function evalAst(ast, env, ctx = {}) {
           case "^": {
             if (b2.abs().gt(MAX_POW_EXPONENT)) return err("inexact", "exponent magnitude too large");
             const res = a2.pow(b2);
-            if (res.isNaN() || !res.isFinite()) return err("inexact", "result is not a representable number");
+            if (res.isNaN() || !isRepresentable(res)) return err("inexact", "result is not a representable number");
             return { t: "d", v: res };
           }
         }
@@ -30791,9 +30895,16 @@ function formatRT(rt2, prefs) {
       const n2 = rt2.c[key];
       if (!n2) continue;
       const [singular, plural] = words[key];
-      parts.push(`${n2} ${Math.abs(n2) > 1 ? plural : singular}`);
+      parts.push({ n: n2, label: Math.abs(n2) > 1 ? plural : singular });
     }
-    return parts.length ? parts.join(" ") : `0 ${words.days[1]}`;
+    if (parts.length === 0) return `0 ${words.days[1]}`;
+    const mixed = parts.some((p2) => p2.n > 0) && parts.some((p2) => p2.n < 0);
+    if (!mixed) return parts.map((p2) => `${p2.n} ${p2.label}`).join(" ");
+    return parts.map((p2, idx) => {
+      const body2 = `${Math.abs(p2.n)} ${p2.label}`;
+      if (idx === 0) return p2.n < 0 ? `-${body2}` : body2;
+      return `${p2.n < 0 ? "-" : "+"} ${body2}`;
+    }).join(" ");
   }
   if (rt2.t === "ct") {
     const h2 = Math.floor(rt2.mins / 60);
@@ -30899,10 +31010,11 @@ function loadLexicon(languages) {
 var DEFAULT_LANGUAGES = ["fr", "en"];
 
 // ../textual-calculator/core/packages/engine/src/lexer.ts
+var SPACES = [" ", "\xA0", "\u2009", "\u202F"];
 var GRAMMARS = {
-  ch: { group: /* @__PURE__ */ new Set(["'", " "]), decimal: /* @__PURE__ */ new Set([".", ","]) },
-  eu: { group: /* @__PURE__ */ new Set([".", " "]), decimal: /* @__PURE__ */ new Set([","]) },
-  us: { group: /* @__PURE__ */ new Set([",", " "]), decimal: /* @__PURE__ */ new Set(["."]) }
+  ch: { group: /* @__PURE__ */ new Set(["'", "\u2019", ...SPACES]), decimal: /* @__PURE__ */ new Set([".", ","]) },
+  eu: { group: /* @__PURE__ */ new Set([".", ...SPACES]), decimal: /* @__PURE__ */ new Set([","]) },
+  us: { group: /* @__PURE__ */ new Set([",", ...SPACES]), decimal: /* @__PURE__ */ new Set(["."]) }
 };
 var ATTACHED_SCALARS = { k: 3, M: 6, bn: 9, mio: 6, mrd: 9 };
 var SCALAR_WORDS = { mio: 6, mrd: 9, bn: 9 };
@@ -30967,6 +31079,14 @@ function matchDate(slice, order) {
     if (c3.length > 2 || !isValidDate(y3, mo, d2)) return null;
     return { len: full.length, y: y3, m: mo, d: d2, iso: true };
   }
+  if (order === "ymd") {
+    const y22 = c1.length <= 2 ? Number(c1) < 50 ? 2e3 + Number(c1) : 1900 + Number(c1) : pivotYear(c1);
+    if (y22 === null) return null;
+    const month2 = Number(c2);
+    const day2 = Number(c3);
+    if (c3.length > 2 || !isValidDate(y22, month2, day2)) return null;
+    return { len: full.length, y: y22, m: month2, d: day2, iso: false };
+  }
   const y2 = pivotYear(c3);
   if (y2 === null) return null;
   let day;
@@ -31011,15 +31131,16 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       return;
     }
     const intDigits = readDigits();
-    if (intDigits === "0" && /^[xXbB]/.test(line[i2] ?? "")) {
-      const run = /^[xXbB][0-9a-zA-Z]*/.exec(line.slice(i2))[0];
+    if (intDigits === "0" && /^[xXbBoO]/.test(line[i2] ?? "")) {
+      const run = /^[xXbBoO][0-9a-zA-Z]*/.exec(line.slice(i2))[0];
       const isHex2 = run[0] === "x" || run[0] === "X";
+      const isOct = run[0] === "o" || run[0] === "O";
       const body = run.slice(1);
-      const valid = body.length > 0 && (isHex2 ? /^[0-9a-fA-F]+$/.test(body) : /^[01]+$/.test(body));
+      const valid = body.length > 0 && (isHex2 ? /^[0-9a-fA-F]+$/.test(body) : isOct ? /^[0-7]+$/.test(body) : /^[01]+$/.test(body));
       i2 += run.length;
       const text2 = line.slice(start, i2);
       if (valid) {
-        const value = BigInt((isHex2 ? "0x" : "0b") + body);
+        const value = BigInt((isHex2 ? "0x" : isOct ? "0o" : "0b") + body);
         tokens.push({ kind: "number", text: text2, start, end: i2, dec: new DecC(value.toString()), plainInt: false });
       } else {
         tokens.push({ kind: "badnumber", text: text2, start, end: i2 });
@@ -31037,12 +31158,12 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     const segs = [];
     while (i2 < line.length) {
       const s2 = line[i2];
-      if (s2 === "'" || s2 === "." || s2 === ",") {
+      if (s2 === "'" || s2 === "\u2019" || s2 === "." || s2 === ",") {
         if (!isDigit(line[i2 + 1])) break;
         i2++;
-        segs.push({ sep: s2, digits: readDigits() });
-      } else if (s2 === " ") {
-        const m2 = /^ (\d{3})(?!\d)/.exec(line.slice(i2));
+        segs.push({ sep: s2 === "\u2019" ? "'" : s2, digits: readDigits() });
+      } else if (s2 === " " || s2 === "\xA0" || s2 === "\u2009" || s2 === "\u202F") {
+        const m2 = /^[    ](\d{3})(?!\d)/.exec(line.slice(i2));
         if (!m2) break;
         i2 += 4;
         segs.push({ sep: " ", digits: m2[1] });
@@ -31109,6 +31230,11 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     const canonical = intDigits + groupDigits + (decimalIdx >= 0 ? "." + segs[decimalIdx].digits : "") + exp2;
     let dec2 = new DecC(canonical);
     if (scalarPow) dec2 = dec2.times(new DecC(10).pow(scalarPow));
+    const hasNonZeroDigit = /[1-9]/.test(intDigits + groupDigits + (decimalIdx >= 0 ? segs[decimalIdx].digits : ""));
+    if (!dec2.isFinite() || Math.abs(dec2.e) > 9999 || hasNonZeroDigit && dec2.isZero()) {
+      tokens.push({ kind: "badnumber", text, start, end: i2 });
+      return;
+    }
     tokens.push({
       kind: "number",
       text,
@@ -31122,12 +31248,11 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       if (last2.plainInt) {
         const hm = /^h([0-5]\d|\d)(?![\d\p{L}])/u.exec(line.slice(i2));
         if (hm) {
-          const minutes = new DecC(hm[1]);
-          const hours = last2.dec.plus(minutes.div(60));
           const hStart = i2;
           i2 += hm[0].length;
           tokens.pop();
-          tokens.push({ kind: "number", text: line.slice(start, i2), start, end: i2, dec: hours, plainInt: false });
+          const num = BigInt(last2.text) * 60n + BigInt(hm[1]);
+          tokens.push({ kind: "fraction", text: line.slice(start, i2), start, end: i2, num, den: 60n });
           tokens.push({ kind: "word", text: "h", start: hStart, end: hStart + 1 });
           return;
         }
@@ -31196,7 +31321,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (isLetter(c2) || c2 === "\xB0" && isLetter(line[i2 + 1])) {
+    if (isLetter(c2) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
       scanWord();
       continue;
     }
@@ -31668,6 +31793,20 @@ function parse3(tokens) {
             return { k: "call", fn: lower, args: [expr(30)] };
           }
         }
+        if (TIME_WORDS.has(lower)) {
+          let j2 = pos;
+          const prep = tokens[j2];
+          if (prep?.kind === "word" && ["in", "\xE0", "a", "at", "en"].includes(prep.text.toLowerCase())) j2++;
+          for (let take = Math.min(3, tokens.length - j2); take >= 1; take--) {
+            const cityTokens = tokens.slice(j2, j2 + take);
+            if (!cityTokens.every((ct2) => ct2.kind === "word")) continue;
+            const city = CITY_ZONES[cityTokens.map((ct2) => ct2.text.toLowerCase()).join(" ")];
+            if (city) {
+              pos = j2 + take;
+              return { k: "timeIn", zone: city.zone, label: city.label };
+            }
+          }
+        }
         const dow = WEEKDAY_WORDS[lower];
         if (dow !== void 0) {
           let qual = "bare";
@@ -31709,13 +31848,13 @@ function parse3(tokens) {
               return { k: "date", year, month, day, iso: false };
             }
           }
-          throw new ParseError("syntax", `\u201C${t2.text}\u201D needs a day of month`);
+          return { k: "monthDate", month };
         }
         if (LINE_REF_WORDS.has(lower) && tokens[pos]?.kind === "lparen") {
           pos++;
           const num = tokens[pos++];
-          if (!num || num.kind !== "number" || !num.dec.isInteger() || num.dec.lt(1)) {
-            throw new ParseError("syntax", `${t2.text}(\u2026) needs a positive line number`);
+          if (!num || num.kind !== "number" || !num.plainInt || num.dec.lt(1)) {
+            throw new ParseError("syntax", `${t2.text}(\u2026) needs a plain positive line number`);
           }
           const close = tokens[pos++];
           if (!close || close.kind !== "rparen") throw new ParseError("syntax", `missing \u201C)\u201D after ${t2.text}(`);
@@ -31759,7 +31898,7 @@ function parse3(tokens) {
         if (suffix?.kind === "word" && AMPM_WORDS.has(suffix.text.toLowerCase())) {
           pos++;
           const isPm = suffix.text.toLowerCase() === "pm";
-          if (h2 > 12) throw new ParseError("syntax", `\u201C${t2.text} ${suffix.text}\u201D mixes 24h and am/pm`);
+          if (h2 > 12 || h2 < 1) throw new ParseError("syntax", `\u201C${t2.text} ${suffix.text}\u201D \u2014 am/pm hours run from 1 to 12`);
           mins = (h2 % 12 + (isPm ? 12 : 0)) * 60 + m2;
         }
         return { k: "clock", mins };
@@ -31940,6 +32079,21 @@ function matchPercentPrototypes(tokens) {
     }
   }
   {
+    const n2 = tokens.length;
+    const opTok = tokens[n2 - 2];
+    const opSign = opTok?.kind === "op" && opTok.op === "+" ? 1 : opTok?.kind === "op" && opTok.op === "-" ? -1 : opTok?.kind === "word" && opTok.text.toLowerCase() === "more" ? 1 : opTok?.kind === "word" && opTok.text.toLowerCase() === "less" ? -1 : null;
+    if (n2 >= 7 && isWord(tokens[n2 - 1], WHAT_OBJECT_WORDS) && opSign !== null && tokens[n2 - 3]?.kind === "word" && PERCENT_PREPOSITIONS[tokens[n2 - 3].text.toLowerCase()] === "of" && tokens[n2 - 4]?.kind === "percent") {
+      const isIdx = tokens.findIndex((t2, idx) => idx >= 1 && idx < n2 - 4 && isWord(t2, IS_WORDS));
+      if (isIdx > 0) {
+        const valueTokens = tokens.slice(0, isIdx);
+        const pctTokens = tokens.slice(isIdx + 1, n2 - 3);
+        if (valueTokens.length > 0 && pctTokens.length > 0) {
+          return { k: "pctMoreWhat", value: parse3(valueTokens), pct: parse3(pctTokens), sign: opSign };
+        }
+      }
+    }
+  }
+  {
     if (isWord(tokens[0], WHAT_WORDS) && tokens[1]?.kind === "percent" && tokens[2]?.kind === "word" && PERCENT_PREPOSITIONS[tokens[2].text.toLowerCase()] === "of") {
       const isIdx = tokens.findIndex((t2, idx) => idx >= 4 && isWord(t2, IS_WORDS));
       if (isIdx > 0) {
@@ -31955,13 +32109,18 @@ function matchPercentPrototypes(tokens) {
 }
 var isPercentPreposition = (word) => PERCENT_PREPOSITIONS[word.toLowerCase()] !== void 0;
 function isReservedWord(word) {
+  return isReservedCore(word) || CITY_WORD_PARTS.has(word.toLowerCase());
+}
+function isReservedCore(word) {
   const lower = word.toLowerCase();
-  return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || CITY_WORD_PARTS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
+  return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
 }
 function isComputableWord(word) {
   const lower = word.toLowerCase();
-  return DATE_KEYWORDS[lower] !== void 0 || WEEKDAY_WORDS[lower] !== void 0 || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower);
+  return DATE_KEYWORDS[lower] !== void 0 || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower);
 }
+var isCityPartOnlyWord = (word) => CITY_WORD_PARTS.has(word.toLowerCase()) && !isReservedCore(word);
+var isTimeAnchorWord = (word) => TIME_WORDS.has(word.toLowerCase());
 var isPrepositionAnchorWord = (word) => isFunctionWord(word) || WORD_FRACTIONS[word.toLowerCase()] !== void 0;
 var isAggWord = (word) => AGG_WORDS[word.toLowerCase()] !== void 0;
 function parseSpanTokens(tokens) {
@@ -32306,7 +32465,8 @@ function prepareTokens(tokens, env, lexicon, violations) {
       if (prev?.kind === "percent" || prev?.kind === "word" && isPrepositionAnchorWord(prev.text)) out.push(t2);
       continue;
     }
-    if (isReservedWord(t2.text) || env.has(t2.text)) {
+    const cityOutOfContext = isCityPartOnlyWord(t2.text) && !tokens.some((tk) => tk.kind === "word" && isTimeAnchorWord(tk.text));
+    if (isReservedWord(t2.text) && !cityOutOfContext || env.has(t2.text)) {
       out.push(t2);
       continue;
     }
@@ -32421,6 +32581,7 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived) {
 }
 function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
+  const fxTrace = [];
   const empty = (tokens2, commentWords) => ({
     result: {
       tokens: tokens2.map(toPublicToken),
@@ -32447,6 +32608,9 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (isAssignment && eqIdx > MAX_VARIABLE_WORDS) {
       throw new ParseError("not-understood", `variable names are limited to ${MAX_VARIABLE_WORDS} words`);
     }
+    if (isAssignment && eqIdx === 1 && (isComputableWord(tokens[0].text) || isReservedWord(tokens[0].text))) {
+      throw new ParseError("not-understood", `\u201C${tokens[0].text}\u201D is a reserved word and cannot be a variable name`);
+    }
     const rawExpr = isAssignment ? tokens.slice(eqIdx + 1) : tokens;
     envWords = rawExpr.filter((t2) => isEnvSensitiveWord(t2, lexicon)).map((t2) => t2.text);
     for (let i2 = 0; i2 < rawExpr.length; i2++) {
@@ -32464,7 +32628,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     }
     if (violations.length > 0) throw new ParseError("not-understood", violations[0]);
     if (exprTokens.length === 0) throw new ParseError("syntax", "empty expression");
-    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps };
+    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace };
     let ast = parseExpression(exprTokens);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
@@ -32478,6 +32642,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       value: toPublicValue(rt2),
       display: formatRT(rt2, formatting),
       references: extractReferences(tokens, rts, formatting),
+      ...fxTrace.length > 0 && { fx: fxTrace },
       diagnostics: diagnosticsFor(rt2, line)
     },
     rt: rt2,
@@ -32570,7 +32735,35 @@ function createSheetSession(context) {
 }
 
 // ../textual-calculator/core/packages/engine/src/index.ts
+var GRAMMAR_SEPS = {
+  ch: { group: ["'", "\u2019", " "], decimal: [".", ","] },
+  eu: { group: [".", " "], decimal: [","] },
+  us: { group: [",", " "], decimal: ["."] }
+};
+function validateFormatting(context) {
+  const grammar = resolveGrammar(context);
+  const seps = GRAMMAR_SEPS[grammar];
+  const f2 = context.formatting;
+  if (!f2) return;
+  if (f2.thousandsSeparator !== void 0 && f2.thousandsSeparator !== "" && !seps.group.includes(f2.thousandsSeparator)) {
+    throw new Error(
+      `formatting.thousandsSeparator \u201C${f2.thousandsSeparator}\u201D is not a group separator of the \u201C${grammar}\u201D number grammar \u2014 the display would not re-parse`
+    );
+  }
+  if (f2.decimalSeparator !== void 0 && !seps.decimal.includes(f2.decimalSeparator)) {
+    throw new Error(
+      `formatting.decimalSeparator \u201C${f2.decimalSeparator}\u201D is not a decimal mark of the \u201C${grammar}\u201D number grammar \u2014 the display would not re-parse`
+    );
+  }
+  const parseOrder = resolveDateOrder(context);
+  if (f2.dateOrder !== void 0 && f2.dateOrder !== parseOrder) {
+    throw new Error(
+      `formatting.dateOrder \u201C${f2.dateOrder}\u201D conflicts with the parsing date order \u201C${parseOrder}\u201D \u2014 displayed dates would re-read differently`
+    );
+  }
+}
 function createEngine(context = {}) {
+  validateFormatting(context);
   return {
     evaluateSheet(text) {
       return evaluateSheet(text, context);
