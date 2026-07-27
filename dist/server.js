@@ -19426,9 +19426,9 @@ function mergeCapabilities(base, additional) {
     const addValue = additional[k2];
     if (addValue === void 0)
       continue;
-    const baseValue = result[k2];
-    if (isPlainObject2(baseValue) && isPlainObject2(addValue)) {
-      result[k2] = { ...baseValue, ...addValue };
+    const baseValue2 = result[k2];
+    if (isPlainObject2(baseValue2) && isPlainObject2(addValue)) {
+      result[k2] = { ...baseValue2, ...addValue };
     } else {
       result[k2] = addValue;
     }
@@ -29339,6 +29339,20 @@ function lookupPowerUnit(word) {
 function lookupUnit(word) {
   return exactAliases.get(word) ?? ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word);
 }
+var ratEq = (a2, b2) => a2.n * b2.d === b2.n * a2.d;
+function findUnitByDimFactor(dim, factor) {
+  for (const def of DEFS) {
+    if (def.factor && !def.currency && dimEquals(def.dim, dim) && ratEq(def.factor, factor)) return def;
+  }
+  const exp2 = dim["length"];
+  if ((exp2 === 2 || exp2 === 3) && Object.keys(dim).length === 1) {
+    for (const base of ["m", "km", "cm", "mm"]) {
+      const p2 = lookupPowerUnit(`${base}${exp2}`);
+      if (p2?.factor && ratEq(p2.factor, factor)) return p2;
+    }
+  }
+  return void 0;
+}
 var isUnitWord = (word) => lookupUnit(word) !== void 0;
 var isCurrencyWord = (word) => lookupUnit(word)?.currency !== void 0;
 function dimAdd(a2, b2, sign2) {
@@ -29632,6 +29646,36 @@ function alignForAdd(l2, r3, ctx) {
     return err("unit-mismatch", "adding absolute temperatures is undefined \u2014 convert first");
   }
   return convertQuantity(r3, l2.def, ctx);
+}
+function baseValue(q2) {
+  if (q2.def?.factor) return q2.v.times(new DecC(q2.def.factor.n.toString())).div(q2.def.factor.d.toString());
+  if (q2.def?.factorDec) return q2.v.times(new DecC(q2.def.factorDec));
+  return null;
+}
+function composeQuantity(v2, dim, l2, r3, op) {
+  const sep = op === "*" ? "\xB7" : "/";
+  const symbol = op === "*" && l2.symbol === r3.symbol ? `${l2.symbol}\xB2` : `${l2.symbol}${sep}${r3.symbol}`;
+  const lf = l2.def?.factor;
+  const rf = r3.def?.factor;
+  const pure = (u2) => u2 !== void 0 && !u2.affine && !u2.factorDec && !u2.currency;
+  if (lf && rf && pure(l2.def) && pure(r3.def)) {
+    const factor = op === "*" ? { n: lf.n * rf.n, d: lf.d * rf.d } : { n: lf.n * rf.d, d: lf.d * rf.n };
+    const canonical = findUnitByDimFactor(dim, factor);
+    if (canonical) {
+      return {
+        t: "q",
+        v: v2,
+        dim,
+        symbol: canonical.symbol,
+        def: canonical,
+        ...op === "/" && { rate: { num: l2.def, den: r3.def } }
+      };
+    }
+    const def = { id: `${l2.def.id}${sep}${r3.def.id}`, symbol, dim, factor };
+    return { t: "q", v: v2, dim, symbol, def, ...op === "/" && { rate: { num: l2.def, den: r3.def } } };
+  }
+  if (op === "/" && l2.def && r3.def) return { t: "q", v: v2, dim, symbol, rate: { num: l2.def, den: r3.def } };
+  return { t: "q", v: v2, dim, symbol };
 }
 var isSummable = (rt2) => rt2 !== null && (rt2.t === "d" || rt2.t === "f" || rt2.t === "q");
 function addSummable(acc, v2, ctx) {
@@ -30084,27 +30128,32 @@ function evalAst(ast, env, ctx = {}) {
                 def: num
               };
             }
-            const dim = dimAdd(l2.dim, r3.dim, 1);
-            const v2 = l2.v.times(r3.v);
-            if (dimIsEmpty(dim)) return { t: "d", v: v2 };
-            const symbol = l2.symbol === r3.symbol ? `${l2.symbol}\xB2` : `${l2.symbol}\xB7${r3.symbol}`;
-            return { t: "q", v: v2, dim, symbol };
+            let rr = r3;
+            if (dimEquals(l2.dim, r3.dim) && l2.symbol !== r3.symbol) {
+              const aligned = alignForAdd(l2, r3, ctx);
+              if (aligned.t === "e") return aligned;
+              rr = aligned;
+            }
+            const dim = dimAdd(l2.dim, rr.dim, 1);
+            if (dimIsEmpty(dim)) {
+              const bl = baseValue(l2);
+              const br = baseValue(rr);
+              if (bl === null || br === null) {
+                return err("unsupported-pair", `cannot cancel ${l2.symbol} \xD7 ${rr.symbol} exactly`);
+              }
+              return { t: "d", v: bl.times(br) };
+            }
+            return composeQuantity(l2.v.times(rr.v), dim, l2, rr, "*");
           }
           if (ast.op === "/") {
             if (r3.v.isZero()) return err("division-by-zero");
-            const dim = dimAdd(l2.dim, r3.dim, -1);
-            const v2 = l2.v.div(r3.v);
-            if (dimIsEmpty(dim)) return { t: "d", v: v2 };
-            if (l2.def?.factor && r3.def?.factor) {
-              const def = {
-                id: `${l2.def.id}/${r3.def.id}`,
-                symbol: `${l2.def.symbol}/${r3.def.symbol}`,
-                dim,
-                factor: { n: l2.def.factor.n * r3.def.factor.d, d: l2.def.factor.d * r3.def.factor.n }
-              };
-              return { t: "q", v: v2, dim, symbol: def.symbol, def, rate: { num: l2.def, den: r3.def } };
+            if (dimEquals(l2.dim, r3.dim)) {
+              if (l2.symbol === r3.symbol) return { t: "d", v: l2.v.div(r3.v) };
+              const aligned = alignForAdd(l2, r3, ctx);
+              if (aligned.t === "e") return aligned;
+              return { t: "d", v: l2.v.div(aligned.v) };
             }
-            return { t: "q", v: v2, dim, symbol: `${l2.symbol}/${r3.symbol}` };
+            return composeQuantity(l2.v.div(r3.v), dimAdd(l2.dim, r3.dim, -1), l2, r3, "/");
           }
           return err("unsupported-pair", `quantity ^ quantity is undefined`);
         }
