@@ -29656,6 +29656,7 @@ function evalAst(ast, env, ctx = {}) {
       const lines = ctx.lines ?? [];
       const values = [];
       for (let i2 = ctx.sectionStart ?? 0; i2 < lines.length; i2++) {
+        if (ctx.aggDerived?.[i2]) continue;
         const v2 = lines[i2];
         if (isSummable(v2 ?? null)) values.push(v2);
       }
@@ -31817,20 +31818,20 @@ var isEnvSensitiveWord = (t2, lexicon) => {
   return !isReservedWord(t2.text) && !lexicon.operatorWords.has(lower) && !lexicon.divisionParticles.has(lower) && !isPercentPreposition(lower);
 };
 var serialize = (rt2) => rt2 === null || rt2 === void 0 ? "\u2205" : JSON.stringify(toPublicValue(rt2));
-function readsFingerprint(entry, env, rts, sectionStart) {
+function readsFingerprint(entry, env, rts, sectionStart, aggDerived) {
   const parts = [];
   for (const name of [...entry.deps.variables].sort()) parts.push(`v:${name}=${serialize(env.get(name))}`);
   for (const idx of [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2)) {
     parts.push(`l:${idx}=${idx > rts.length ? "\u2298" : serialize(rts[idx - 1])}`);
   }
   if (entry.deps.usesTotal) {
-    const summed = rts.slice(sectionStart).filter(isSummable).map(serialize).join(",");
+    const summed = rts.map((v2, j2) => j2 >= sectionStart && !aggDerived[j2] && isSummable(v2) ? serialize(v2) : null).filter((s2) => s2 !== null).join(",");
     parts.push(`t:${sectionStart}:${summed}`);
   }
   for (const w2 of entry.commentWords) parts.push(`w:${w2}=${serialize(env.get(w2))}`);
   return parts.join("|");
 }
-function evaluateLine(line, env, rts, sectionStart, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency) {
+function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
   const empty = (tokens2, commentWords) => ({
     result: {
@@ -31872,7 +31873,7 @@ function evaluateLine(line, env, rts, sectionStart, baseCtx, lexicon, grammar, d
     }
     if (violations.length > 0) throw new ParseError("not-understood", violations[0]);
     if (exprTokens.length === 0) throw new ParseError("syntax", "empty expression");
-    const ctx = { ...baseCtx, lines: rts, sectionStart, deps };
+    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps };
     let ast = parseExpression(exprTokens);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
@@ -31919,16 +31920,24 @@ function runSheet(text, context, cache2) {
   const cacheOut = [];
   const recomputed = [];
   let sectionStart = 0;
+  const aggDerived = [];
+  const aggDerivedVars = /* @__PURE__ */ new Set();
   lines.forEach((line, i2) => {
     let entry;
     const cached2 = cache2?.[i2];
-    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart)) {
+    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived)) {
       entry = cached2;
     } else {
-      entry = evaluateLine(line, env, rts, sectionStart, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency);
+      entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency);
       recomputed.push(i2);
     }
-    const fingerprint = readsFingerprint(entry, env, rts, sectionStart);
+    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived);
+    const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
+    if (entry.defines) {
+      if (derived) aggDerivedVars.add(entry.defines);
+      else aggDerivedVars.delete(entry.defines);
+    }
+    aggDerived.push(derived);
     if (entry.defines && entry.rt) env.set(entry.defines, entry.rt);
     rts.push(entry.rt);
     results.push(entry.result);
