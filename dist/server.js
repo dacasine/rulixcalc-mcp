@@ -29608,7 +29608,30 @@ function convertQuantity(rt2, to, ctx) {
     }
     return err("rates-unavailable", `no rate for ${from.currency} \u2192 ${to.currency}`);
   }
+  const convertible = (u2) => u2.factor !== void 0 || u2.factorDec !== void 0 || u2.affine !== void 0;
+  if (!convertible(from) || !convertible(to)) {
+    return err("unsupported-pair", `cannot convert ${from.symbol} to ${to.symbol}`);
+  }
   return { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to };
+}
+function alignForAdd(l2, r3, ctx) {
+  if (l2.symbol === r3.symbol) return r3;
+  if (l2.rate && r3.rate) {
+    const { num: ln2, den: ld } = l2.rate;
+    const { num: rn, den: rd } = r3.rate;
+    if (!dimEquals(ld.dim, rd.dim) || !ld.factor || !rd.factor) {
+      return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
+    }
+    const inNum = convertQuantity({ t: "q", v: r3.v, dim: rn.dim, symbol: rn.symbol, def: rn }, ln2, ctx);
+    if (inNum.t === "e") return inNum;
+    const ratio = new DecC(ld.factor.n.toString()).div(ld.factor.d.toString()).div(new DecC(rd.factor.n.toString()).div(rd.factor.d.toString()));
+    return { ...l2, v: inNum.v.times(ratio) };
+  }
+  if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
+  if (l2.def.affine || r3.def.affine) {
+    return err("unit-mismatch", "adding absolute temperatures is undefined \u2014 convert first");
+  }
+  return convertQuantity(r3, l2.def, ctx);
 }
 var isSummable = (rt2) => rt2 !== null && (rt2.t === "d" || rt2.t === "f" || rt2.t === "q");
 function addSummable(acc, v2, ctx) {
@@ -29617,12 +29640,8 @@ function addSummable(acc, v2, ctx) {
       return err("unit-mismatch", "a total cannot mix quantities and bare numbers");
     }
     if (!dimEquals(acc.dim, v2.dim)) return err("unit-mismatch", `cannot total ${acc.symbol} and ${v2.symbol}`);
-    let rhs = v2;
-    if (acc.symbol !== v2.symbol) {
-      if (!acc.def || !v2.def) return err("unsupported-pair", "compound units cannot be totalled");
-      rhs = convertQuantity(v2, acc.def, ctx);
-      if (rhs.t === "e") return rhs;
-    }
+    const rhs = alignForAdd(acc, v2, ctx);
+    if (rhs.t === "e") return rhs;
     return { ...acc, v: acc.v.plus(rhs.v) };
   }
   if (acc.t === "f" && v2.t === "f") return makeFrac(acc.n * v2.d + v2.n * acc.d, acc.d * v2.d, "derived");
@@ -30045,15 +30064,8 @@ function evalAst(ast, env, ctx = {}) {
             if (!dimEquals(l2.dim, r3.dim)) {
               return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
             }
-            let rhs = r3;
-            if (l2.symbol !== r3.symbol) {
-              if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
-              if (l2.def.affine || r3.def.affine) {
-                return err("unit-mismatch", "adding absolute temperatures is undefined \u2014 convert first");
-              }
-              rhs = convertQuantity(r3, l2.def, ctx);
-              if (rhs.t === "e") return rhs;
-            }
+            const rhs = alignForAdd(l2, r3, ctx);
+            if (rhs.t === "e") return rhs;
             const rv = rhs.v;
             return { ...l2, v: ast.op === "+" ? l2.v.plus(rv) : l2.v.minus(rv) };
           }
