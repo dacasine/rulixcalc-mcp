@@ -19426,9 +19426,9 @@ function mergeCapabilities(base, additional) {
     const addValue = additional[k2];
     if (addValue === void 0)
       continue;
-    const baseValue2 = result[k2];
-    if (isPlainObject2(baseValue2) && isPlainObject2(addValue)) {
-      result[k2] = { ...baseValue2, ...addValue };
+    const baseValue = result[k2];
+    if (isPlainObject2(baseValue) && isPlainObject2(addValue)) {
+      result[k2] = { ...baseValue, ...addValue };
     } else {
       result[k2] = addValue;
     }
@@ -29026,6 +29026,7 @@ var DEFS = [
   { id: "mi", symbol: "mi", dim: { length: 1 }, factor: r2(1609344, 1e3) },
   { id: "ft", symbol: "ft", dim: { length: 1 }, factor: r2(3048, 1e4) },
   { id: "inch", symbol: "in", dim: { length: 1 }, factor: r2(254, 1e4) },
+  { id: "yard", symbol: "yd", dim: { length: 1 }, factor: r2(9144, 1e4) },
   // mass (base kg)
   { id: "kg", symbol: "kg", dim: { mass: 1 }, factor: r2(1) },
   { id: "g", symbol: "g", dim: { mass: 1 }, factor: r2(1, 1e3) },
@@ -29033,11 +29034,12 @@ var DEFS = [
   { id: "tonne", symbol: "t", dim: { mass: 1 }, factor: r2(1e3) },
   { id: "lb", symbol: "lb", dim: { mass: 1 }, factor: r2(45359237, 1e8) },
   { id: "oz", symbol: "oz", dim: { mass: 1 }, factor: r2(28349523125n, 1000000000000n) },
-  // temperature (base K) — affine triples K = (a·v + b)/c
-  { id: "kelvin", symbol: "K", dim: { temperature: 1 }, affine: { a: 1n, b: 0n, c: 1n } },
+  // temperature (base K) — K and R are LINEAR (zero offset: true ratio
+  // scales); °C/°F carry affine triples K = (a·v + b)/c and refuse ×/÷
+  { id: "kelvin", symbol: "K", dim: { temperature: 1 }, factor: r2(1) },
   { id: "celsius", symbol: "\xB0C", dim: { temperature: 1 }, affine: { a: 100n, b: 27315n, c: 100n } },
   { id: "fahrenheit", symbol: "\xB0F", dim: { temperature: 1 }, affine: { a: 500n, b: 229835n, c: 900n } },
-  { id: "rankine", symbol: "R", dim: { temperature: 1 }, affine: { a: 5n, b: 0n, c: 9n } },
+  { id: "rankine", symbol: "R", dim: { temperature: 1 }, factor: r2(5, 9) },
   // information (base B, SI decimal multiples)
   { id: "B", symbol: "B", dim: { information: 1 }, factor: r2(1) },
   { id: "KB", symbol: "KB", dim: { information: 1 }, factor: r2(1e3) },
@@ -29141,10 +29143,25 @@ var ALIASES = [
   { alias: "kilometer", unit: "km", caseSensitive: false },
   { alias: "kilometers", unit: "km", caseSensitive: false },
   { alias: "cm", unit: "cm", caseSensitive: false },
+  { alias: "centim\xE8tre", unit: "cm", caseSensitive: false },
+  { alias: "centim\xE8tres", unit: "cm", caseSensitive: false },
+  { alias: "centimetre", unit: "cm", caseSensitive: false },
+  { alias: "centimetres", unit: "cm", caseSensitive: false },
+  { alias: "centimeter", unit: "cm", caseSensitive: false },
+  { alias: "centimeters", unit: "cm", caseSensitive: false },
   { alias: "mm", unit: "mm" },
+  { alias: "millim\xE8tre", unit: "mm", caseSensitive: false },
+  { alias: "millim\xE8tres", unit: "mm", caseSensitive: false },
+  { alias: "millimetre", unit: "mm", caseSensitive: false },
+  { alias: "millimetres", unit: "mm", caseSensitive: false },
+  { alias: "millimeter", unit: "mm", caseSensitive: false },
+  { alias: "millimeters", unit: "mm", caseSensitive: false },
   { alias: "mi", unit: "mi" },
   { alias: "mile", unit: "mi", caseSensitive: false },
   { alias: "miles", unit: "mi", caseSensitive: false },
+  { alias: "yd", unit: "yard", caseSensitive: false },
+  { alias: "yard", unit: "yard", caseSensitive: false },
+  { alias: "yards", unit: "yard", caseSensitive: false },
   { alias: "ft", unit: "ft", caseSensitive: false },
   { alias: "foot", unit: "ft", caseSensitive: false },
   { alias: "feet", unit: "ft", caseSensitive: false },
@@ -29152,11 +29169,17 @@ var ALIASES = [
   { alias: "pieds", unit: "ft", caseSensitive: false },
   { alias: "inch", unit: "inch", caseSensitive: false },
   { alias: "inches", unit: "inch", caseSensitive: false },
+  { alias: "in", unit: "inch" },
+  // emitted symbol — the parser gives conversion "in <unit>" precedence
   { alias: "pouce", unit: "inch", caseSensitive: false },
   { alias: "pouces", unit: "inch", caseSensitive: false },
   { alias: "kg", unit: "kg", caseSensitive: false },
   { alias: "kilo", unit: "kg", caseSensitive: false },
   { alias: "kilos", unit: "kg", caseSensitive: false },
+  { alias: "kilogramme", unit: "kg", caseSensitive: false },
+  { alias: "kilogrammes", unit: "kg", caseSensitive: false },
+  { alias: "kilogram", unit: "kg", caseSensitive: false },
+  { alias: "kilograms", unit: "kg", caseSensitive: false },
   { alias: "g", unit: "g" },
   { alias: "gramme", unit: "g", caseSensitive: false },
   { alias: "grammes", unit: "g", caseSensitive: false },
@@ -29166,6 +29189,8 @@ var ALIASES = [
   { alias: "tonne", unit: "tonne", caseSensitive: false },
   { alias: "tonnes", unit: "tonne", caseSensitive: false },
   { alias: "ton", unit: "tonne", caseSensitive: false },
+  { alias: "t", unit: "tonne" },
+  // lowercase exact: the engine EMITS "t" — every emitted symbol must re-lex
   { alias: "lb", unit: "lb", caseSensitive: false },
   { alias: "lbs", unit: "lb", caseSensitive: false },
   { alias: "livre", unit: "lb", caseSensitive: false },
@@ -29225,6 +29250,8 @@ var ALIASES = [
   { alias: "dl", unit: "dl" },
   { alias: "gallon", unit: "gallon", caseSensitive: false },
   { alias: "gallons", unit: "gallon", caseSensitive: false },
+  { alias: "gal", unit: "gallon", caseSensitive: false },
+  // emitted symbol
   // area
   { alias: "ha", unit: "hectare", caseSensitive: false },
   { alias: "hectare", unit: "hectare", caseSensitive: false },
@@ -29276,6 +29303,8 @@ var ALIASES = [
   { alias: "radians", unit: "radian", caseSensitive: false },
   { alias: "tour", unit: "turn", caseSensitive: false },
   { alias: "tours", unit: "turn", caseSensitive: false },
+  { alias: "tr", unit: "turn" },
+  // emitted symbol
   // speed
   { alias: "mph", unit: "mph", caseSensitive: false },
   { alias: "kn", unit: "knot" },
@@ -29325,19 +29354,47 @@ function lookupPowerUnit(word) {
   const m2 = /^(.+?)(²|³|2|3)$/.exec(word);
   if (!m2) return void 0;
   const base = exactAliases.get(m2[1]) ?? ciAliases.get(m2[1].toLowerCase());
-  if (!base?.factor || base.dim["length"] !== 1 || Object.keys(base.dim).length !== 1) return void 0;
+  const isDigit2 = m2[2] === "2" || m2[2] === "3";
+  const dimKeys = base ? Object.keys(base.dim) : [];
+  if (!base?.factor || dimKeys.length !== 1 || base.dim[dimKeys[0]] !== 1) return void 0;
+  if (isDigit2 && dimKeys[0] !== "length") return void 0;
   const n2 = m2[2] === "\xB2" || m2[2] === "2" ? 2 : 3;
   const def = {
     id: `${base.id}^${n2}`,
     symbol: `${base.symbol}${n2 === 2 ? "\xB2" : "\xB3"}`,
-    dim: { length: n2 },
+    dim: { [dimKeys[0]]: n2 },
     factor: { n: base.factor.n ** BigInt(n2), d: base.factor.d ** BigInt(n2) }
   };
   derivedCache.set(word, def);
   return def;
 }
+function lookupCompoundUnit(word) {
+  if (!word.includes("\xB7")) return void 0;
+  const cached2 = derivedCache.get(word);
+  if (cached2) return cached2;
+  const parts = word.split("\xB7");
+  const defs = [];
+  for (const p2 of parts) {
+    const d2 = exactAliases.get(p2) ?? ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2);
+    if (!d2 || d2.affine) return void 0;
+    defs.push(d2);
+  }
+  let dim = {};
+  for (const d2 of defs) dim = dimAdd(dim, d2.dim, 1);
+  const pure = defs.every((d2) => d2.factor && !d2.currency && !d2.factorDec);
+  const def = {
+    id: defs.map((d2) => d2.id).join("\xB7"),
+    symbol: defs.map((d2) => d2.symbol).join("\xB7"),
+    dim,
+    ...pure && {
+      factor: defs.reduce((acc, d2) => ({ n: acc.n * d2.factor.n, d: acc.d * d2.factor.d }), { n: 1n, d: 1n })
+    }
+  };
+  derivedCache.set(word, def);
+  return def;
+}
 function lookupUnit(word) {
-  return exactAliases.get(word) ?? ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word);
+  return exactAliases.get(word) ?? ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word) ?? lookupCompoundUnit(word);
 }
 var ratEq = (a2, b2) => a2.n * b2.d === b2.n * a2.d;
 function findUnitByDimFactor(dim, factor) {
@@ -29403,6 +29460,47 @@ var tripleFromLinear = (u2) => ({
 
 // ../textual-calculator/core/packages/engine/src/evaluator.ts
 var err = (code, detail) => detail === void 0 ? { t: "e", code } : { t: "e", code, detail };
+var bgcd = (a2, b2) => {
+  a2 = a2 < 0n ? -a2 : a2;
+  b2 = b2 < 0n ? -b2 : b2;
+  while (b2) {
+    const t2 = a2 % b2;
+    a2 = b2;
+    b2 = t2;
+  }
+  return a2 || 1n;
+};
+var rnorm = (x2) => {
+  const g2 = bgcd(x2.n, x2.d);
+  const s2 = x2.d < 0n ? -1n : 1n;
+  return { n: s2 * x2.n / g2, d: s2 * x2.d / g2 };
+};
+var rMul = (a2, b2) => rnorm({ n: a2.n * b2.n, d: a2.d * b2.d });
+var rDiv = (a2, b2) => rnorm({ n: a2.n * b2.d, d: a2.d * b2.n });
+var rAdd = (a2, b2) => rnorm({ n: a2.n * b2.d + b2.n * a2.d, d: a2.d * b2.d });
+var rSub = (a2, b2) => rnorm({ n: a2.n * b2.d - b2.n * a2.d, d: a2.d * b2.d });
+var rPowInt = (a2, e) => e >= 0 ? { n: a2.n ** BigInt(e), d: a2.d ** BigInt(e) } : rnorm({ n: a2.d ** BigInt(-e), d: a2.n ** BigInt(-e) });
+function decToRat(v2) {
+  const s2 = v2.toFixed();
+  const neg = s2.startsWith("-");
+  const body = neg ? s2.slice(1) : s2;
+  const [int2, frac = ""] = body.split(".");
+  const n2 = BigInt(int2 + frac);
+  return rnorm({ n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) });
+}
+var ratToDec = (x2) => new DecC(x2.n.toString()).div(x2.d.toString());
+var ratIsExactDec = (x2) => {
+  let d2 = rnorm(x2).d;
+  while (d2 % 2n === 0n) d2 /= 2n;
+  while (d2 % 5n === 0n) d2 /= 5n;
+  return d2 === 1n;
+};
+var qx = (q2) => q2.vx ?? decToRat(q2.v);
+var qv = (x2) => {
+  const norm = rnorm(x2);
+  return { v: ratToDec(norm), vx: ratIsExactDec(norm) ? void 0 : norm };
+};
+var ratOfFactor = (f2) => ({ n: f2.n, d: f2.d });
 var gcd = (a2, b2) => {
   a2 = a2 < 0n ? -a2 : a2;
   b2 = b2 < 0n ? -b2 : b2;
@@ -29600,6 +29698,25 @@ var addSpans = (a2, b2, sign2) => {
   }
   return out;
 };
+var mkQ = (x2, def) => ({
+  t: "q",
+  ...qv(x2),
+  dim: def.dim,
+  symbol: def.symbol,
+  def,
+  comps: [{ def, exp: 1 }]
+});
+function convertRat(x2, from, to) {
+  if (from.factorDec || to.factorDec) return null;
+  if (from.affine || to.affine) {
+    const A2 = from.affine ?? { a: from.factor.n, b: 0n, c: from.factor.d };
+    const B2 = to.affine ?? { a: to.factor.n, b: 0n, c: to.factor.d };
+    const kn = A2.a * x2.n + A2.b * x2.d;
+    const kd = A2.c * x2.d;
+    return rnorm({ n: kn * B2.c - B2.b * kd, d: kd * B2.a });
+  }
+  return rMul(x2, rDiv(ratOfFactor(from.factor), ratOfFactor(to.factor)));
+}
 function convertQuantity(rt2, to, ctx) {
   const from = rt2.def;
   if (!from) return err("unsupported-pair", `cannot convert the compound unit \u201C${rt2.symbol}\u201D`);
@@ -29607,18 +29724,18 @@ function convertQuantity(rt2, to, ctx) {
     return err("unit-mismatch", `cannot convert ${from.symbol} to ${to.symbol}`);
   }
   if (from.currency || to.currency) {
-    if (from.currency === to.currency) return { ...rt2, def: to, symbol: to.symbol };
+    if (from.currency === to.currency) return { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] };
     const provider = ctx.rates;
     if (!provider) {
       return err("rates-unavailable", `no rate provider for ${from.currency} \u2192 ${to.currency}`);
     }
     const direct = provider.rate(from.currency, to.currency);
-    if (direct) return { t: "q", v: rt2.v.times(new DecC(direct.rate)), dim: to.dim, symbol: to.symbol, def: to };
+    if (direct) return mkQ(rMul(qx(rt2), decToRat(new DecC(direct.rate))), to);
     const inverse = provider.rate(to.currency, from.currency);
     if (inverse) {
-      const r3 = new DecC(inverse.rate);
-      if (r3.isZero()) return err("rates-unavailable");
-      return { t: "q", v: rt2.v.div(r3), dim: to.dim, symbol: to.symbol, def: to };
+      const r3 = decToRat(new DecC(inverse.rate));
+      if (r3.n === 0n) return err("rates-unavailable");
+      return mkQ(rDiv(qx(rt2), r3), to);
     }
     return err("rates-unavailable", `no rate for ${from.currency} \u2192 ${to.currency}`);
   }
@@ -29626,7 +29743,11 @@ function convertQuantity(rt2, to, ctx) {
   if (!convertible(from) || !convertible(to)) {
     return err("unsupported-pair", `cannot convert ${from.symbol} to ${to.symbol}`);
   }
-  return { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to };
+  const x2 = convertRat(qx(rt2), from, to);
+  if (x2 === null) {
+    return { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0 };
+  }
+  return mkQ(x2, to);
 }
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
@@ -29636,46 +29757,130 @@ function alignForAdd(l2, r3, ctx) {
     if (!dimEquals(ld.dim, rd.dim) || !ld.factor || !rd.factor) {
       return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
     }
-    const inNum = convertQuantity({ t: "q", v: r3.v, dim: rn.dim, symbol: rn.symbol, def: rn }, ln2, ctx);
+    const inNum = convertQuantity({ t: "q", ...qv(qx(r3)), dim: rn.dim, symbol: rn.symbol, def: rn }, ln2, ctx);
     if (inNum.t === "e") return inNum;
-    const ratio = new DecC(ld.factor.n.toString()).div(ld.factor.d.toString()).div(new DecC(rd.factor.n.toString()).div(rd.factor.d.toString()));
-    return { ...l2, v: inNum.v.times(ratio) };
+    const ratio = rDiv(ratOfFactor(ld.factor), ratOfFactor(rd.factor));
+    return { ...l2, ...qv(rMul(qx(inNum), ratio)) };
   }
   if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
-  if (l2.def.affine || r3.def.affine) {
-    return err("unit-mismatch", "adding absolute temperatures is undefined \u2014 convert first");
-  }
-  return convertQuantity(r3, l2.def, ctx);
+  const conv = convertQuantity(r3, l2.def, ctx);
+  if (conv.t === "e") return conv;
+  return { ...l2, ...qv(qx(conv)) };
 }
-function baseValue(q2) {
-  if (q2.def?.factor) return q2.v.times(new DecC(q2.def.factor.n.toString())).div(q2.def.factor.d.toString());
-  if (q2.def?.factorDec) return q2.v.times(new DecC(q2.def.factorDec));
+var isOffsetScale = (q2) => q2.def?.affine !== void 0 && q2.def.affine.b !== 0n;
+var isPureLinear = (u2) => u2.factor !== void 0 && !u2.affine && !u2.currency && !u2.factorDec;
+var compsOf = (q2) => {
+  if (q2.comps) return q2.comps.map((c2) => ({ ...c2 }));
+  if (q2.def) return [{ def: q2.def, exp: 1 }];
+  if (q2.rate) return [{ def: q2.rate.num, exp: 1 }, { def: q2.rate.den, exp: -1 }];
   return null;
+};
+var sup = (e) => e === 1 ? "" : e === 2 ? "\xB2" : e === 3 ? "\xB3" : `^${e}`;
+function compsSymbol(comps) {
+  const nums = comps.filter((c2) => c2.exp > 0);
+  const dens = comps.filter((c2) => c2.exp < 0);
+  const numStr = nums.map((c2) => `${c2.def.symbol}${sup(c2.exp)}`).join("\xB7") || "1";
+  if (dens.length === 0) return numStr;
+  const denStr = dens.map((c2) => `${c2.def.symbol}${sup(-c2.exp)}`).join("\xB7");
+  return dens.length > 1 ? `${numStr}/(${denStr})` : `${numStr}/${denStr}`;
 }
-function composeQuantity(v2, dim, l2, r3, op) {
-  const sep = op === "*" ? "\xB7" : "/";
-  const symbol = op === "*" && l2.symbol === r3.symbol ? `${l2.symbol}\xB2` : `${l2.symbol}${sep}${r3.symbol}`;
-  const lf = l2.def?.factor;
-  const rf = r3.def?.factor;
-  const pure = (u2) => u2 !== void 0 && !u2.affine && !u2.factorDec && !u2.currency;
-  if (lf && rf && pure(l2.def) && pure(r3.def)) {
-    const factor = op === "*" ? { n: lf.n * rf.n, d: lf.d * rf.d } : { n: lf.n * rf.d, d: lf.d * rf.n };
+var dimOfComps = (comps) => {
+  const out = {};
+  for (const c2 of comps) {
+    for (const [k2, v2] of Object.entries(c2.def.dim)) {
+      const sum2 = (out[k2] ?? 0) + v2 * c2.exp;
+      if (sum2 === 0) delete out[k2];
+      else out[k2] = sum2;
+    }
+  }
+  return out;
+};
+function combineQuantities(l2, r3, op, ctx) {
+  if (op === "/" && qx(r3).n === 0n) return err("division-by-zero");
+  const lc = compsOf(l2);
+  const rc = compsOf(r3);
+  const sign2 = op === "*" ? 1 : -1;
+  let x2 = op === "*" ? rMul(qx(l2), qx(r3)) : rDiv(qx(l2), qx(r3));
+  if (lc === null || rc === null) {
+    return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
+  }
+  const merged = lc;
+  for (const c2 of rc) {
+    const e = c2.exp * sign2;
+    const same = merged.find((m2) => m2.def.id === c2.def.id && m2.exp !== 0);
+    if (same) {
+      same.exp += e;
+      continue;
+    }
+    const kin = merged.find((m2) => m2.exp !== 0 && dimEquals(m2.def.dim, c2.def.dim) && isPureLinear(m2.def) && isPureLinear(c2.def));
+    if (kin) {
+      x2 = rMul(x2, rPowInt(rDiv(ratOfFactor(c2.def.factor), ratOfFactor(kin.def.factor)), e));
+      kin.exp += e;
+      continue;
+    }
+    merged.push({ def: c2.def, exp: e });
+  }
+  const comps = merged.filter((m2) => m2.exp !== 0);
+  const dim = dimOfComps(comps);
+  if (dimIsEmpty(dim)) {
+    let decScale = null;
+    let fxFrom = null;
+    let fxTo = null;
+    for (const c2 of comps) {
+      if (c2.def.currency) {
+        if (c2.exp === 1 && fxFrom === null) fxFrom = c2.def.currency;
+        else if (c2.exp === -1 && fxTo === null) fxTo = c2.def.currency;
+        else return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
+      } else if (isPureLinear(c2.def)) {
+        x2 = rMul(x2, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
+      } else if (c2.def.factorDec) {
+        const f2 = new DecC(c2.def.factorDec).pow(c2.exp);
+        decScale = decScale === null ? f2 : decScale.times(f2);
+      } else {
+        return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
+      }
+    }
+    if (fxFrom !== null || fxTo !== null) {
+      if (fxFrom === null || fxTo === null) return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
+      const provider = ctx.rates;
+      if (!provider) return err("rates-unavailable", `no rate provider for ${fxFrom} \u2192 ${fxTo}`);
+      const direct = provider.rate(fxFrom, fxTo);
+      const inverse = direct ? void 0 : provider.rate(fxTo, fxFrom);
+      if (direct) x2 = rMul(x2, decToRat(new DecC(direct.rate)));
+      else if (inverse) {
+        const rr = decToRat(new DecC(inverse.rate));
+        if (rr.n === 0n) return err("rates-unavailable");
+        x2 = rDiv(x2, rr);
+      } else return err("rates-unavailable", `no rate for ${fxFrom} \u2192 ${fxTo}`);
+    }
+    return { t: "d", v: decScale === null ? ratToDec(x2) : ratToDec(x2).times(decScale) };
+  }
+  let def;
+  let symbol;
+  let outComps = comps;
+  if (comps.length === 1 && comps[0].exp === 1) {
+    def = comps[0].def;
+    symbol = def.symbol;
+  } else if (comps.every((c2) => isPureLinear(c2.def))) {
+    let factor = { n: 1n, d: 1n };
+    for (const c2 of comps) factor = rMul(factor, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
     const canonical = findUnitByDimFactor(dim, factor);
     if (canonical) {
-      return {
-        t: "q",
-        v: v2,
-        dim,
-        symbol: canonical.symbol,
-        def: canonical,
-        ...op === "/" && { rate: { num: l2.def, den: r3.def } }
-      };
+      def = canonical;
+      symbol = canonical.symbol;
+      outComps = [{ def: canonical, exp: 1 }];
+    } else {
+      symbol = compsSymbol(comps);
+      def = { id: comps.map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7"), symbol, dim, factor };
     }
-    const def = { id: `${l2.def.id}${sep}${r3.def.id}`, symbol, dim, factor };
-    return { t: "q", v: v2, dim, symbol, def, ...op === "/" && { rate: { num: l2.def, den: r3.def } } };
+  } else {
+    symbol = compsSymbol(comps);
+    def = void 0;
   }
-  if (op === "/" && l2.def && r3.def) return { t: "q", v: v2, dim, symbol, rate: { num: l2.def, den: r3.def } };
-  return { t: "q", v: v2, dim, symbol };
+  const pos = outComps.filter((c2) => c2.exp === 1);
+  const neg = outComps.filter((c2) => c2.exp === -1);
+  const rate = outComps.length === 2 && pos.length === 1 && neg.length === 1 ? { num: pos[0].def, den: neg[0].def } : void 0;
+  return { t: "q", ...qv(x2), dim, symbol, ...def && { def }, ...rate && { rate }, comps: outComps };
 }
 var isSummable = (rt2) => rt2 !== null && (rt2.t === "d" || rt2.t === "f" || rt2.t === "q");
 function addSummable(acc, v2, ctx) {
@@ -29686,7 +29891,7 @@ function addSummable(acc, v2, ctx) {
     if (!dimEquals(acc.dim, v2.dim)) return err("unit-mismatch", `cannot total ${acc.symbol} and ${v2.symbol}`);
     const rhs = alignForAdd(acc, v2, ctx);
     if (rhs.t === "e") return rhs;
-    return { ...acc, v: acc.v.plus(rhs.v) };
+    return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))) };
   }
   if (acc.t === "f" && v2.t === "f") return makeFrac(acc.n * v2.d + v2.n * acc.d, acc.d * v2.d, "derived");
   return { t: "d", v: toDec(acc).plus(toDec(v2)) };
@@ -29747,7 +29952,7 @@ function evalAst(ast, env, ctx = {}) {
         const mid = items.length >> 1;
         if (items.length % 2 === 1) return items[mid].rt;
         const avg = items[mid - 1].v.plus(items[mid].v).div(2);
-        return first.t === "q" ? { ...items[0].rt, v: avg } : { t: "d", v: avg };
+        return first.t === "q" ? { ...items[0].rt, v: avg, vx: void 0 } : { t: "d", v: avg };
       }
       let acc = null;
       for (const v2 of values) {
@@ -29761,9 +29966,9 @@ function evalAst(ast, env, ctx = {}) {
       }
       if (ast.fn === "total") return acc ?? { t: "d", v: new DecC(0) };
       if (acc === null) return err("not-understood", "nothing to average in this section");
-      const n2 = new DecC(values.length);
-      if (acc.t === "q") return { ...acc, v: acc.v.div(n2) };
-      return { t: "d", v: toDec(acc).div(n2) };
+      const n2 = { n: BigInt(values.length), d: 1n };
+      if (acc.t === "q") return { ...acc, ...qv(rDiv(qx(acc), n2)) };
+      return { t: "d", v: toDec(acc).div(values.length) };
     }
     case "workdays": {
       const count = evalAst(ast.count, env, ctx);
@@ -29829,7 +30034,7 @@ function evalAst(ast, env, ctx = {}) {
           result = principal.times(r3).div(denom);
         }
       }
-      return amount.t === "q" ? { ...amount, v: result } : { t: "d", v: result };
+      return amount.t === "q" ? { ...amount, v: result, vx: void 0 } : { t: "d", v: result };
     }
     case "unitCompound": {
       const e = evalAst(ast.e, env, ctx);
@@ -29849,7 +30054,16 @@ function evalAst(ast, env, ctx = {}) {
           factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n }
         }
       };
-      return { t: "q", v: toDec(e), dim, symbol: def.symbol, def, rate: { num, den } };
+      const x2 = e.t === "f" ? rnorm({ n: e.n, d: e.d }) : decToRat(e.v);
+      return {
+        t: "q",
+        ...qv(x2),
+        dim,
+        symbol: def.symbol,
+        def,
+        rate: { num, den },
+        comps: [{ def: num, exp: 1 }, { def: den, exp: -1 }]
+      };
     }
     case "pctOff": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -29858,7 +30072,9 @@ function evalAst(ast, env, ctx = {}) {
       const base = evalAst(ast.base, env, ctx);
       if (base.t === "e") return base;
       const factor = HUNDRED.minus(p2.v).div(HUNDRED);
-      if (base.t === "q") return { ...base, v: base.v.times(factor) };
+      if (base.t === "q") {
+        return { ...base, ...qv(rMul(qx(base), rDiv(rSub({ n: 100n, d: 1n }, decToRat(p2.v)), { n: 100n, d: 1n }))) };
+      }
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "discount needs a plain number or quantity");
       return { t: "d", v: toDec(base).times(factor) };
     }
@@ -29870,7 +30086,9 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "p") return { t: "p", v: e.v.neg() };
       if (e.t === "ts") return { t: "ts", c: addSpans({}, e.c, -1) };
       if (e.t === "ds" || e.t === "wd" || e.t === "ct") return err("unsupported-pair", "this value cannot be negated");
-      if (e.t === "q") return { ...e, v: e.v.neg() };
+      if (e.t === "q") {
+        return { ...e, v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0 };
+      }
       return { t: "d", v: e.v.neg() };
     }
     case "scale": {
@@ -29896,7 +30114,7 @@ function evalAst(ast, env, ctx = {}) {
       if (base.t === "e") return base;
       const factor = p2.v.div(HUNDRED);
       if (base.t === "p") return { t: "p", v: base.v.times(factor) };
-      if (base.t === "q") return { ...base, v: base.v.times(factor) };
+      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(decToRat(p2.v), { n: 100n, d: 1n }))) };
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
       return { t: "d", v: toDec(base).times(factor) };
     }
@@ -29906,7 +30124,7 @@ function evalAst(ast, env, ctx = {}) {
       if (p2.t !== "p") return err("unsupported-pair", "\u201Csur/on\u201D needs a percentage on its left");
       const base = evalAst(ast.base, env, ctx);
       if (base.t === "e") return base;
-      if (base.t === "q") return { ...base, v: base.v.times(HUNDRED.plus(p2.v).div(HUNDRED)) };
+      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(rAdd({ n: 100n, d: 1n }, decToRat(p2.v)), { n: 100n, d: 1n }))) };
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "markup needs a plain number or quantity");
       return { t: "d", v: toDec(base).times(HUNDRED.plus(p2.v).div(HUNDRED)) };
     }
@@ -30020,7 +30238,7 @@ function evalAst(ast, env, ctx = {}) {
         if (!dimEquals(target.dim, den.dim)) {
           return err("anchor-required", `converting a rate from ${den.symbol} to ${target.symbol} needs a date anchor`);
         }
-        const ratio = new DecC(target.factor.n.toString()).div(target.factor.d.toString()).div(new DecC(den.factor.n.toString()).div(den.factor.d.toString()));
+        const ratio = rDiv(ratOfFactor(target.factor), ratOfFactor(den.factor));
         const num = e.rate.num;
         const dim = dimAdd(num.dim, target.dim, -1);
         const def = {
@@ -30031,7 +30249,15 @@ function evalAst(ast, env, ctx = {}) {
             factor: { n: num.factor.n * target.factor.d, d: num.factor.d * target.factor.n }
           }
         };
-        return { t: "q", v: e.v.times(ratio), dim, symbol: def.symbol, def, rate: { num, den: target } };
+        return {
+          t: "q",
+          ...qv(rMul(qx(e), ratio)),
+          dim,
+          symbol: def.symbol,
+          def,
+          rate: { num, den: target },
+          comps: [{ def: num, exp: 1 }, { def: target, exp: -1 }]
+        };
       }
       if (e.t !== "ts") return err("unsupported-pair", "only a timespan converts to calendar units");
       if (ast.unit !== "day") {
@@ -30049,7 +30275,8 @@ function evalAst(ast, env, ctx = {}) {
       const def = lookupUnit(ast.word);
       if (!def) return err("not-understood", `\u201C${ast.word}\u201D is not a registered unit or currency`);
       if (e.t === "d" || e.t === "f") {
-        return { t: "q", v: toDec(e), dim: def.dim, symbol: def.symbol, def };
+        const x2 = e.t === "f" ? rnorm({ n: e.n, d: e.d }) : decToRat(e.v);
+        return mkQ(x2, def);
       }
       return err("unsupported-pair", `cannot attach the unit \u201C${ast.word}\u201D here`);
     }
@@ -30057,10 +30284,38 @@ function evalAst(ast, env, ctx = {}) {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       let target = lookupUnit(ast.word);
-      if (ast.denWord !== void 0) {
+      if (ast.denWord !== void 0 || ast.denSpan !== void 0) {
         const num = target;
-        const den = lookupUnit(ast.denWord);
-        if (!num.factor || !den.factor) {
+        const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.denWord);
+        if (den.currency || den.affine || den.factorDec || !den.factor || num.affine || num.factorDec) {
+          return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate target`);
+        }
+        if (e.t === "q" && e.rate) {
+          const { num: sn, den: sd } = e.rate;
+          if (!dimEquals(sn.dim, num.dim) || !dimEquals(sd.dim, den.dim) || !sd.factor) {
+            return err("unit-mismatch", `cannot convert ${e.symbol} to ${num.symbol}/${den.symbol}`);
+          }
+          const inNum = convertQuantity({ t: "q", ...qv(qx(e)), dim: sn.dim, symbol: sn.symbol, def: sn }, num, ctx);
+          if (inNum.t === "e") return inNum;
+          const x2 = rMul(qx(inNum), rDiv(ratOfFactor(den.factor), ratOfFactor(sd.factor)));
+          const dim = dimAdd(num.dim, den.dim, -1);
+          const def = {
+            id: `${num.id}/${den.id}`,
+            symbol: `${num.symbol}/${den.symbol}`,
+            dim,
+            ...num.factor && { factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n } }
+          };
+          return {
+            t: "q",
+            ...qv(x2),
+            dim,
+            symbol: def.symbol,
+            def,
+            rate: { num, den },
+            comps: [{ def: num, exp: 1 }, { def: den, exp: -1 }]
+          };
+        }
+        if (!num.factor) {
           return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate target`);
         }
         target = {
@@ -30070,12 +30325,7 @@ function evalAst(ast, env, ctx = {}) {
           factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n }
         };
       }
-      if (e.t === "q") {
-        if (!e.def && ast.denWord !== void 0 && dimEquals(e.dim, target.dim)) {
-          return err("unsupported-pair", `convert the operands before dividing to reach ${target.symbol}`);
-        }
-        return convertQuantity(e, target, ctx);
-      }
+      if (e.t === "q") return convertQuantity(e, target, ctx);
       return err("unit-mismatch", `only a quantity can be converted to ${target.symbol}`);
     }
     case "bin": {
@@ -30085,23 +30335,24 @@ function evalAst(ast, env, ctx = {}) {
       if (r3.t === "e") return r3;
       if ((l2.t === "q" || r3.t === "q") && l2.t !== "ct" && r3.t !== "ct") {
         if (l2.t === "q" && r3.t === "p") {
-          const factor = r3.v.div(HUNDRED);
+          const p2 = decToRat(r3.v);
+          const cent = { n: 100n, d: 1n };
           switch (ast.op) {
             case "+":
-              return { ...l2, v: l2.v.times(HUNDRED.plus(r3.v).div(HUNDRED)) };
+              return { ...l2, ...qv(rMul(qx(l2), rDiv(rAdd(cent, p2), cent))) };
             case "-":
-              return { ...l2, v: l2.v.times(HUNDRED.minus(r3.v).div(HUNDRED)) };
+              return { ...l2, ...qv(rMul(qx(l2), rDiv(rSub(cent, p2), cent))) };
             case "*":
-              return { ...l2, v: l2.v.times(factor) };
+              return { ...l2, ...qv(rMul(qx(l2), rDiv(p2, cent))) };
             case "/":
-              if (factor.isZero()) return err("division-by-zero");
-              return { ...l2, v: l2.v.div(factor) };
+              if (p2.n === 0n) return err("division-by-zero");
+              return { ...l2, ...qv(rDiv(qx(l2), rDiv(p2, cent))) };
             default:
               return err("unsupported-pair");
           }
         }
         if (l2.t === "p" && r3.t === "q" && ast.op === "*") {
-          return { ...r3, v: r3.v.times(l2.v.div(HUNDRED)) };
+          return { ...r3, ...qv(rMul(qx(r3), rDiv(decToRat(l2.v), { n: 100n, d: 1n }))) };
         }
         if (l2.t === "q" && r3.t === "q") {
           if (ast.op === "+" || ast.op === "-") {
@@ -30110,64 +30361,29 @@ function evalAst(ast, env, ctx = {}) {
             }
             const rhs = alignForAdd(l2, r3, ctx);
             if (rhs.t === "e") return rhs;
-            const rv = rhs.v;
-            return { ...l2, v: ast.op === "+" ? l2.v.plus(rv) : l2.v.minus(rv) };
+            const xr = qx(rhs);
+            return { ...l2, ...qv(ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr)) };
           }
-          if (ast.op === "*") {
-            const rateSide = l2.rate ? l2 : r3.rate ? r3 : null;
-            const otherSide = l2.rate ? r3 : l2;
-            if (rateSide?.rate && otherSide.def && dimEquals(rateSide.rate.den.dim, otherSide.dim)) {
-              const inDen = convertQuantity(otherSide, rateSide.rate.den, ctx);
-              if (inDen.t === "e") return inDen;
-              const num = rateSide.rate.num;
-              return {
-                t: "q",
-                v: rateSide.v.times(inDen.v),
-                dim: num.dim,
-                symbol: num.symbol,
-                def: num
-              };
+          if (ast.op === "*" || ast.op === "/") {
+            if (isOffsetScale(l2) || isOffsetScale(r3)) {
+              return err("unit-mismatch", "multiplying or dividing offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
             }
-            let rr = r3;
-            if (dimEquals(l2.dim, r3.dim) && l2.symbol !== r3.symbol) {
-              const aligned = alignForAdd(l2, r3, ctx);
-              if (aligned.t === "e") return aligned;
-              rr = aligned;
-            }
-            const dim = dimAdd(l2.dim, rr.dim, 1);
-            if (dimIsEmpty(dim)) {
-              const bl = baseValue(l2);
-              const br = baseValue(rr);
-              if (bl === null || br === null) {
-                return err("unsupported-pair", `cannot cancel ${l2.symbol} \xD7 ${rr.symbol} exactly`);
-              }
-              return { t: "d", v: bl.times(br) };
-            }
-            return composeQuantity(l2.v.times(rr.v), dim, l2, rr, "*");
-          }
-          if (ast.op === "/") {
-            if (r3.v.isZero()) return err("division-by-zero");
-            if (dimEquals(l2.dim, r3.dim)) {
-              if (l2.symbol === r3.symbol) return { t: "d", v: l2.v.div(r3.v) };
-              const aligned = alignForAdd(l2, r3, ctx);
-              if (aligned.t === "e") return aligned;
-              return { t: "d", v: l2.v.div(aligned.v) };
-            }
-            return composeQuantity(l2.v.div(r3.v), dimAdd(l2.dim, r3.dim, -1), l2, r3, "/");
+            return combineQuantities(l2, r3, ast.op, ctx);
           }
           return err("unsupported-pair", `quantity ^ quantity is undefined`);
         }
         if (l2.t === "q" && (r3.t === "d" || r3.t === "f")) {
-          const b3 = toDec(r3);
-          if (ast.op === "*") return { ...l2, v: l2.v.times(b3) };
+          const b3 = r3.t === "f" ? rnorm({ n: r3.n, d: r3.d }) : decToRat(r3.v);
+          if (ast.op === "*") return { ...l2, ...qv(rMul(qx(l2), b3)) };
           if (ast.op === "/") {
-            if (b3.isZero()) return err("division-by-zero");
-            return { ...l2, v: l2.v.div(b3) };
+            if (b3.n === 0n) return err("division-by-zero");
+            return { ...l2, ...qv(rDiv(qx(l2), b3)) };
           }
-          return err("unit-mismatch", `\u201C${l2.symbol} ${ast.op} ${b3.toString()}\u201D mixes a quantity with a bare number`);
+          return err("unit-mismatch", `\u201C${l2.symbol} ${ast.op} ${toDec(r3).toString()}\u201D mixes a quantity with a bare number`);
         }
         if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && ast.op === "*") {
-          return { ...r3, v: r3.v.times(toDec(l2)) };
+          const b3 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : decToRat(l2.v);
+          return { ...r3, ...qv(rMul(qx(r3), b3)) };
         }
         {
           const isErr = (x2) => "t" in x2;
@@ -30179,7 +30395,7 @@ function evalAst(ast, env, ctx = {}) {
               const count = spanInCalUnit(otherSide.c, den);
               if (isErr(count)) return count;
               const num = rateSide.rate.num;
-              return { t: "q", v: rateSide.v.times(count), dim: num.dim, symbol: num.symbol, def: num };
+              return mkQ(rMul(qx(rateSide), decToRat(count)), num);
             }
           }
           if (l2.t === "q" && r3.t === "ts" && ast.op === "/") {
@@ -30199,16 +30415,23 @@ function evalAst(ast, env, ctx = {}) {
                 factor: { n: l2.def.factor.n * den.factor.d, d: l2.def.factor.d * den.factor.n }
               }
             };
-            return { t: "q", v: l2.v.div(count), dim, symbol: def.symbol, def, rate: { num: l2.def, den } };
+            return {
+              t: "q",
+              ...qv(rDiv(qx(l2), decToRat(count))),
+              dim,
+              symbol: def.symbol,
+              def,
+              rate: { num: l2.def, den },
+              comps: [{ def: l2.def, exp: 1 }, { def: den, exp: -1 }]
+            };
           }
         }
         return err("unsupported-pair", "this combination of quantity operands is undefined");
       }
       if (l2.t === "ct" || r3.t === "ct") {
         if (l2.t === "ct" && r3.t === "ct" && ast.op === "-") {
-          const hours = new DecC(l2.mins - r3.mins).div(60);
           const hourDef = lookupUnit("h");
-          return { t: "q", v: hours, dim: hourDef.dim, symbol: hourDef.symbol, def: hourDef };
+          return mkQ(rnorm({ n: BigInt(l2.mins - r3.mins), d: 60n }), hourDef);
         }
         const clock = l2.t === "ct" ? l2 : r3;
         const other = l2.t === "ct" ? r3 : l2;
@@ -30731,6 +30954,10 @@ function lex(line, grammar, dateOrder = "dmy") {
         i2++;
         continue;
       }
+      if (c2 === "\xB7" && isLetter(line[i2 + 1] ?? "")) {
+        i2++;
+        continue;
+      }
       if ((c2 === "'" || c2 === "\u2019") && isLetter(line[i2 + 1])) {
         i2 += 2;
         continue;
@@ -31111,6 +31338,13 @@ var ParseError = class extends Error {
 function parse3(tokens) {
   let pos = 0;
   const peek = () => tokens[pos];
+  const isConversionTarget = (tok) => tok?.kind === "word" && (isUnitWord(tok.text) || TIMESPAN_UNITS[tok.text.toLowerCase()] !== void 0 || BASE_WORDS[tok.text.toLowerCase()] !== void 0);
+  const conversionBindsAt = (i2) => {
+    const nxt = tokens[i2 + 1];
+    if (!isConversionTarget(nxt)) return false;
+    if (nxt.kind === "word" && CONVERT_WORDS.has(nxt.text.toLowerCase()) && isConversionTarget(tokens[i2 + 2])) return false;
+    return true;
+  };
   const lbp = (t2) => {
     if (!t2) return 0;
     if (t2.kind === "op") {
@@ -31121,6 +31355,7 @@ function parse3(tokens) {
     if (t2.kind === "percent") return 50;
     if (t2.kind === "bang") return 55;
     if (t2.kind === "word") {
+      if (CONVERT_WORDS.has(t2.text.toLowerCase()) && conversionBindsAt(pos)) return 8;
       if (SCALAR_WORDS[t2.text] !== void 0) return 45;
       if (TIMESPAN_UNITS[t2.text.toLowerCase()] !== void 0) return 45;
       if (isUnitWord(t2.text)) return 45;
@@ -31350,8 +31585,11 @@ function parse3(tokens) {
           continue;
         }
         if (isUnitWord(t2.text)) {
-          left = tryRateSuffix({ k: "unit", e: left, word: t2.text });
-          continue;
+          const isConversionUse = CONVERT_WORDS.has(t2.text.toLowerCase()) && conversionBindsAt(pos - 1);
+          if (!isConversionUse) {
+            left = tryRateSuffix({ k: "unit", e: left, word: t2.text });
+            continue;
+          }
         }
         if (AMPM_WORDS.has(t2.text.toLowerCase()) && left.k === "num") {
           const h2 = left.dec.toNumber();
@@ -31364,10 +31602,18 @@ function parse3(tokens) {
           if (target?.kind === "word" && isUnitWord(target.text)) {
             const slash = tokens[pos];
             const denTok = tokens[pos + 1];
-            if (slash?.kind === "op" && slash.op === "/" && denTok?.kind === "word" && isUnitWord(denTok.text)) {
-              pos += 2;
-              left = { k: "convert", e: left, word: target.text, denWord: denTok.text };
-              continue;
+            if (slash?.kind === "op" && slash.op === "/" && denTok?.kind === "word") {
+              const denSpan = TIMESPAN_UNITS[denTok.text.toLowerCase()];
+              if (isUnitWord(denTok.text)) {
+                pos += 2;
+                left = { k: "convert", e: left, word: target.text, denWord: denTok.text };
+                continue;
+              }
+              if (denSpan !== void 0) {
+                pos += 2;
+                left = { k: "convert", e: left, word: target.text, denSpan };
+                continue;
+              }
             }
             left = { k: "convert", e: left, word: target.text };
             continue;
@@ -31417,6 +31663,24 @@ function parse3(tokens) {
         }
         left = { k: "bin", op, l: left, r: expr(10) };
       } else if (op === "*" || op === "/") {
+        if (op === "/") {
+          const denTok = tokens[pos];
+          const after = tokens[pos + 1];
+          const operandFollows = after?.kind === "number" || after?.kind === "fraction" || after?.kind === "lparen";
+          if (denTok?.kind === "word" && !operandFollows) {
+            const denSpan = TIMESPAN_UNITS[denTok.text.toLowerCase()];
+            if (denSpan !== void 0 && !isUnitWord(denTok.text)) {
+              pos++;
+              left = { k: "bin", op: "/", l: left, r: { k: "span", e: { k: "num", dec: new DecC(1) }, unit: denSpan } };
+              continue;
+            }
+            if (isUnitWord(denTok.text)) {
+              pos++;
+              left = { k: "bin", op: "/", l: left, r: { k: "unit", e: { k: "num", dec: new DecC(1) }, word: denTok.text } };
+              continue;
+            }
+          }
+        }
         left = { k: "bin", op, l: left, r: expr(20) };
       } else {
         left = { k: "bin", op: "^", l: left, r: expr(29) };
@@ -31761,7 +32025,8 @@ function stripParentheticalComments(tokens, env) {
     }
     if (depth !== 0) continue;
     const inner = out.slice(i2 + 1, j2 - 1);
-    if (!hasComputableContent(inner, env)) {
+    const isBareUnit = inner.length === 1 && inner[0].kind === "word" && isUnitWord(inner[0].text);
+    if (!isBareUnit && !hasComputableContent(inner, env)) {
       out.splice(i2, j2 - i2);
       i2--;
     }
