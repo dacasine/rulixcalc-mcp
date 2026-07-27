@@ -31311,6 +31311,7 @@ function isComputableWord(word) {
   return DATE_KEYWORDS[lower] !== void 0 || WEEKDAY_WORDS[lower] !== void 0 || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower);
 }
 var isPrepositionAnchorWord = (word) => isFunctionWord(word) || WORD_FRACTIONS[word.toLowerCase()] !== void 0;
+var isAggWord = (word) => AGG_WORDS[word.toLowerCase()] !== void 0;
 function parseSpanTokens(tokens) {
   const parts = [];
   let i2 = 0;
@@ -31552,6 +31553,18 @@ function resolveFinancialCurrency(financial) {
 }
 
 // ../textual-calculator/core/packages/engine/src/sheet.ts
+function matchMultiWordVariable(tokens, idx, env) {
+  const words = [];
+  for (let k2 = idx; k2 < tokens.length && k2 < idx + 6 && tokens[k2].kind === "word"; k2++) {
+    words.push(tokens[k2].text);
+  }
+  for (let len = words.length; len >= 2; len--) {
+    const name = words.slice(0, len).join(" ");
+    if (env.has(name)) return { name, count: len };
+  }
+  return null;
+}
+var startsValue = (t2) => t2 !== void 0 && (t2.kind === "number" || t2.kind === "fraction" || t2.kind === "date" || t2.kind === "clocktime" || t2.kind === "lparen");
 function resolveGrammar(context) {
   if (context.numberGrammar) return context.numberGrammar;
   const locale = context.locale ?? "";
@@ -31612,6 +31625,16 @@ function prepareTokens(tokens, env, lexicon, violations) {
     }
     const lower = t2.text.toLowerCase();
     const prev = out[out.length - 1];
+    const multi = matchMultiWordVariable(tokens, idx, env);
+    if (multi) {
+      const last = tokens[idx + multi.count - 1];
+      out.push({ kind: "word", text: multi.name, start: t2.start, end: last.end });
+      idx += multi.count - 1;
+      continue;
+    }
+    if (isAggWord(t2.text) && startsValue(tokens[idx + 1])) {
+      continue;
+    }
     if (lexicon.divisionParticles.has(lower)) {
       if (prev?.kind === "op" && prev.op === "/") continue;
       out.push({ ...t2, kind: "op", op: "/" });
@@ -31735,9 +31758,18 @@ function evaluateLine(line, env, rts, sectionStart, baseCtx, lexicon, grammar, d
   let envWords = [];
   try {
     tokens = lex(line, grammar, dateOrder);
-    const isAssignment = tokens[0]?.kind === "word" && tokens[1]?.kind === "equals";
-    const rawExpr = isAssignment ? tokens.slice(2) : tokens;
+    const eqIdx = tokens.findIndex((t2) => t2.kind === "equals");
+    const isAssignment = eqIdx >= 1 && tokens.slice(0, eqIdx).every((t2) => t2.kind === "word");
+    const rawExpr = isAssignment ? tokens.slice(eqIdx + 1) : tokens;
     envWords = rawExpr.filter((t2) => isEnvSensitiveWord(t2, lexicon)).map((t2) => t2.text);
+    for (let i2 = 0; i2 < rawExpr.length; i2++) {
+      if (rawExpr[i2].kind !== "word") continue;
+      let joined = rawExpr[i2].text;
+      for (let n2 = 1; n2 < 4 && rawExpr[i2 + n2]?.kind === "word"; n2++) {
+        joined += " " + rawExpr[i2 + n2].text;
+        envWords.push(joined);
+      }
+    }
     const violations = [];
     const exprTokens = prepareTokens(rawExpr, env, lexicon, violations);
     if (!hasComputableContent(exprTokens, env)) {
@@ -31749,7 +31781,7 @@ function evaluateLine(line, env, rts, sectionStart, baseCtx, lexicon, grammar, d
     let ast = parseExpression(exprTokens);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
-    if (isAssignment) defines = tokens[0].text;
+    if (isAssignment) defines = tokens.slice(0, eqIdx).map((t2) => t2.text).join(" ");
   } catch (cause) {
     rt2 = cause instanceof ParseError ? { t: "e", code: cause.code, detail: cause.message } : { t: "e", code: "not-understood", detail: cause instanceof Error ? cause.message : String(cause) };
   }
