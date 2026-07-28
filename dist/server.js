@@ -29932,6 +29932,7 @@ function fxRat(provider, from, to, ctx) {
     const d2 = validRate(inverse.rate);
     if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${inverse.rate}\u201D for ${to} \u2192 ${from}`);
     ctx.fxTrace?.push({ from: to, to: from, rate: inverse.rate, asOf: inverse.asOf, source: inverse.source });
+    ctx.assume?.push({ code: "inverse-rate", level: 1, data: { from, to } });
     return rDiv({ n: 1n, d: 1n }, decToRat(d2));
   }
   return err("rates-unavailable", `no rate for ${from} \u2192 ${to}`);
@@ -30838,6 +30839,9 @@ function evalAst(ast, env, ctx = {}) {
             if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
               return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
             }
+            if (isOffsetScale(l2)) {
+              ctx.assume?.push({ code: "interval-temperature", level: 1, data: { symbol: l2.symbol } });
+            }
             const rhs = alignForAdd(l2, r3, ctx);
             if (rhs.t === "e") return rhs;
             const xr = qx(rhs);
@@ -31326,7 +31330,7 @@ function matchDate(slice, order) {
     const month2 = Number(c2);
     const day2 = Number(c3);
     if (c3.length > 2 || !isValidDate(y22, month2, day2)) return null;
-    return { len: full.length, y: y22, m: month2, d: day2, iso: false };
+    return { len: full.length, y: y22, m: month2, d: day2, iso: false, ...c1.length <= 2 && { pivotYear: c1 } };
   }
   const y2 = pivotYear(c3);
   if (y2 === null) return null;
@@ -31340,7 +31344,10 @@ function matchDate(slice, order) {
     month = Number(c2);
   }
   if (!isValidDate(y2, month, day)) return null;
-  return { len: full.length, y: y2, m: month, d: day, iso: false };
+  const altM = day;
+  const altD = month;
+  const orderAlt = altM !== month && isValidDate(y2, altM, altD) ? { y: y2, m: altM, d: altD } : void 0;
+  return { len: full.length, y: y2, m: month, d: day, iso: false, ...c3.length === 2 && { pivotYear: c3 }, ...orderAlt && { orderAlt } };
 }
 var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
 var isLetter = (ch) => ch !== void 0 && new RegExp("\\p{L}", "u").test(ch);
@@ -31371,7 +31378,9 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         year: dm.y,
         month: dm.m,
         day: dm.d,
-        iso: dm.iso
+        iso: dm.iso,
+        ...dm.pivotYear !== void 0 && { pivotYear: dm.pivotYear },
+        ...dm.orderAlt && { orderAlt: dm.orderAlt }
       });
       return;
     }
@@ -31419,10 +31428,14 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     if (em) {
       exp2 = em[0].replace(/[−–]/, "-");
       i2 += em[0].length;
-    } else if (/^[eE]([+\-−–](?!\d)|$|[^\p{L}\d])/u.test(line.slice(i2))) {
-      const bad = /^[eE][+\-−–]?/.exec(line.slice(i2))[0];
+    } else if (/^[eE][+\-−–](?!\d)/u.test(line.slice(i2))) {
+      const bad = /^[eE][+\-−–]/.exec(line.slice(i2))[0];
       i2 += bad.length;
       tokens.push({ kind: "badnumber", text: line.slice(start, i2), start, end: i2 });
+      return;
+    } else if (/^[eE]($|[^\p{L}\d])/u.test(line.slice(i2)) && segs.length === 0 && intDigits.length > 0) {
+      i2 += 1;
+      tokens.push({ kind: "number", text: line.slice(start, i2), start, end: i2, dec: new DecC(intDigits), plainInt: true, ordinalOf: intDigits });
       return;
     }
     let scalarPow = 0;
@@ -32041,6 +32054,18 @@ function parse3(tokens) {
           else {
             for (; ; ) {
               {
+                const numTok = tokens[pos];
+                if (fnDef.max > 1 && numTok?.kind === "number" && numTok.text.includes(",") && currentAssume) {
+                  currentAssume.push({
+                    code: "decimal-comma-argument",
+                    level: 3,
+                    range: { start: numTok.start, end: numTok.end },
+                    rewrite: numTok.text.replace(",", "."),
+                    data: { text: numTok.text, canon: numTok.dec.toString() }
+                  });
+                }
+              }
+              {
                 let depth2 = 0;
                 let k2 = pos;
                 while (k2 < tokens.length) {
@@ -32559,7 +32584,16 @@ function matchFinancePrototypes(tokens) {
     return null;
   }
 }
-function parseExpression(tokens) {
+var currentAssume = null;
+function parseExpression(tokens, assume) {
+  currentAssume = assume ?? null;
+  try {
+    return parseExpressionInner(tokens);
+  } finally {
+    currentAssume = null;
+  }
+}
+function parseExpressionInner(tokens) {
   const timeProto = matchTimePrototypes(tokens);
   if (timeProto) return timeProto;
   const financeProto = matchFinancePrototypes(tokens);
@@ -32792,7 +32826,7 @@ function stripParentheticalComments(tokens, env, violations) {
   }
   return out;
 }
-function prepareTokens(tokens, env, lexicon, violations) {
+function prepareTokens(tokens, env, lexicon, violations, dropped) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
   tokens = stripParentheticalComments(tokens, env, violations);
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
@@ -32839,6 +32873,7 @@ function prepareTokens(tokens, env, lexicon, violations) {
     }
     if (isPercentPreposition(lower)) {
       if (prev?.kind === "percent" || prev?.kind === "word" && isPrepositionAnchorWord(prev.text)) out.push(t2);
+      dropped.push(t2.text);
       continue;
     }
     const cityOutOfContext = isCityPartOnlyWord(t2.text) && !tokens.some((tk) => tk.kind === "word" && isTimeAnchorWord(tk.text));
@@ -32864,6 +32899,7 @@ function prepareTokens(tokens, env, lexicon, violations) {
         }
       }
     }
+    dropped.push(t2.text);
   }
   return out;
 }
@@ -32878,6 +32914,62 @@ function resolveDateOrder(context) {
 }
 function toPublicToken(t2) {
   return { type: t2.kind, text: t2.text, range: { start: t2.start, end: t2.end } };
+}
+function assumptionMessage(a2, lang) {
+  const fr = lang.startsWith("fr");
+  switch (a2.code) {
+    case "dropped-words":
+      return fr ? `mots ignor\xE9s : ${a2.data["words"]}` : `ignored words: ${a2.data["words"]}`;
+    case "inverse-rate":
+      return fr ? `taux ${a2.data["from"]}\u2192${a2.data["to"]} d\xE9riv\xE9 de l'inverse` : `${a2.data["from"]}\u2192${a2.data["to"]} rate derived from the inverse quote`;
+    case "interval-temperature":
+      return fr ? `addition de ${a2.data["symbol"]} lue comme un d\xE9calage, pas une somme absolue` : `${a2.data["symbol"]} addition read as a shift, not an absolute sum`;
+    case "two-digit-year":
+      return fr ? `ann\xE9e \xAB ${a2.data["raw"]} \xBB lue ${a2.data["year"]} (pivot <50 \u2192 20xx)` : `year \u201C${a2.data["raw"]}\u201D read as ${a2.data["year"]} (<50 pivots to 20xx)`;
+    case "date-order":
+      return fr ? `date lue ${a2.data["chosen"]} (${a2.data["order"]}) \u2014 l'ordre inverse donnerait ${a2.data["alt"]}` : `date read as ${a2.data["chosen"]} (${a2.data["order"]}) \u2014 the other order would give ${a2.data["alt"]}`;
+    case "decimal-comma-argument":
+      return fr ? `\xAB ${a2.data["text"]} \xBB lu comme le d\xE9cimal ${a2.data["canon"]} \u2014 pour deux arguments, \xE9crire \xAB ; \xBB` : `\u201C${a2.data["text"]}\u201D read as the decimal ${a2.data["canon"]} \u2014 use \u201C;\u201D for two arguments`;
+    case "ordinal-suffix":
+      return fr ? `\xAB ${a2.data["text"]} \xBB lu comme l'ordinal ${a2.data["n"]} \u2014 pour la notation scientifique, \xE9crire ${a2.data["n"]}e0` : `\u201C${a2.data["text"]}\u201D read as the ordinal ${a2.data["n"]} \u2014 write ${a2.data["n"]}e0 for scientific notation`;
+  }
+}
+function tokenAssumptions(tokens, dateOrder) {
+  const out = [];
+  const iso4 = (y2, m2, d2) => `${String(y2).padStart(4, "0")}-${String(m2).padStart(2, "0")}-${String(d2).padStart(2, "0")}`;
+  for (const t2 of tokens) {
+    if (t2.kind === "date") {
+      const iso2 = iso4(t2.year, t2.month, t2.day);
+      if (t2.pivotYear !== void 0) {
+        out.push({
+          code: "two-digit-year",
+          level: 2,
+          range: { start: t2.start, end: t2.end },
+          rewrite: iso2,
+          data: { raw: t2.pivotYear, year: String(t2.year) }
+        });
+      }
+      if (t2.orderAlt) {
+        out.push({
+          code: "date-order",
+          level: 2,
+          range: { start: t2.start, end: t2.end },
+          rewrite: iso2,
+          data: { chosen: iso2, alt: iso4(t2.orderAlt.y, t2.orderAlt.m, t2.orderAlt.d), order: dateOrder.toUpperCase() }
+        });
+      }
+    }
+    if (t2.kind === "number" && t2.ordinalOf !== void 0) {
+      out.push({
+        code: "ordinal-suffix",
+        level: 3,
+        range: { start: t2.start, end: t2.end },
+        rewrite: t2.ordinalOf,
+        data: { text: t2.text, n: t2.ordinalOf }
+      });
+    }
+  }
+  return out;
 }
 var exactOr = (rt2) => (rt2.vx && ratExactDecString(rt2.vx)) ?? canonDec(rt2.v);
 function toPublicValue(rt2) {
@@ -32974,6 +33066,8 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context) {
 }
 function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
+  const rawAssume = [];
+  const droppedWords = [];
   const fxTrace = [];
   const fxReads = [];
   const holidayReads = [];
@@ -33019,20 +33113,37 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       }
     }
     const violations = [];
-    const exprTokens = prepareTokens(rawExpr, env, lexicon, violations);
+    const exprTokens = prepareTokens(rawExpr, env, lexicon, violations, droppedWords);
     if (!hasComputableContent(exprTokens, env)) {
       return empty(tokens, envWords);
     }
     if (violations.length > 0) throw new ParseError("not-understood", violations[0]);
     if (exprTokens.length === 0) throw new ParseError("syntax", "empty expression");
-    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace, fxReads, holidayReads };
-    let ast = parseExpression(exprTokens);
+    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace, fxReads, holidayReads, assume: rawAssume };
+    let ast = parseExpression(exprTokens, rawAssume);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     if (isAssignment) defines = tokens.slice(0, eqIdx).map((t2) => t2.text).join(" ");
   } catch (cause) {
     rt2 = cause instanceof ParseError ? { t: "e", code: cause.code, detail: cause.message } : { t: "e", code: "not-understood", detail: cause instanceof Error ? cause.message : String(cause) };
   }
+  const assumptions = (() => {
+    if (rt2.t === "e") return void 0;
+    const all = [...tokenAssumptions(tokens, dateOrder), ...rawAssume];
+    if (droppedWords.length > 0) {
+      all.push({ code: "dropped-words", level: 1, data: { words: droppedWords.join(", ") } });
+    }
+    if (all.length === 0) return void 0;
+    all.sort((a2, b2) => b2.level - a2.level || (a2.range?.start ?? 1e9) - (b2.range?.start ?? 1e9));
+    const lang = formatting?.language ?? "fr";
+    return all.map((a2) => ({
+      code: a2.code,
+      level: a2.level,
+      message: assumptionMessage(a2, lang),
+      ...a2.range && { range: a2.range },
+      ...a2.rewrite !== void 0 && { rewrite: a2.rewrite }
+    }));
+  })();
   return {
     result: {
       tokens: tokens.map(toPublicToken),
@@ -33040,6 +33151,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       display: formatRT(rt2, formatting),
       references: extractReferences(tokens, rts, formatting),
       ...fxTrace.length > 0 && { fx: fxTrace },
+      ...assumptions && { assumptions },
       diagnostics: diagnosticsFor(rt2, line)
     },
     rt: rt2,
@@ -33390,7 +33502,8 @@ function renderLines(text, sheet) {
     const src = (sources[i2] ?? "").padEnd(width);
     const error2 = line.diagnostics.find((d2) => d2.severity === "error");
     if (error2) return `${src} \u2502 \u26A0 ${error2.code}: ${error2.message}`;
-    if (line.display !== null) return `${src} \u2502 ${line.display}`;
+    const doubt = (line.assumptions ?? []).map((a2) => `?${a2.level} ${a2.message}`).join(" \xB7 ");
+    if (line.display !== null) return `${src} \u2502 ${line.display}${doubt ? `   \u2039${doubt}\u203A` : ""}`;
     return src.trimEnd();
   }).join("\n");
 }

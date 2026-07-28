@@ -52,7 +52,12 @@ function renderLines(text: string, sheet: SheetResult): string {
       const src = (sources[i] ?? '').padEnd(width);
       const error = line.diagnostics.find((d) => d.severity === 'error');
       if (error) return `${src} │ ⚠ ${error.code}: ${error.message}`;
-      if (line.display !== null) return `${src} │ ${line.display}`;
+      // doubt engine: results at the edge of the specs disclose the chosen
+      // direction, compactly, ordered by level (3 = borderline … 1 = info)
+      const doubt = (line.assumptions ?? [])
+        .map((a) => `?${a.level} ${a.message}`)
+        .join(' · ');
+      if (line.display !== null) return `${src} │ ${line.display}${doubt ? `   ‹${doubt}›` : ''}`;
       return src.trimEnd();
     })
     .join('\n');
