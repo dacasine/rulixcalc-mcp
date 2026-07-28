@@ -30258,19 +30258,7 @@ function combineQuantities(l2, r3, op, ctx) {
   const dim = dimOfComps(comps);
   if (dimZero(dim)) {
     const curLeft = comps.filter((c2) => c2.def.currency);
-    let simplePair = true;
-    {
-      let sawFrom = false, sawTo = false;
-      for (const c2 of curLeft) {
-        if (c2.exp === 1 && !sawFrom) sawFrom = true;
-        else if (c2.exp === -1 && !sawTo) sawTo = true;
-        else {
-          simplePair = false;
-          break;
-        }
-      }
-    }
-    if (!simplePair) {
+    if (curLeft.length > 0) {
       let decScale2 = null;
       for (const c2 of comps) {
         if (c2.def.currency) continue;
@@ -30280,19 +30268,17 @@ function combineQuantities(l2, r3, op, ctx) {
           decScale2 = decScale2 === null ? f2 : decScale2.times(f2);
         } else return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       }
-      const base2 = { t: "q", dim: dimOfComps(curLeft), symbol: compsSymbol(curLeft), comps: curLeft };
+      const pos2 = curLeft.filter((c2) => c2.exp === 1);
+      const neg2 = curLeft.filter((c2) => c2.exp === -1);
+      const rateMeta = curLeft.length === 2 && pos2.length === 1 && neg2.length === 1 ? { rate: { num: pos2[0].def, den: neg2[0].def } } : {};
+      const ordered = [...pos2, ...curLeft.filter((c2) => c2.exp !== 1 && c2.exp !== -1), ...neg2];
+      const base2 = { t: "q", dim: dimOfComps(ordered), symbol: compsSymbol(ordered), comps: ordered, ...rateMeta };
       if (decScale2 !== null) return { ...base2, v: ratToDec(x2).times(decScale2) };
       return { ...base2, ...qv(x2) };
     }
     let decScale = null;
-    let fxFrom = null;
-    let fxTo = null;
     for (const c2 of comps) {
-      if (c2.def.currency) {
-        if (c2.exp === 1 && fxFrom === null) fxFrom = c2.def.currency;
-        else if (c2.exp === -1 && fxTo === null) fxTo = c2.def.currency;
-        else return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
-      } else if (isPureLinear(c2.def)) {
+      if (isPureLinear(c2.def)) {
         x2 = rMul(x2, effFactor(c2, ctx));
       } else if (c2.def.factorDec) {
         const f2 = new DecC(c2.def.factorDec).pow(c2.exp);
@@ -30300,17 +30286,6 @@ function combineQuantities(l2, r3, op, ctx) {
       } else {
         return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       }
-    }
-    if (fxFrom !== null || fxTo !== null) {
-      if (fxFrom === null || fxTo === null) return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
-      const provider = ctx.rates;
-      if (!provider) {
-        ctx.fxReads?.push({ from: fxFrom, to: fxTo, obs: "\u2205;\u2205" });
-        return err("rates-unavailable", `no rate provider for ${fxFrom} \u2192 ${fxTo}`);
-      }
-      const fx = fxRat(provider, fxFrom, fxTo, ctx);
-      if ("t" in fx) return fx;
-      x2 = rMul(x2, fx);
     }
     if (decScale !== null) return { t: "d", v: ratToDec(x2).times(decScale) };
     const xn = rnorm(x2);
