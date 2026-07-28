@@ -52,11 +52,16 @@ function renderLines(text: string, sheet: SheetResult): string {
       const src = (sources[i] ?? '').padEnd(width);
       const error = line.diagnostics.find((d) => d.severity === 'error');
       if (error) return `${src} │ ⚠ ${error.code}: ${error.message}`;
-      // doubt engine: results at the edge of the specs disclose the chosen
-      // direction, compactly, ordered by level (3 = borderline … 1 = info)
-      const doubt = (line.assumptions ?? [])
-        .map((a) => `?${a.level} ${a.message}`)
-        .join(' · ');
+      // doubt engine v2 — four channels: assumptions (real divergent
+      // readings, "!" marks a high impact: date/unit/money/reference),
+      // ignored (tokens dropped from evaluation), fx.via (provenance)
+      const notes: string[] = [];
+      for (const a of line.assumptions ?? []) {
+        notes.push(`?${a.level}${a.impact !== 'value' ? '!' : ''} ${a.message}`);
+      }
+      if (line.ignored?.length) notes.push(`ignoré : ${line.ignored.map((x) => x.text).join(', ')}`);
+      if (line.fx?.some((f) => f.via === 'inverse')) notes.push('taux dérivé du sens inverse');
+      const doubt = notes.join(' · ');
       if (line.display !== null) return `${src} │ ${line.display}${doubt ? `   ‹${doubt}›` : ''}`;
       return src.trimEnd();
     })

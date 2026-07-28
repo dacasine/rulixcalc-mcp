@@ -29040,6 +29040,11 @@ var DEFS = [
   { id: "celsius", symbol: "\xB0C", dim: { temperature: 1 }, affine: { a: 100n, b: 27315n, c: 100n } },
   { id: "fahrenheit", symbol: "\xB0F", dim: { temperature: 1 }, affine: { a: 500n, b: 229835n, c: 900n } },
   { id: "rankine", symbol: "R", dim: { temperature: 1 }, factor: r2(5, 9) },
+  // temperature DELTAS (auditor: absolute temperatures and thermal offsets
+  // must not share a type) — own dimension, linear, base ΔK
+  { id: "deltaK", symbol: "\u0394K", dim: { tempdelta: 1 }, factor: r2(1) },
+  { id: "deltaC", symbol: "\u0394\xB0C", dim: { tempdelta: 1 }, factor: r2(1) },
+  { id: "deltaF", symbol: "\u0394\xB0F", dim: { tempdelta: 1 }, factor: r2(5, 9) },
   // information (base B, SI decimal multiples)
   { id: "B", symbol: "B", dim: { information: 1 }, factor: r2(1) },
   { id: "KB", symbol: "KB", dim: { information: 1 }, factor: r2(1e3) },
@@ -29204,6 +29209,12 @@ var ALIASES = [
   { alias: "fahrenheit", unit: "fahrenheit", caseSensitive: false },
   { alias: "R", unit: "rankine" },
   { alias: "rankine", unit: "rankine", caseSensitive: false },
+  { alias: "\u0394K", unit: "deltaK" },
+  { alias: "\u0394\xB0C", unit: "deltaC" },
+  { alias: "\u0394\xB0F", unit: "deltaF" },
+  { alias: "deltaK", unit: "deltaK", caseSensitive: false },
+  { alias: "deltaC", unit: "deltaC", caseSensitive: false },
+  { alias: "deltaF", unit: "deltaF", caseSensitive: false },
   { alias: "B", unit: "B" },
   { alias: "byte", unit: "B", caseSensitive: false },
   { alias: "bytes", unit: "B", caseSensitive: false },
@@ -29924,15 +29935,14 @@ function fxRat(provider, from, to, ctx) {
   if (direct) {
     const d2 = validRate(direct.rate);
     if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${direct.rate}\u201D for ${from} \u2192 ${to}`);
-    ctx.fxTrace?.push({ from, to, rate: direct.rate, asOf: direct.asOf, source: direct.source });
+    ctx.fxTrace?.push({ from, to, rate: direct.rate, asOf: direct.asOf, source: direct.source, via: "direct" });
     return decToRat(d2);
   }
   const inverse = provider.rate(to, from);
   if (inverse) {
     const d2 = validRate(inverse.rate);
     if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${inverse.rate}\u201D for ${to} \u2192 ${from}`);
-    ctx.fxTrace?.push({ from: to, to: from, rate: inverse.rate, asOf: inverse.asOf, source: inverse.source });
-    ctx.assume?.push({ code: "inverse-rate", level: 1, data: { from, to } });
+    ctx.fxTrace?.push({ from: to, to: from, rate: inverse.rate, asOf: inverse.asOf, source: inverse.source, via: "inverse" });
     return rDiv({ n: 1n, d: 1n }, decToRat(d2));
   }
   return err("rates-unavailable", `no rate for ${from} \u2192 ${to}`);
@@ -30836,11 +30846,27 @@ function evalAst(ast, env, ctx = {}) {
         }
         if (l2.t === "q" && r3.t === "q") {
           if (ast.op === "+" || ast.op === "-") {
+            const isAbsTemp = (q2) => dimEquals(q2.dim, { temperature: 1 });
+            const isDeltaTemp = (q2) => dimEquals(q2.dim, { tempdelta: 1 });
+            if ((isOffsetScale(l2) || isOffsetScale(r3)) && isAbsTemp(l2) && isAbsTemp(r3)) {
+              if (ast.op === "+") {
+                return err("unit-mismatch", "adding two absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for an offset, or convert to K");
+              }
+              const conv = convertQuantity(r3, l2.def, ctx);
+              if (conv.t === "e") return conv;
+              const diff = rSub(qx(l2), qx(conv));
+              const dDef = lookupUnit(l2.def.id === "fahrenheit" ? "\u0394\xB0F" : l2.def.id === "celsius" ? "\u0394\xB0C" : "\u0394K");
+              return mkQ(diff, dDef);
+            }
+            if (isAbsTemp(l2) && isDeltaTemp(r3)) {
+              const dK = rMul(qx(r3), ratOfFactor(r3.def.factor));
+              const tri = l2.def.affine ?? { a: l2.def.factor.n, b: 0n, c: l2.def.factor.d };
+              const inUnit = rMul(dK, { n: tri.c, d: tri.a });
+              const x2 = ast.op === "+" ? rAdd(qx(l2), inUnit) : rSub(qx(l2), inUnit);
+              return { ...l2, ...qv(x2) };
+            }
             if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
               return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
-            }
-            if (isOffsetScale(l2)) {
-              ctx.assume?.push({ code: "interval-temperature", level: 1, data: { symbol: l2.symbol } });
             }
             const rhs = alignForAdd(l2, r3, ctx);
             if (rhs.t === "e") return rhs;
@@ -32059,7 +32085,10 @@ function parse3(tokens) {
                   currentAssume.push({
                     code: "decimal-comma-argument",
                     level: 3,
+                    impact: "value",
                     range: { start: numTok.start, end: numTok.end },
+                    // the '.' spelling only exists in grammars whose decimal
+                    // set contains it — the sheet drops the rewrite otherwise
                     rewrite: numTok.text.replace(",", "."),
                     data: { text: numTok.text, canon: numTok.dec.toString() }
                   });
@@ -32784,7 +32813,7 @@ function extractReferences(tokens, rts, formatting) {
   for (let i2 = 0; i2 < tokens.length - 3; i2++) {
     const [w2, lp, num, rp] = [tokens[i2], tokens[i2 + 1], tokens[i2 + 2], tokens[i2 + 3]];
     if (w2.kind !== "word" || !REF_WORDS.has(w2.text.toLowerCase()) || lp.kind !== "lparen" || num.kind !== "number" || !num.plainInt || rp.kind !== "rparen") continue;
-    const index = Number(num.text);
+    const index = num.dec.toNumber();
     const target = index >= 1 && index <= rts.length ? rts[index - 1] : null;
     refs.push({
       index,
@@ -32795,7 +32824,7 @@ function extractReferences(tokens, rts, formatting) {
   }
   return refs;
 }
-function stripParentheticalComments(tokens, env, violations) {
+function stripParentheticalComments(tokens, env, violations, ignored) {
   const out = [...tokens];
   for (let i2 = 0; i2 < out.length; i2++) {
     if (out[i2].kind !== "lparen") continue;
@@ -32820,15 +32849,19 @@ function stripParentheticalComments(tokens, env, violations) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
+      ignored.push({
+        text: out.slice(i2, j2).map((t2) => t2.text).join(" "),
+        range: { start: out[i2].start, end: out[j2 - 1].end }
+      });
       out.splice(i2, j2 - i2);
       i2--;
     }
   }
   return out;
 }
-function prepareTokens(tokens, env, lexicon, violations, dropped) {
+function prepareTokens(tokens, env, lexicon, violations, ignored) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
-  tokens = stripParentheticalComments(tokens, env, violations);
+  tokens = stripParentheticalComments(tokens, env, violations, ignored);
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
     tokens = tokens.slice(colonIdx + 1);
@@ -32872,8 +32905,11 @@ function prepareTokens(tokens, env, lexicon, violations, dropped) {
       continue;
     }
     if (isPercentPreposition(lower)) {
-      if (prev?.kind === "percent" || prev?.kind === "word" && isPrepositionAnchorWord(prev.text)) out.push(t2);
-      dropped.push(t2.text);
+      if (prev?.kind === "percent" || prev?.kind === "word" && isPrepositionAnchorWord(prev.text)) {
+        out.push(t2);
+        continue;
+      }
+      ignored.push({ text: t2.text, range: { start: t2.start, end: t2.end } });
       continue;
     }
     const cityOutOfContext = isCityPartOnlyWord(t2.text) && !tokens.some((tk) => tk.kind === "word" && isTimeAnchorWord(tk.text));
@@ -32899,7 +32935,7 @@ function prepareTokens(tokens, env, lexicon, violations, dropped) {
         }
       }
     }
-    dropped.push(t2.text);
+    ignored.push({ text: t2.text, range: { start: t2.start, end: t2.end } });
   }
   return out;
 }
@@ -32918,12 +32954,6 @@ function toPublicToken(t2) {
 function assumptionMessage(a2, lang) {
   const fr = lang.startsWith("fr");
   switch (a2.code) {
-    case "dropped-words":
-      return fr ? `mots ignor\xE9s : ${a2.data["words"]}` : `ignored words: ${a2.data["words"]}`;
-    case "inverse-rate":
-      return fr ? `taux ${a2.data["from"]}\u2192${a2.data["to"]} d\xE9riv\xE9 de l'inverse` : `${a2.data["from"]}\u2192${a2.data["to"]} rate derived from the inverse quote`;
-    case "interval-temperature":
-      return fr ? `addition de ${a2.data["symbol"]} lue comme un d\xE9calage, pas une somme absolue` : `${a2.data["symbol"]} addition read as a shift, not an absolute sum`;
     case "two-digit-year":
       return fr ? `ann\xE9e \xAB ${a2.data["raw"]} \xBB lue ${a2.data["year"]} (pivot <50 \u2192 20xx)` : `year \u201C${a2.data["raw"]}\u201D read as ${a2.data["year"]} (<50 pivots to 20xx)`;
     case "date-order":
@@ -32941,11 +32971,13 @@ function tokenAssumptions(tokens, dateOrder) {
     if (t2.kind === "date") {
       const iso2 = iso4(t2.year, t2.month, t2.day);
       if (t2.pivotYear !== void 0) {
+        const sameOrder = t2.text.slice(0, t2.text.length - t2.pivotYear.length) + String(t2.year).padStart(4, "0");
         out.push({
           code: "two-digit-year",
           level: 2,
+          impact: "date",
           range: { start: t2.start, end: t2.end },
-          rewrite: iso2,
+          rewrite: t2.orderAlt ? iso2 : sameOrder,
           data: { raw: t2.pivotYear, year: String(t2.year) }
         });
       }
@@ -32953,6 +32985,7 @@ function tokenAssumptions(tokens, dateOrder) {
         out.push({
           code: "date-order",
           level: 2,
+          impact: "date",
           range: { start: t2.start, end: t2.end },
           rewrite: iso2,
           data: { chosen: iso2, alt: iso4(t2.orderAlt.y, t2.orderAlt.m, t2.orderAlt.d), order: dateOrder.toUpperCase() }
@@ -32963,6 +32996,7 @@ function tokenAssumptions(tokens, dateOrder) {
       out.push({
         code: "ordinal-suffix",
         level: 3,
+        impact: "value",
         range: { start: t2.start, end: t2.end },
         rewrite: t2.ordinalOf,
         data: { text: t2.text, n: t2.ordinalOf }
@@ -33064,10 +33098,10 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context) {
   }
   return parts.join("|");
 }
-function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy) {
+function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
   const rawAssume = [];
-  const droppedWords = [];
+  const ignoredTokens = [];
   const fxTrace = [];
   const fxReads = [];
   const holidayReads = [];
@@ -33113,7 +33147,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       }
     }
     const violations = [];
-    const exprTokens = prepareTokens(rawExpr, env, lexicon, violations, droppedWords);
+    const exprTokens = prepareTokens(rawExpr, env, lexicon, violations, ignoredTokens);
     if (!hasComputableContent(exprTokens, env)) {
       return empty(tokens, envWords);
     }
@@ -33128,22 +33162,28 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     rt2 = cause instanceof ParseError ? { t: "e", code: cause.code, detail: cause.message } : { t: "e", code: "not-understood", detail: cause instanceof Error ? cause.message : String(cause) };
   }
   const assumptions = (() => {
-    if (rt2.t === "e") return void 0;
     const all = [...tokenAssumptions(tokens, dateOrder), ...rawAssume];
-    if (droppedWords.length > 0) {
-      all.push({ code: "dropped-words", level: 1, data: { words: droppedWords.join(", ") } });
-    }
     if (all.length === 0) return void 0;
     all.sort((a2, b2) => b2.level - a2.level || (a2.range?.start ?? 1e9) - (b2.range?.start ?? 1e9));
     const lang = formatting?.language ?? "fr";
-    return all.map((a2) => ({
-      code: a2.code,
-      level: a2.level,
-      message: assumptionMessage(a2, lang),
-      ...a2.range && { range: a2.range },
-      ...a2.rewrite !== void 0 && { rewrite: a2.rewrite }
-    }));
+    return all.map((a2) => {
+      const rewriteOk = !(a2.code === "decimal-comma-argument" && grammar === "eu");
+      return {
+        code: a2.code,
+        level: a2.level,
+        impact: a2.impact,
+        message: assumptionMessage(a2, lang),
+        ...a2.range && { range: a2.range },
+        ...a2.rewrite !== void 0 && rewriteOk && { rewrite: a2.rewrite }
+      };
+    });
   })();
+  if (misplacedPolicy !== void 0 && ambiguityPolicy === "strict" && rt2.t !== "e" && assumptions) {
+    const grave = assumptions.find((a2) => a2.impact !== "value");
+    if (grave) {
+      rt2 = { t: "e", code: "ambiguous", detail: grave.message };
+    }
+  }
   return {
     result: {
       tokens: tokens.map(toPublicToken),
@@ -33152,6 +33192,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       references: extractReferences(tokens, rts, formatting),
       ...fxTrace.length > 0 && { fx: fxTrace },
       ...assumptions && { assumptions },
+      ...ignoredTokens.length > 0 && { ignored: ignoredTokens },
       diagnostics: diagnosticsFor(rt2, line)
     },
     rt: rt2,
@@ -33207,7 +33248,7 @@ function runSheet(text, context, cache2) {
     if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context)) {
       entry = cached2;
     } else {
-      entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error");
+      entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error", context.policies?.ambiguity ?? "annotate");
       recomputed.push(i2);
     }
     const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context);
@@ -33502,7 +33543,13 @@ function renderLines(text, sheet) {
     const src = (sources[i2] ?? "").padEnd(width);
     const error2 = line.diagnostics.find((d2) => d2.severity === "error");
     if (error2) return `${src} \u2502 \u26A0 ${error2.code}: ${error2.message}`;
-    const doubt = (line.assumptions ?? []).map((a2) => `?${a2.level} ${a2.message}`).join(" \xB7 ");
+    const notes = [];
+    for (const a2 of line.assumptions ?? []) {
+      notes.push(`?${a2.level}${a2.impact !== "value" ? "!" : ""} ${a2.message}`);
+    }
+    if (line.ignored?.length) notes.push(`ignor\xE9 : ${line.ignored.map((x2) => x2.text).join(", ")}`);
+    if (line.fx?.some((f2) => f2.via === "inverse")) notes.push("taux d\xE9riv\xE9 du sens inverse");
+    const doubt = notes.join(" \xB7 ");
     if (line.display !== null) return `${src} \u2502 ${line.display}${doubt ? `   \u2039${doubt}\u203A` : ""}`;
     return src.trimEnd();
   }).join("\n");
