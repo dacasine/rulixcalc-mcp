@@ -29799,15 +29799,20 @@ function guardDate(pd) {
   if (pd.year > 9999 || pd.year < 0) return err("inexact", "dates outside 0000\u20139999 are not supported");
   return pd;
 }
-function applySpanToDate(pd, c2, sign2) {
+function applySpanToDate(pd, c2, sign2, ctx) {
   let d2 = pd;
   try {
-    for (const key of ["years", "months", "weeks", "days"]) {
-      const n2 = c2[key];
-      if (!n2) continue;
-      if (!Number.isSafeInteger(n2)) return err("inexact", "timespan exceeds the safe range");
-      d2 = d2.add({ [key]: sign2 * n2 });
+    let { months, days } = spanCanon(c2);
+    if (ctx?.monthToDays === "30") {
+      days += months * 30n;
+      months = 0n;
     }
+    const MAXI = 9007199254740991n;
+    if (months > MAXI || months < -MAXI || days > MAXI || days < -MAXI) {
+      return err("inexact", "timespan exceeds the safe range");
+    }
+    if (months !== 0n) d2 = d2.add({ months: Number(months) * sign2 });
+    if (days !== 0n) d2 = d2.add({ days: Number(days) * sign2 });
     if (d2.year > 9999 || d2.year < 0) {
       return err("inexact", "dates outside 0000\u20139999 are not supported");
     }
@@ -30065,6 +30070,21 @@ function basePartOf(comps, ctx) {
   }
   return { rat, dec: dec2 };
 }
+var termKey = (comps) => comps.map((c2) => `${c2.def.id}^${c2.exp}`).sort().join("\xB7");
+var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
+var mergeTerms = (a2, b2, sign2) => {
+  const out = /* @__PURE__ */ new Map();
+  for (const t2 of a2) out.set(termKey(t2.comps), { x: t2.x, comps: t2.comps });
+  for (const t2 of b2) {
+    const k2 = termKey(t2.comps);
+    const prev = out.get(k2);
+    const xs = sign2 === 1n ? t2.x : { n: -t2.x.n, d: t2.x.d };
+    if (prev) prev.x = rAdd(prev.x, xs);
+    else out.set(k2, { x: xs, comps: t2.comps });
+  }
+  return [...out.values()].filter((t2) => rnorm(t2.x).n !== 0n);
+};
+var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
   const lc = compsOf(l2);
@@ -30436,7 +30456,17 @@ function addSummable(acc, v2, ctx) {
 }
 function foldIrrationalResidue(rt2) {
   const comps = compsOf(rt2);
-  if (!comps || comps.length > 12 || !comps.some((c2) => c2.def.factorDec !== void 0)) return rt2;
+  if (!comps || !comps.some((c2) => c2.def.factorDec !== void 0)) return rt2;
+  if (comps.length > 12) {
+    if (!dimIsEmpty(dimOfComps(comps)) || comps.some((c2) => !isPureLinear(c2.def) && c2.def.factorDec === void 0)) return rt2;
+    let rat9 = { n: 1n, d: 1n };
+    let dec9 = new DecC(1);
+    for (const c2 of comps) {
+      if (c2.def.factorDec !== void 0) dec9 = dec9.times(new DecC(c2.def.factorDec).pow(c2.exp));
+      else rat9 = rMul(rat9, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
+    }
+    return { t: "d", v: ratToDec(rMul(rt2.vx ?? decToRat(rt2.v), rat9)).times(dec9) };
+  }
   let best = 0;
   let bestSize = 0;
   for (let mask = 1; mask < 1 << comps.length; mask++) {
@@ -30467,9 +30497,9 @@ function foldIrrationalResidue(rt2) {
 }
 function finalizeCurrencies(rt2, ctx) {
   if (rt2.t !== "q") return rt2;
-  if (rt2.chosen) return rt2;
   rt2 = foldIrrationalResidue(rt2);
   if (rt2.t !== "q") return rt2;
+  if (rt2.chosen) return rt2;
   const comps = compsOf(rt2);
   if (!comps) return rt2;
   const cur = comps.filter((c2) => c2.def.currency);
@@ -30549,12 +30579,43 @@ function evalAst(ast, env, ctx = {}) {
             const { months: m9, days: d9 } = spanCanon(val.c);
             const g9 = spanGroups(val.c);
             if (ctx.monthToDays !== "30") {
-              if (m9 !== 0n && d9 !== 0n) return err("anchor-required", "months/years and days/weeks only compare around a date");
               if (g9.hasM) anyM = true;
               if (g9.hasD && !g9.hasM) anyD = true;
             }
-            const x9 = ctx.monthToDays === "30" ? m9 * 30n + d9 : g9.hasM ? m9 : d9;
+            const x9 = ctx.monthToDays === "30" ? m9 * 30n + d9 : m9;
             scal.push({ x: x9, rt: val });
+          }
+          if ((anyM && anyD || scal.some((s9) => spanCanon(s9.rt.c).months !== 0n && spanCanon(s9.rt.c).days !== 0n)) && ctx.monthToDays !== "30") {
+            const cmp9 = (u9, v9) => {
+              const dm = u9.months === v9.months ? 0 : u9.months < v9.months ? -1 : 1;
+              const dd = u9.days === v9.days ? 0 : u9.days < v9.days ? -1 : 1;
+              if (dm === 0) return dd;
+              if (dd === 0 || dd === dm) return dm;
+              return null;
+            };
+            const canons = scal.map((s9) => spanCanon(s9.rt.c));
+            for (let a9 = 0; a9 < canons.length; a9++) {
+              for (let b9 = a9 + 1; b9 < canons.length; b9++) {
+                if (cmp9(canons[a9], canons[b9]) === null) {
+                  return err("anchor-required", "months/years and days/weeks only compare around a date");
+                }
+              }
+            }
+            const order9 = scal.map((s9, k9) => ({ s9, c9: canons[k9] }));
+            order9.sort((u9, v9) => cmp9(u9.c9, v9.c9));
+            const midM = order9.length >> 1;
+            if (order9.length % 2 === 1) return order9[midM].s9.rt;
+            const lo0 = order9[midM - 1].c9;
+            const hi0 = order9[midM].c9;
+            const gl0 = spanGroups(order9[midM - 1].s9.rt.c);
+            const gh0 = spanGroups(order9[midM].s9.rt.c);
+            return spanHalf(
+              lo0.months + hi0.months,
+              lo0.days + hi0.days,
+              { hasM: gl0.hasM || gh0.hasM, hasD: gl0.hasD || gh0.hasD },
+              2n,
+              ctx
+            );
           }
           if (anyM && anyD && ctx.monthToDays !== "30") {
             return err("anchor-required", "months/years and days/weeks only compare around a date");
@@ -30587,7 +30648,11 @@ function evalAst(ast, env, ctx = {}) {
           }
           scal9.sort((a9, b9) => rCmp(a9.x, b9.x));
           const mid9 = scal9.length >> 1;
-          if (scal9.length % 2 === 1) return scal9[mid9].rt;
+          if (scal9.length % 2 === 1) {
+            const f0 = values[0];
+            const midK = mkQ(scal9[mid9].x, lookupUnit("K"));
+            return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
+          }
           const meanK9 = mkQ(rDiv(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), { n: 2n, d: 1n }), K9);
           const f9 = scal9[0].rt;
           return f9.def !== void 0 && f9.def.id !== "kelvin" && (f9.def.affine !== void 0 || f9.def.factor !== void 0) ? convertQuantity(meanK9, f9.def, ctx) : meanK9;
@@ -30830,7 +30895,12 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "ts") return { t: "ts", c: addSpans({}, e.c, -1) };
       if (e.t === "ds" || e.t === "wd" || e.t === "ct") return err("unsupported-pair", "this value cannot be negated");
       if (e.t === "q") {
-        return { ...e, v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0 };
+        return {
+          ...e,
+          v: e.v.neg(),
+          vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0,
+          ...e.terms && { terms: e.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
+        };
       }
       return { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0 };
     }
@@ -30969,7 +31039,7 @@ function evalAst(ast, env, ctx = {}) {
       }
       if (span.t !== "ts") return err("unsupported-pair", "\u201Cdans/il y a\u201D needs a timespan");
       try {
-        const applied = applySpanToDate(ref, span.c, ast.sign);
+        const applied = applySpanToDate(ref, span.c, ast.sign, ctx);
         if ("t" in applied) return applied;
         return { t: "ds", pd: applied, precision: "dayMonthYear" };
       } catch (cause) {
@@ -31219,6 +31289,25 @@ function evalAst(ast, env, ctx = {}) {
             const rhs = alignForAdd(l2, r3, ctx);
             if (rhs.t === "e") return rhs;
             const xr = qx(rhs);
+            const irr = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+            if ((irr(l2) || irr(r3)) && termKey(compsOf(l2) ?? []) !== termKey(compsOf(r3) ?? [])) {
+              const merged = mergeTerms(termsOf(l2), termsOf(r3), ast.op === "+" ? 1n : -1n);
+              if (merged.length === 0) return { t: "d", v: new DecC(0) };
+              if (merged.length === 1) {
+                const t9 = merged[0];
+                const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+                const raw9 = {
+                  t: "q",
+                  ...qv(t9.x),
+                  dim: dimOfComps(t9.comps),
+                  symbol: compsSymbol(t9.comps),
+                  comps: t9.comps
+                };
+                return combineQuantities(one9, raw9, "*", ctx);
+              }
+              const dec9 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
+              return { ...l2, ...qv(dec9), terms: merged };
+            }
             return { ...l2, ...qv(ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr)) };
           }
           if (ast.op === "*" || ast.op === "/") {
@@ -31239,10 +31328,10 @@ function evalAst(ast, env, ctx = {}) {
             return err("unit-mismatch", "scaling offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
           }
           const b3 = r3.t === "f" ? rnorm({ n: r3.n, d: r3.d }) : r3.vx ?? decToRat(r3.v);
-          if (ast.op === "*") return { ...l2, ...qv(rMul(qx(l2), b3)) };
+          if (ast.op === "*") return { ...l2, ...qv(rMul(qx(l2), b3)), ...scaleTerms(l2, b3) };
           if (ast.op === "/") {
             if (b3.n === 0n) return err("division-by-zero");
-            return { ...l2, ...qv(rDiv(qx(l2), b3)) };
+            return { ...l2, ...qv(rDiv(qx(l2), b3)), ...scaleTerms(l2, rDiv({ n: 1n, d: 1n }, b3)) };
           }
           if (ast.op === "^") {
             const n2 = numRat(r3);
@@ -31354,7 +31443,7 @@ function evalAst(ast, env, ctx = {}) {
         try {
           if (l2.t === "ds" && r3.t === "ts") {
             if (ast.op === "+" || ast.op === "-") {
-              const applied = applySpanToDate(l2.pd, r3.c, ast.op === "+" ? 1 : -1);
+              const applied = applySpanToDate(l2.pd, r3.c, ast.op === "+" ? 1 : -1, ctx);
               if ("t" in applied) return applied;
               return { t: "ds", pd: applied, precision: l2.precision };
             }
@@ -31388,7 +31477,7 @@ function evalAst(ast, env, ctx = {}) {
           }
           if (l2.t === "ts" && r3.t === "ds" && ast.op === "+") {
             {
-              const applied = applySpanToDate(r3.pd, l2.c, 1);
+              const applied = applySpanToDate(r3.pd, l2.c, 1, ctx);
               if ("t" in applied) return applied;
               return { t: "ds", pd: applied, precision: r3.precision };
             }
@@ -31797,7 +31886,35 @@ function matchDate(slice, order) {
 var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
 var isLetter = (ch) => ch !== void 0 && new RegExp("\\p{L}", "u").test(ch);
 var NFKC_PRESERVE = /[\u00B2\u00B3\u00B9\u00B5\u00B7\u00BC-\u00BE\u2070-\u209F\u2150-\u215F\u2212]/u;
+var UNIT_LIGATURES = {
+  "\u338F": "kg",
+  "\u338E": "mg",
+  "\u338D": "\xB5g",
+  "\u339C": "mm",
+  "\u339D": "cm",
+  "\u339E": "km",
+  "\u33A1": "m\xB2",
+  "\u33A0": "cm\xB2",
+  "\u33A2": "km\xB2",
+  "\u33A5": "m\xB3",
+  "\u33A4": "cm\xB3",
+  "\u33A6": "km\xB3",
+  "\u2103": "\xB0C",
+  "\u2109": "\xB0F",
+  "\u3396": "ml",
+  "\u3397": "dl",
+  "\u2113": "l",
+  "\u3398": "kl",
+  "\u3390": "Hz",
+  "\u3391": "kHz",
+  "\u3392": "MHz",
+  "\u33BE": "kW",
+  "\u33D7": "pH"
+};
 function nfkcWord(text) {
+  let mapped = "";
+  for (const ch of text) mapped += UNIT_LIGATURES[ch] ?? ch;
+  text = mapped;
   const nfc = text.normalize("NFC");
   if (nfc.normalize("NFKC") === nfc) return nfc;
   let out = "";
@@ -32007,7 +32124,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         continue;
       }
       const cp = line.codePointAt(i2);
-      if (/[\p{L}\p{M}]/u.test(String.fromCodePoint(cp))) {
+      if (/[\p{L}\p{M}\u3380-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(cp))) {
         i2 += String.fromCodePoint(cp).length;
         continue;
       }
@@ -32040,7 +32157,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (new RegExp("\\p{L}", "u").test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
+    if (/[\p{L}\u3380-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
       scanWord();
       continue;
     }
@@ -33312,6 +33429,56 @@ function extractReferences(tokens, rts, formatting) {
   }
   return refs;
 }
+var CONFUSABLES = {
+  "\u0410": "A",
+  "\u0412": "B",
+  "\u0415": "E",
+  "\u041A": "K",
+  "\u041C": "M",
+  "\u041D": "H",
+  "\u041E": "O",
+  "\u0420": "P",
+  "\u0421": "C",
+  "\u0422": "T",
+  "\u0423": "Y",
+  "\u0425": "X",
+  "\u0405": "S",
+  "\u0500": "D",
+  "\u0430": "a",
+  "\u0441": "c",
+  "\u0435": "e",
+  "\u043E": "o",
+  "\u0440": "p",
+  "\u0455": "s",
+  "\u0443": "y",
+  "\u0445": "x",
+  "\u0391": "A",
+  "\u0392": "B",
+  "\u0395": "E",
+  "\u0396": "Z",
+  "\u0397": "H",
+  "\u0399": "I",
+  "\u039A": "K",
+  "\u039C": "M",
+  "\u039D": "N",
+  "\u039F": "O",
+  "\u03A1": "P",
+  "\u03A4": "T",
+  "\u03A5": "Y",
+  "\u03A7": "X",
+  "\u03F9": "C",
+  "\u03F2": "c",
+  "\u03BF": "o",
+  "\u13A0": "D",
+  "\u15EA": "D",
+  "\u054D": "U",
+  "\u054F": "S"
+};
+var skeleton = (w2) => {
+  let out = "";
+  for (const ch of w2) out += CONFUSABLES[ch] ?? ch;
+  return out;
+};
 var CORE_OP_WORDS = /* @__PURE__ */ new Set(["mod", "modulo"]);
 function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
   const out = [...tokens];
@@ -33370,7 +33537,8 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
         const w9 = out[bi9 - 1];
         return bi9 >= 1 && (w9?.kind === "word" && isComputableWord(w9.text) && !env.has(w9.text) && !isAggWord(w9.text) && !isUnitWord(w9.text) || w9?.kind === "number" && out[bi9 - 2]?.kind === "word" && isComputableWord(out[bi9 - 2].text) && !isUnitWord(out[bi9 - 2].text));
       };
-      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && !isRefRparen(b2) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && isComputableWord(b2.text) && !env.has(b2.text) && !isAggWord(b2.text));
+      const innerHasCode = meaningful.some((t9) => t9.kind === "word" && (looksLikeCode(t9.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t9.text)));
+      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && (env.has(b2.text) || isComputableWord(b2.text) || isReservedWord(b2.text)));
       if (qualifies(before) || qualifies(beforeEff)) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
         return out;
@@ -33396,6 +33564,20 @@ function prepareTokens(tokens, env, lexicon, violations, ignored) {
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
     tokens = tokens.slice(colonIdx + 1);
+  }
+  const SUPS = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
+  const supOf = (n9) => {
+    const body9 = String(Math.abs(n9)).split("").map((d9) => SUPS[Number(d9)]).join("");
+    return `${n9 < 0 ? "\u207B" : ""}${body9}`;
+  };
+  for (let idx9 = 0; idx9 + 2 < tokens.length; idx9++) {
+    const [u9, c9, n9] = [tokens[idx9], tokens[idx9 + 1], tokens[idx9 + 2]];
+    if (u9.kind === "word" && isUnitWord(u9.text) && c9.kind === "op" && c9.op === "^" && n9.kind === "number" && n9.plainInt === true) {
+      const e9 = n9.dec.toNumber();
+      if (Number.isInteger(e9) && Math.abs(e9) <= 999 && e9 !== 0) {
+        tokens.splice(idx9, 3, { ...u9, text: `${u9.text}${e9 === 1 ? "" : supOf(e9)}`, end: n9.end });
+      }
+    }
   }
   const out = [];
   for (let idx = 0; idx < tokens.length; idx++) {
@@ -33463,11 +33645,12 @@ function prepareTokens(tokens, env, lexicon, violations, ignored) {
         } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
         } else if ((looksLikeCode(t2.text) || // uppercase-led alphanumeric codes (GMT2) after values
-        new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || // cross-script HOMOGLYPHS (UЅD, СHF, ΕUR, USᎠ) are never
-        // counting prose — mixed Latin+confusable scripts refuse
-        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}]/u.test(t2.text) && /[\p{Script=Latin}]/u.test(t2.text)) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
+        new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || // cross-script HOMOGLYPHS (UЅD, СHF, ΕUR, USᎠ, °С, К) are never
+        // counting prose — mixed scripts refuse, and so does any word
+        // whose Latin SKELETON is a known unit or code (audit W)
+        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}]/u.test(t2.text) && /[\p{Script=Latin}]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)))) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
-        } else if (prev?.kind === "word" && (isUnitWord(prev.text) || isTimespanUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))))) {
+        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "rparen" || prev?.kind === "percent" || prev?.kind === "date" || prev?.kind === "clocktime" || prev?.kind === "bang") && prev.end === t2.start && !(prev.kind === "number" && prev.plainInt === true && ["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower))) {
           violations.push(prev.kind === "number" || prev.kind === "fraction" ? `\u201C${prev.text}${t2.text}\u201D is not a number, unit or date` : `\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -33719,6 +33902,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     commentWords,
     altRts: [],
     altTexts: [],
+    altCands: [],
+    altWorlds: [],
     preStrictSummable: false
   });
   if (line.trim() === "" || HEADING.test(line)) return empty([], []);
@@ -33771,6 +33956,15 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
   const unverifiedGrave = [];
   const altRts = [];
   const altTexts = [];
+  const altCands = [];
+  const altWorlds = [];
+  const candIdx = (a2) => {
+    if (a2.range === void 0 || a2.altRewrite === void 0) return -1;
+    const k9 = altCands.findIndex((c9) => c9.start === a2.range.start && c9.end === a2.range.end);
+    if (k9 >= 0) return k9;
+    altCands.push({ start: a2.range.start, end: a2.range.end, alt: a2.altRewrite });
+    return altCands.length - 1;
+  };
   const assumptions = (() => {
     if (counterfactual) return void 0;
     const all = [...tokenAssumptions(tokens, dateOrder, formatting?.language ?? "fr"), ...rawAssume];
@@ -33868,12 +34062,14 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         if (alt.rt !== null) {
           dissolved.push(a2);
           altTexts.push(altLine);
+          altWorlds.push({ rt: alt.rt, cands: [candIdx(a2)] });
         }
         continue;
       }
       if (semantic(alt.rt) === semanticChosen) {
         dissolved.push(a2);
         altTexts.push(altLine);
+        candIdx(a2);
         continue;
       }
       a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
@@ -33881,6 +34077,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       validateRewrite();
       altRts.push(alt.rt);
       altTexts.push(altLine);
+      altWorlds.push({ rt: alt.rt, cands: [candIdx(a2)] });
       kept.push(a2);
     }
     const comboCands = [...new Map(
@@ -33927,12 +34124,18 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         );
         mergeReads(joint);
         if (joint.rt === null) continue;
-        if (joint.rt.t === "e" || semantic(joint.rt) === semanticChosen) {
+        if (joint.rt.t === "e") {
+          altTexts.push(jointLine);
+          altWorlds.push({ rt: joint.rt, cands: members.map(candIdx) });
+          continue;
+        }
+        if (semantic(joint.rt) === semanticChosen) {
           altTexts.push(jointLine);
           continue;
         }
         altRts.push(joint.rt);
         altTexts.push(jointLine);
+        altWorlds.push({ rt: joint.rt, cands: members.map(candIdx) });
         const jointShown = formatRT(joint.rt, formatting) ?? semantic(joint.rt);
         for (const a2 of members) {
           if (!kept.includes(a2)) {
@@ -33943,7 +34146,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         }
       }
     }
-    if (!combosExhaustive || unverifiedGrave.length > 0) {
+    if ((!combosExhaustive || unverifiedGrave.length > 0) && !kept.some((a9) => a9.code === "combination-unverified")) {
       kept.push({
         code: "combination-unverified",
         level: 2,
@@ -34006,6 +34209,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     commentWords: envWords,
     altRts,
     altTexts,
+    altCands,
+    altWorlds,
     preStrictSummable
   };
 }
@@ -34177,47 +34382,68 @@ function runSheet(text, context, cache2) {
       }
       let publicResult = structuredClone(entry.result);
       let rtOut = entry.rt;
-      const runAlts = [...entry.altRts.map((rt9, k9) => ({ rt: rt9, root: `${i2 + 1}:${k9}` }))];
+      const runAlts = entry.altWorlds.map((w9) => ({
+        rt: w9.rt,
+        root: w9.cands.map((c9) => `${i2 + 1}:c${c9}`).sort().join("+")
+      }));
       let comboUnverified = false;
       if (srcLabels.length > 0 && !droppedAmbiguous && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
         const srcByLine = /* @__PURE__ */ new Map();
         const addSource = (line9) => {
           if (line9 < 1 || srcByLine.has(line9)) return;
           const names9 = [...varDefLine].filter(([, l9]) => l9 === line9).map(([n9]) => n9);
-          srcByLine.set(line9, { line: line9, entries: lineAlts[line9 - 1] ?? [], names: names9 });
+          srcByLine.set(line9, { line: line9, names: names9 });
         };
         for (const idx of srcLineIdxs) addSource(idx);
         for (const name of srcVars) addSource(varDefLine.get(name) ?? -1);
-        const sources = [...srcByLine.values()];
-        for (const s9 of sources) {
-          const sig9s = doubtSigs[s9.line - 1] ?? "";
-          if (sig9s.includes("combination-unverified")) comboUnverified = true;
+        for (const [line9] of srcByLine) {
+          if ((doubtSigs[line9 - 1] ?? "").includes("combination-unverified")) comboUnverified = true;
         }
-        const byRoot = /* @__PURE__ */ new Map();
-        for (const s9 of sources) {
-          for (const e9 of s9.entries) {
-            const m9 = byRoot.get(e9.root) ?? /* @__PURE__ */ new Map();
-            m9.set(s9.line, e9.rt);
-            byRoot.set(e9.root, m9);
+        const atomMap = /* @__PURE__ */ new Map();
+        for (const [line9] of srcByLine) {
+          for (const e9 of lineAlts[line9 - 1] ?? []) {
+            const a9 = atomMap.get(e9.root) ?? { id: e9.root, assign: /* @__PURE__ */ new Map(), splices: [] };
+            a9.assign.set(line9, e9.rt);
+            atomMap.set(e9.root, a9);
           }
         }
-        const originOf = (root9) => root9.split("+").map((p9) => p9.split(":")[0]);
-        const roots = [...byRoot.keys()];
+        entry.altCands.forEach((c9, k9) => {
+          const id9 = `${i2 + 1}:c${k9}`;
+          atomMap.set(id9, { id: id9, assign: /* @__PURE__ */ new Map(), splices: [{ ...c9 }] });
+        });
+        const atoms = [...atomMap.values()];
+        const compatible = (list9) => {
+          const seen9 = /* @__PURE__ */ new Map();
+          for (const a9 of list9) {
+            for (const [l9, w9] of a9.assign) {
+              const j9 = JSON.stringify(toPublicValue(w9));
+              const prev9 = seen9.get(l9);
+              if (prev9 !== void 0 && prev9 !== j9) return false;
+              seen9.set(l9, j9);
+            }
+          }
+          return true;
+        };
+        const probeCap = (context.policies?.ambiguity ?? "annotate") === "strict" ? 64 : 16;
         let sensitive = false;
         let probes = 0;
         let exhausted = false;
-        const probeCap = (context.policies?.ambiguity ?? "annotate") === "strict" ? 64 : 16;
-        const probeWorld = (assign, worldKey, text9) => {
+        const probeWorld = (list9) => {
           if (probes >= probeCap) {
             exhausted = true;
             return;
           }
           probes++;
+          let text9 = line;
+          const splices = list9.flatMap((a9) => a9.splices).sort((x9, y9) => y9.start - x9.start);
+          for (const s9 of splices) text9 = text9.slice(0, s9.start) + s9.alt + text9.slice(s9.end);
           const rtsP = [...rts];
           const envP = new Map(env);
-          for (const [line9, w9] of assign) {
-            rtsP[line9 - 1] = w9;
-            for (const n9 of srcByLine.get(line9)?.names ?? []) envP.set(n9, w9);
+          for (const a9 of list9) {
+            for (const [l9, w9] of a9.assign) {
+              rtsP[l9 - 1] = w9;
+              for (const n9 of srcByLine.get(l9)?.names ?? []) envP.set(n9, w9);
+            }
           }
           const probe9 = evaluateLine(
             text9,
@@ -34235,54 +34461,34 @@ function runSheet(text, context, cache2) {
             "annotate",
             true
           );
-          if (probe9.rt !== null && JSON.stringify(toPublicValue(probe9.rt)) !== JSON.stringify(publicResult.value)) {
+          if (probe9.rt === null) {
             sensitive = true;
-            runAlts.push({ rt: probe9.rt, root: worldKey });
-          } else if (probe9.rt === null) {
+            return;
+          }
+          if (JSON.stringify(toPublicValue(probe9.rt)) !== JSON.stringify(publicResult.value)) {
             sensitive = true;
+            runAlts.push({ rt: probe9.rt, root: list9.map((a9) => a9.id).sort().join("+") });
           }
         };
-        for (const r9 of roots) {
-          if (exhausted) break;
-          probeWorld(byRoot.get(r9), r9, line);
-        }
-        if (!exhausted && entry.altTexts.length > 0) {
-          for (const r9 of roots) {
-            if (exhausted) break;
-            for (let t9 = 0; t9 < entry.altTexts.length && !exhausted; t9++) {
-              probeWorld(byRoot.get(r9), `${r9}\xD7${i2 + 1}:${t9}`, entry.altTexts[t9]);
-            }
-          }
-        }
-        if (!exhausted && roots.length >= 2) {
-          const maxK = Math.min(roots.length, 4);
+        if (atoms.length > 20) exhausted = true;
+        else {
           const pop9 = (m9) => {
             let c9 = 0;
             for (let x9 = m9; x9 > 0; x9 >>= 1) c9 += x9 & 1;
             return c9;
           };
           const masks = [];
-          for (let m9 = 3; m9 < 1 << Math.min(roots.length, 16); m9++) if (pop9(m9) >= 2 && pop9(m9) <= maxK) masks.push(m9);
+          for (let m9 = 1; m9 < 1 << atoms.length; m9++) masks.push(m9);
           masks.sort((a9, b9) => pop9(a9) - pop9(b9));
           for (const mask of masks) {
-            if (exhausted) break;
-            const chosen9 = roots.filter((_2, k9) => mask >> k9 & 1);
-            const origins = chosen9.flatMap(originOf);
-            if (new Set(origins).size !== origins.length) continue;
-            const assign = /* @__PURE__ */ new Map();
-            for (const r9 of chosen9) for (const [l9, w9] of byRoot.get(r9)) assign.set(l9, w9);
-            probeWorld(assign, [...chosen9].sort().join("+"), line);
+            if (exhausted || sensitive && probes >= probeCap) break;
+            const list9 = atoms.filter((_2, k9) => mask >> k9 & 1);
+            if (!compatible(list9)) continue;
+            probeWorld(list9);
           }
-          if (roots.length > 16) exhausted = true;
         }
-        if (exhausted) {
-          comboUnverified = true;
-        }
-        if (!sensitive && !exhausted) {
-          srcLabels.length = 0;
-        } else if (!sensitive && exhausted) {
-          srcLabels.length = 0;
-        }
+        if (exhausted) comboUnverified = true;
+        if (!sensitive) srcLabels.length = 0;
       }
       if (srcLabels.length > 0 && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
         const lang9 = formatting.language ?? "fr";
@@ -34299,7 +34505,7 @@ function runSheet(text, context, cache2) {
           ];
         }
       }
-      if (comboUnverified && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
+      if (comboUnverified && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null && !(publicResult.assumptions ?? []).some((a9) => a9.code === "combination-unverified")) {
         const lang9 = formatting.language ?? "fr";
         const msg9 = lang9 === "fr" ? `toutes les combinaisons d'interpr\xE9tations n'ont pas pu \xEAtre v\xE9rifi\xE9es` : `not every combination of interpretations could be verified`;
         if ((context.policies?.ambiguity ?? "annotate") === "strict") {
