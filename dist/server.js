@@ -29845,7 +29845,6 @@ function addWorkdays(ds, n2, sign2, ctx) {
   let horizon = Math.ceil(n2 * 2) + 30;
   let from = sign2 === 1 ? ds.pd : ds.pd.subtract({ days: horizon });
   let to = sign2 === 1 ? ds.pd.add({ days: horizon }) : ds.pd;
-  ctx.holidayReads?.push({ from: from.toString(), to: to.toString(), region: ctx.region ?? "CH" });
   const safeHolidays = (f2, t2) => {
     try {
       return provider.holidays(f2, t2, ctx.region ?? "CH").map((h2) => String(h2.date));
@@ -29853,7 +29852,9 @@ function addWorkdays(ds, n2, sign2, ctx) {
       return null;
     }
   };
+  const holObs = (hs) => hs === null ? "\u26A0" : hs.map((d0) => JSON.stringify(d0)).join(",");
   const hs0 = safeHolidays(from.toString(), to.toString());
+  ctx.holidayReads?.push({ from: from.toString(), to: to.toString(), region: ctx.region ?? "CH", obs: holObs(hs0) });
   if (hs0 === null) return err("holidays-unavailable", "the holiday provider failed \u2014 workday arithmetic needs it");
   let holidaySet = new Set(hs0);
   let d2 = ds.pd;
@@ -29866,8 +29867,8 @@ function addWorkdays(ds, n2, sign2, ctx) {
       horizon += Math.max(horizon, 60);
       from = sign2 === 1 ? from : ds.pd.subtract({ days: horizon });
       to = sign2 === 1 ? ds.pd.add({ days: horizon }) : to;
-      ctx.holidayReads?.push({ from: from.toString(), to: to.toString(), region: ctx.region ?? "CH" });
       const hs1 = safeHolidays(from.toString(), to.toString());
+      ctx.holidayReads?.push({ from: from.toString(), to: to.toString(), region: ctx.region ?? "CH", obs: holObs(hs1) });
       if (hs1 === null) return err("holidays-unavailable", "the holiday provider failed \u2014 workday arithmetic needs it");
       holidaySet = new Set(hs1);
     }
@@ -29920,6 +29921,9 @@ function calUnitForSpan(c2) {
   if (days !== 0) {
     return c2.weeks && !c2.days ? CAL_RATE_DEFS.week : CAL_RATE_DEFS.day;
   }
+  if (c2.years !== void 0 && c2.months === void 0) return CAL_RATE_DEFS.year;
+  if (c2.years !== void 0 || c2.months !== void 0) return CAL_RATE_DEFS.month;
+  if (c2.weeks !== void 0 && c2.days === void 0) return CAL_RATE_DEFS.week;
   return CAL_RATE_DEFS.day;
 }
 var spanIsSafe = (c2) => ["years", "months", "weeks", "days"].every((k2) => c2[k2] === void 0 || Number.isSafeInteger(c2[k2]));
@@ -29941,17 +29945,20 @@ var addSpans = (a2, b2, sign2) => {
   return out;
 };
 function fxRat(provider, from, to, ctx) {
-  ctx.fxReads?.push({ from, to });
   const safe = (f2, t2) => {
     try {
       const q2 = provider.rate(f2, t2);
       if (!q2) return void 0;
       return { rate: String(q2.rate), asOf: String(q2.asOf), source: String(q2.source) };
     } catch {
-      return void 0;
+      return null;
     }
   };
-  const direct = safe(from, to);
+  const obsOf = (q2) => q2 === void 0 ? "\u2205" : q2 === null ? "\u26A0" : JSON.stringify([q2.rate, q2.asOf, q2.source]);
+  const directRaw = safe(from, to);
+  const direct = directRaw ?? void 0;
+  const inverseRaw = direct === void 0 ? safe(to, from) : "\xB7";
+  ctx.fxReads?.push({ from, to, obs: `${obsOf(directRaw)};${inverseRaw === "\xB7" ? "\xB7" : obsOf(inverseRaw)}` });
   const validRate = (raw) => {
     try {
       const d2 = new DecC(raw);
@@ -29967,7 +29974,7 @@ function fxRat(provider, from, to, ctx) {
     ctx.fxTrace?.push({ from, to, rate: direct.rate, asOf: direct.asOf, source: direct.source, via: "direct" });
     return decToRat(d2);
   }
-  const inverse = safe(to, from);
+  const inverse = inverseRaw === "\xB7" ? void 0 : inverseRaw ?? void 0;
   if (inverse) {
     const d2 = validRate(inverse.rate);
     if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${inverse.rate}\u201D for ${to} \u2192 ${from}`);
@@ -30005,7 +30012,7 @@ function convertQuantity(rt2, to, ctx) {
     if (from.currency === to.currency) return { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] };
     const provider = ctx.rates;
     if (!provider) {
-      ctx.fxReads?.push({ from: from.currency, to: to.currency });
+      ctx.fxReads?.push({ from: from.currency, to: to.currency, obs: "\u2205;\u2205" });
       return err("rates-unavailable", `no rate provider for ${from.currency} \u2192 ${to.currency}`);
     }
     const fx = fxRat(provider, from.currency, to.currency, ctx);
@@ -30063,57 +30070,46 @@ function alignForAdd(l2, r3, ctx) {
     const lCur = lc.filter((c2) => c2.def.currency);
     const rRest = rc.map((c2) => ({ ...c2 })).filter((c2) => !c2.def.currency);
     const rCur = rc.filter((c2) => c2.def.currency).map((c2) => ({ ...c2 }));
-    const expandCur = (list) => list.flatMap((c2) => Array.from(
-      { length: Math.abs(c2.exp) },
-      () => ({ def: c2.def, sign: c2.exp > 0 ? 1 : -1 })
-    ));
-    const lSlots = expandCur(lCur);
-    const rSlots = expandCur(rCur);
-    for (let i9 = lSlots.length - 1; i9 >= 0; i9--) {
-      const j9 = rSlots.findIndex((m0) => m0.sign === lSlots[i9].sign && m0.def.id === lSlots[i9].def.id);
-      if (j9 >= 0) {
-        lSlots.splice(i9, 1);
-        rSlots.splice(j9, 1);
-      }
-    }
+    const nets = /* @__PURE__ */ new Map();
+    const addNet = (c2, sign2) => {
+      const e9 = nets.get(c2.def.currency) ?? { def: c2.def, net: 0 };
+      e9.net += sign2 * c2.exp;
+      nets.set(c2.def.currency, e9);
+    };
+    for (const c2 of lCur) addNet(c2, -1);
+    for (const c2 of rCur) addNet(c2, 1);
+    const needed = [...nets.values()].filter((e9) => e9.net !== 0);
     let ratio = { n: 1n, d: 1n };
-    const fxOrNull = (from, to) => {
+    if (needed.length > 0) {
       const provider = ctx.rates;
       if (!provider) {
-        ctx.fxReads?.push({ from: from.currency, to: to.currency });
-        return err("rates-unavailable", `no rate provider for ${from.currency} \u2192 ${to.currency}`);
+        ctx.fxReads?.push({ from: needed[0].def.currency, to: (lCur[0] ?? rCur[0]).def.currency, obs: "\u2205;\u2205" });
+        return err("rates-unavailable", `no rate provider for ${needed[0].def.currency} \u2192 ${(lCur[0] ?? rCur[0]).def.currency}`);
       }
-      return fxRat(provider, from.currency, to.currency, ctx);
-    };
-    while (rSlots.length > lSlots.length) {
-      const ip = rSlots.findIndex((s2) => s2.sign === 1);
-      const im = rSlots.findIndex((s2) => s2.sign === -1);
-      if (ip < 0 || im < 0) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
-      const fx = fxOrNull(rSlots[ip].def, rSlots[im].def);
-      if ("t" in fx) return fx;
-      ratio = rMul(ratio, fx);
-      rSlots.splice(Math.max(ip, im), 1);
-      rSlots.splice(Math.min(ip, im), 1);
+      const pivots = [...new Set([...lCur, ...rCur].map((c2) => c2.def.currency))];
+      let firstErr = null;
+      let solved = false;
+      for (const pivot of pivots) {
+        let acc = { n: 1n, d: 1n };
+        let ok = true;
+        for (const e9 of needed) {
+          if (e9.def.currency === pivot) continue;
+          const fx = fxRat(provider, e9.def.currency, pivot, ctx);
+          if ("t" in fx) {
+            firstErr = firstErr ?? fx;
+            ok = false;
+            break;
+          }
+          acc = rMul(acc, rPowInt(fx, e9.net));
+        }
+        if (ok) {
+          ratio = acc;
+          solved = true;
+          break;
+        }
+      }
+      if (!solved) return firstErr ?? err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
     }
-    while (lSlots.length > rSlots.length) {
-      const ip = lSlots.findIndex((s2) => s2.sign === 1);
-      const im = lSlots.findIndex((s2) => s2.sign === -1);
-      if (ip < 0 || im < 0) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
-      const fx = fxOrNull(lSlots[ip].def, lSlots[im].def);
-      if ("t" in fx) return fx;
-      ratio = rDiv(ratio, fx);
-      lSlots.splice(Math.max(ip, im), 1);
-      lSlots.splice(Math.min(ip, im), 1);
-    }
-    for (const slot of lSlots) {
-      const idx2 = rSlots.findIndex((m02) => m02.sign === slot.sign);
-      if (idx2 < 0) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
-      const m0 = rSlots.splice(idx2, 1)[0];
-      const fx = fxOrNull(m0.def, slot.def);
-      if ("t" in fx) return fx;
-      ratio = rMul(ratio, rPowInt(fx, slot.sign));
-    }
-    if (rSlots.length > 0) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
     const lBase2 = basePartOf(lc.filter((c2) => !c2.def.currency), ctx);
     const rBase2 = basePartOf(rRest, ctx);
     if (lBase2 === null || rBase2 === null) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
@@ -30226,11 +30222,13 @@ function combineQuantities(l2, r3, op, ctx) {
     comps = comps.filter((c2) => !chosen.has(c2));
   }
   const curComps = comps.filter((c2) => c2.def.currency);
-  if (new Set(curComps.map((c2) => c2.def.currency)).size > 1) {
+  const netCurrency = curComps.reduce((s9, c2) => s9 + c2.exp, 0);
+  const pureZeroCurrencyRatio = netCurrency === 0 && comps.every((c2) => c2.def.currency);
+  if (!pureZeroCurrencyRatio && new Set(curComps.map((c2) => c2.def.currency)).size > 1) {
     const anchor = curComps[0];
     const provider = ctx.rates;
     if (!provider) {
-      ctx.fxReads?.push({ from: curComps[1].def.currency, to: anchor.def.currency });
+      ctx.fxReads?.push({ from: curComps[1].def.currency, to: anchor.def.currency, obs: "\u2205;\u2205" });
     } else {
       const plan = [];
       let feasible = true;
@@ -30306,7 +30304,7 @@ function combineQuantities(l2, r3, op, ctx) {
       if (fxFrom === null || fxTo === null) return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       const provider = ctx.rates;
       if (!provider) {
-        ctx.fxReads?.push({ from: fxFrom, to: fxTo });
+        ctx.fxReads?.push({ from: fxFrom, to: fxTo, obs: "\u2205;\u2205" });
         return err("rates-unavailable", `no rate provider for ${fxFrom} \u2192 ${fxTo}`);
       }
       const fx = fxRat(provider, fxFrom, fxTo, ctx);
@@ -30946,34 +30944,43 @@ function evalAst(ast, env, ctx = {}) {
           if (ast.op === "+" || ast.op === "-") {
             const isAbsTemp = (q2) => dimEquals(q2.dim, { temperature: 1 });
             const isDeltaTemp = (q2) => dimEquals(q2.dim, { tempdelta: 1 });
-            if (isAbsTemp(l2) && isAbsTemp(r3) && l2.def && r3.def) {
+            const canonTemp = (q2) => {
+              if (!(isAbsTemp(q2) || isDeltaTemp(q2))) return q2;
+              if (q2.def && (q2.def.affine || q2.def.factor)) return q2;
+              const tDef = lookupUnit(isAbsTemp(q2) ? "K" : "\u0394K");
+              const aligned = alignForAdd(mkQ({ n: 1n, d: 1n }, tDef), q2, ctx);
+              return aligned.t === "e" ? q2 : aligned;
+            };
+            const lT = canonTemp(l2);
+            const rT = canonTemp(r3);
+            if (isAbsTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
               if (ast.op === "+") {
                 return err("unit-mismatch", "adding two absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for an offset");
               }
-              const conv = convertQuantity(r3, l2.def, ctx);
+              const conv = convertQuantity(rT, lT.def, ctx);
               if (conv.t === "e") return conv;
-              const diff = rSub(qx(l2), qx(conv));
-              const triL = l2.def.affine ?? { a: l2.def.factor.n, b: 0n, c: l2.def.factor.d };
+              const diff = rSub(qx(lT), qx(conv));
+              const triL = lT.def.affine ?? { a: lT.def.factor.n, b: 0n, c: lT.def.factor.d };
               const dK = rMul(diff, { n: triL.a, d: triL.c });
               const dDef = lookupUnit(
-                l2.def.id === "fahrenheit" || l2.def.id === "rankine" ? "\u0394\xB0F" : l2.def.id === "celsius" ? "\u0394\xB0C" : "\u0394K"
+                lT.def.id === "fahrenheit" || lT.def.id === "rankine" ? "\u0394\xB0F" : lT.def.id === "celsius" ? "\u0394\xB0C" : "\u0394K"
               );
               return mkQ(rDiv(dK, ratOfFactor(dDef.factor)), dDef);
             }
-            if (isDeltaTemp(l2) && isAbsTemp(r3) && r3.def) {
+            if (isDeltaTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
               if (ast.op !== "+") {
                 return err("unit-mismatch", "subtracting an absolute temperature from a delta is undefined");
               }
-              const dK = rMul(qx(l2), ratOfFactor(l2.def.factor));
-              const tri = r3.def.affine ?? { a: r3.def.factor.n, b: 0n, c: r3.def.factor.d };
-              return { ...r3, ...qv(rAdd(qx(r3), rMul(dK, { n: tri.c, d: tri.a }))) };
+              const dK = rMul(qx(lT), ratOfFactor(lT.def.factor));
+              const tri = rT.def.affine ?? { a: rT.def.factor.n, b: 0n, c: rT.def.factor.d };
+              return { ...rT, ...qv(rAdd(qx(rT), rMul(dK, { n: tri.c, d: tri.a }))) };
             }
-            if (isAbsTemp(l2) && isDeltaTemp(r3) && l2.def && r3.def) {
-              const dK = rMul(qx(r3), ratOfFactor(r3.def.factor));
-              const tri = l2.def.affine ?? { a: l2.def.factor.n, b: 0n, c: l2.def.factor.d };
+            if (isAbsTemp(lT) && isDeltaTemp(rT) && lT.def && rT.def) {
+              const dK = rMul(qx(rT), ratOfFactor(rT.def.factor));
+              const tri = lT.def.affine ?? { a: lT.def.factor.n, b: 0n, c: lT.def.factor.d };
               const inUnit = rMul(dK, { n: tri.c, d: tri.a });
-              const x2 = ast.op === "+" ? rAdd(qx(l2), inUnit) : rSub(qx(l2), inUnit);
-              return { ...l2, ...qv(x2) };
+              const x2 = ast.op === "+" ? rAdd(qx(lT), inUnit) : rSub(qx(lT), inUnit);
+              return { ...lT, ...qv(x2) };
             }
             if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
               return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
@@ -31011,15 +31018,15 @@ function evalAst(ast, env, ctx = {}) {
             if (e0 === 1) return l2;
             if (e0 < 0 && qx(l2).n === 0n) return err("division-by-zero");
             if (e0 === -1 && l2.rate) {
+              const invComps = (compsOf(l2) ?? []).map((c2) => ({ def: c2.def, exp: -c2.exp }));
               const inv = { num: l2.rate.den, den: l2.rate.num };
-              const symbol9 = inv.den.symbol.includes("\xB7") ? `${inv.num.symbol}/(${inv.den.symbol})` : `${inv.num.symbol}/${inv.den.symbol}`;
               return {
                 t: "q",
                 ...qv(rDiv({ n: 1n, d: 1n }, qx(l2))),
-                dim: dimAdd(inv.num.dim, inv.den.dim, -1),
-                symbol: symbol9,
+                dim: dimOfComps(invComps),
+                symbol: compsSymbol(invComps),
                 rate: inv,
-                comps: [{ def: inv.num, exp: 1 }, { def: inv.den, exp: -1 }]
+                comps: invComps
               };
             }
             const lc9 = compsOf(l2);
@@ -33037,6 +33044,7 @@ function extractReferences(tokens, rts, formatting) {
   }
   return refs;
 }
+var CORE_OP_WORDS = /* @__PURE__ */ new Set(["mod", "modulo"]);
 function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
   const out = [...tokens];
   for (let i2 = 0; i2 < out.length; i2++) {
@@ -33056,11 +33064,11 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
     );
     if (inner.length === 0) continue;
     if (meaningful.some((t2) => t2.kind === "op" || t2.kind === "percent" || t2.kind === "equals")) continue;
-    if (meaningful.some((t2) => t2.kind === "word" && (lexicon.operatorWords.has(t2.text.toLowerCase()) || lexicon.divisionParticles.has(t2.text.toLowerCase())))) continue;
+    if (meaningful.some((t2) => t2.kind === "word" && (lexicon.operatorWords.has(t2.text.toLowerCase()) || lexicon.divisionParticles.has(t2.text.toLowerCase()) || CORE_OP_WORDS.has(t2.text.toLowerCase())))) continue;
     if (!isUnitExpr && !hasComputableContent(inner, env)) {
       const before = out[i2 - 1];
       const after = out[j2];
-      if (before?.kind === "word" && before.end === out[i2].start && !isReservedWord(before.text) && !env.has(before.text)) {
+      if (before?.kind === "word" && !isReservedWord(before.text) && !env.has(before.text) && (before.end === out[i2].start || after?.kind === "op" || after?.kind === "percent" || after?.kind === "equals")) {
         violations.push(`\u201C${before.text}\u201D is not a known function`);
         return out;
       }
@@ -33123,8 +33131,13 @@ function prepareTokens(tokens, env, lexicon, violations, ignored) {
       continue;
     }
     if (lexicon.divisionParticles.has(lower)) {
-      if (prev?.kind === "op" && (prev.op === "/" || prev.op === "*")) continue;
+      const pOp = prev;
+      if (pOp?.kind === "op" && (pOp.op === "/" || pOp.op === "*") && !pOp.particle && !pOp.particleConsumed) {
+        pOp.particleConsumed = true;
+        continue;
+      }
       out.push({ ...t2, kind: "op", op: "/" });
+      out[out.length - 1].particle = true;
       continue;
     }
     const op = lexicon.operatorWords.get(lower);
@@ -33306,17 +33319,17 @@ var serialize = (rt2) => {
     case "wd":
       return `wd:${rt2.n}`;
     case "ct":
-      return `ct:${rt2.mins}:${rt2.label ?? ""}`;
+      return `ct:${rt2.mins}:${JSON.stringify(rt2.label ?? "")}`;
     case "q": {
       const comps = (rt2.comps ?? []).map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7");
       const rate = rt2.rate ? `${rt2.rate.num.id}/${rt2.rate.den.id}` : "";
       return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}`;
     }
     case "e":
-      return `e:${rt2.code}:${rt2.detail ?? ""}`;
+      return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}`;
   }
 };
-function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp) {
+function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe) {
   const parts = [cfgStamp];
   for (const name of [...entry.deps.variables].sort()) parts.push(`v:${name}=${serialize(env.get(name))}`);
   for (const idx of [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2)) {
@@ -33336,12 +33349,20 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
     }
   };
   for (const u2 of entry.fxReads) {
+    if (!probe && u2.obs !== void 0) {
+      parts.push(`fx:${u2.from}/${u2.to}=${u2.obs}`);
+      continue;
+    }
     const d2 = safeRate(u2.from, u2.to);
-    const inv = d2 === "\u2205" ? safeRate(u2.to, u2.from) : "\xB7";
+    const inv = d2 === "\u2205" || d2 === "\u26A0" ? safeRate(u2.to, u2.from) : "\xB7";
     parts.push(`fx:${u2.from}/${u2.to}=${d2};${inv}`);
   }
   if (entry.deps.usesNow) parts.push(`now:${context.now ?? ""}:${context.timezone ?? ""}`);
   for (const h2 of entry.holidayReads) {
+    if (!probe && h2.obs !== void 0) {
+      parts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${h2.obs}`);
+      continue;
+    }
     let dates = "\u2205";
     try {
       dates = context.holidays?.holidays(h2.from, h2.to, h2.region).map((x2) => JSON.stringify(String(x2.date))).join(",") ?? "\u2205";
@@ -33477,7 +33498,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         continue;
       }
       if (budget === 0) {
-        if (a2.impact !== "value") unverifiedGrave.push(a2);
+        unverifiedGrave.push(a2);
         continue;
       }
       budget--;
@@ -33501,6 +33522,11 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       if (alt.rt === null || alt.rt.t === "e") continue;
       if (semantic(alt.rt) === semanticChosen) continue;
       a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
+      if (a2.impact === "value") {
+        const isMoneyRT = (x2) => x2.t === "q" && (x2.def?.currency !== void 0 || x2.rate?.num.currency !== void 0 || (x2.comps?.some((c9) => c9.def.currency) ?? false));
+        const dyn = rt2.t === "ds" || alt.rt.t === "ds" || rt2.t === "wd" || alt.rt.t === "wd" || rt2.t === "ts" || alt.rt.t === "ts" ? "date" : isMoneyRT(rt2) || isMoneyRT(alt.rt) ? "money" : rt2.t === "q" || alt.rt.t === "q" ? "unit" : null;
+        if (dyn !== null) a2.impact = dyn;
+      }
       validateRewrite();
       kept.push(a2);
     }
@@ -33601,13 +33627,13 @@ function runSheet(text, context, cache2) {
   lines.forEach((line, i2) => {
     let entry;
     const cached2 = cache2?.[i2];
-    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context, cfgStamp)) {
+    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context, cfgStamp, true)) {
       entry = cached2;
     } else {
       entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error", context.policies?.ambiguity ?? "annotate");
       recomputed.push(i2);
     }
-    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp);
+    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, false);
     const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
     if (entry.defines) {
       if (derived) aggDerivedVars.add(entry.defines);
@@ -33680,10 +33706,17 @@ function createEngine(context = {}) {
   validateFormatting(context);
   return {
     evaluateSheet(text) {
+      validateFormatting(context);
       return evaluateSheet(text, context);
     },
     createSession() {
-      return createSheetSession(context);
+      const session = createSheetSession(context);
+      return {
+        update(text) {
+          validateFormatting(context);
+          return session.update(text);
+        }
+      };
     }
   };
 }
@@ -33691,6 +33724,13 @@ function createEngine(context = {}) {
 // ../textual-calculator/core/packages/rates/src/index.ts
 var Dec = decimal_default.clone({ precision: 50 });
 function createSnapshotProvider(snapshot) {
+  const frozen = {
+    base: String(snapshot.base),
+    asOf: String(snapshot.asOf),
+    source: String(snapshot.source),
+    rates: Object.fromEntries(Object.entries(snapshot.rates).map(([c2, r0]) => [c2, String(r0)]))
+  };
+  snapshot = frozen;
   const perBase = /* @__PURE__ */ new Map([[snapshot.base.toUpperCase(), new Dec(1)]]);
   for (const [code, rate] of Object.entries(snapshot.rates)) {
     if (perBase.has(code.toUpperCase())) {
