@@ -30071,44 +30071,78 @@ function alignForAdd(l2, r3, ctx) {
     const rRest = rc.map((c2) => ({ ...c2 })).filter((c2) => !c2.def.currency);
     const rCur = rc.filter((c2) => c2.def.currency).map((c2) => ({ ...c2 }));
     const nets = /* @__PURE__ */ new Map();
+    const codes = [];
     const addNet = (c2, sign2) => {
-      const e9 = nets.get(c2.def.currency) ?? { def: c2.def, net: 0 };
+      const cur = c2.def.currency;
+      if (!nets.has(cur)) codes.push(cur);
+      const e9 = nets.get(cur) ?? { def: c2.def, net: 0 };
       e9.net += sign2 * c2.exp;
-      nets.set(c2.def.currency, e9);
+      nets.set(cur, e9);
     };
     for (const c2 of lCur) addNet(c2, -1);
     for (const c2 of rCur) addNet(c2, 1);
-    const needed = [...nets.values()].filter((e9) => e9.net !== 0);
+    const needed = codes.filter((c9) => nets.get(c9).net !== 0);
     let ratio = { n: 1n, d: 1n };
     if (needed.length > 0) {
       const provider = ctx.rates;
       if (!provider) {
-        ctx.fxReads?.push({ from: needed[0].def.currency, to: (lCur[0] ?? rCur[0]).def.currency, obs: "\u2205;\u2205" });
-        return err("rates-unavailable", `no rate provider for ${needed[0].def.currency} \u2192 ${(lCur[0] ?? rCur[0]).def.currency}`);
+        ctx.fxReads?.push({ from: needed[0], to: codes[0], obs: "\u2205;\u2205" });
+        return err("rates-unavailable", `no rate provider for ${needed[0]} \u2192 ${codes[0]}`);
       }
-      const pivots = [...new Set([...lCur, ...rCur].map((c2) => c2.def.currency))];
-      let firstErr = null;
-      let solved = false;
-      for (const pivot of pivots) {
-        let acc = { n: 1n, d: 1n };
-        let ok = true;
-        for (const e9 of needed) {
-          if (e9.def.currency === pivot) continue;
-          const fx = fxRat(provider, e9.def.currency, pivot, ctx);
-          if ("t" in fx) {
-            firstErr = firstErr ?? fx;
-            ok = false;
-            break;
+      const edges = /* @__PURE__ */ new Map();
+      const probe = (a2, b2) => {
+        const key = `${a2}\u2192${b2}`;
+        const hit = edges.get(key);
+        if (hit !== void 0) return hit;
+        const local = [];
+        const fx = fxRat(provider, a2, b2, { ...ctx, fxTrace: local });
+        if ("t" in fx) {
+          edges.set(key, null);
+          edges.set(`${b2}\u2192${a2}`, null);
+          return null;
+        }
+        const fwd = { rat: fx, traces: local };
+        edges.set(key, fwd);
+        edges.set(`${b2}\u2192${a2}`, { rat: rDiv({ n: 1n, d: 1n }, fx), traces: local });
+        return fwd;
+      };
+      const compOf = /* @__PURE__ */ new Map();
+      const paths = /* @__PURE__ */ new Map();
+      let compId = 0;
+      for (const start of codes) {
+        if (compOf.has(start)) continue;
+        compOf.set(start, compId);
+        paths.set(start, { rat: { n: 1n, d: 1n }, traces: [] });
+        const queue = [start];
+        while (queue.length > 0) {
+          const cur = queue.shift();
+          for (const nxt of codes) {
+            if (compOf.has(nxt)) continue;
+            const edge = probe(nxt, cur);
+            if (edge === null) continue;
+            compOf.set(nxt, compId);
+            const viaCur = paths.get(cur);
+            paths.set(nxt, { rat: rMul(edge.rat, viaCur.rat), traces: [...edge.traces, ...viaCur.traces] });
+            queue.push(nxt);
           }
-          acc = rMul(acc, rPowInt(fx, e9.net));
         }
-        if (ok) {
-          ratio = acc;
-          solved = true;
-          break;
-        }
+        compId++;
       }
-      if (!solved) return firstErr ?? err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
+      const compNet = /* @__PURE__ */ new Map();
+      for (const c9 of codes) {
+        const id9 = compOf.get(c9);
+        compNet.set(id9, (compNet.get(id9) ?? 0) + nets.get(c9).net);
+      }
+      for (const [, net9] of compNet) {
+        if (net9 !== 0) return err("rates-unavailable", `no rate path to convert ${needed.join(", ")} (${l2.symbol} vs ${r3.symbol})`);
+      }
+      const usedTraces = /* @__PURE__ */ new Map();
+      for (const c9 of needed) {
+        const path9 = paths.get(c9);
+        ratio = rMul(ratio, rPowInt(path9.rat, nets.get(c9).net));
+        for (const t9 of path9.traces) usedTraces.set(`${t9.from}\u2192${t9.to}@${t9.via}`, t9);
+      }
+      for (const [, t9] of usedTraces) ctx.fxTrace?.push(t9);
     }
     const lBase2 = basePartOf(lc.filter((c2) => !c2.def.currency), ctx);
     const rBase2 = basePartOf(rRest, ctx);
@@ -30220,39 +30254,6 @@ function combineQuantities(l2, r3, op, ctx) {
     const chosen = new Set(pure.filter((_2, i2) => best >> i2 & 1));
     for (const c2 of chosen) x2 = rMul(x2, effFactor(c2, ctx));
     comps = comps.filter((c2) => !chosen.has(c2));
-  }
-  const curComps = comps.filter((c2) => c2.def.currency);
-  const netCurrency = curComps.reduce((s9, c2) => s9 + c2.exp, 0);
-  const pureZeroCurrencyRatio = netCurrency === 0 && comps.every((c2) => c2.def.currency);
-  if (!pureZeroCurrencyRatio && new Set(curComps.map((c2) => c2.def.currency)).size > 1) {
-    const anchor = curComps[0];
-    const provider = ctx.rates;
-    if (!provider) {
-      ctx.fxReads?.push({ from: curComps[1].def.currency, to: anchor.def.currency, obs: "\u2205;\u2205" });
-    } else {
-      const plan = [];
-      let feasible = true;
-      for (const c2 of curComps.slice(1)) {
-        if (c2.def.currency === anchor.def.currency) {
-          plan.push({ c: c2, fx: { n: 1n, d: 1n } });
-          continue;
-        }
-        const fx = fxRat(provider, c2.def.currency, anchor.def.currency, ctx);
-        if ("t" in fx) {
-          feasible = false;
-          break;
-        }
-        plan.push({ c: c2, fx });
-      }
-      if (feasible) {
-        for (const { c: c2, fx } of plan) {
-          x2 = rMul(x2, rPowInt(fx, c2.exp));
-          anchor.exp += c2.exp;
-          c2.exp = 0;
-        }
-        comps = comps.filter((c2) => c2.exp !== 0);
-      }
-    }
   }
   const dim = dimOfComps(comps);
   if (dimZero(dim)) {
@@ -30375,6 +30376,45 @@ function addSummable(acc, v2, ctx) {
   const sum2 = rAdd(a2, b2);
   if (acc.t === "f" || v2.t === "f") return makeFrac(sum2.n, sum2.d, "derived");
   return { t: "d", ...qv(sum2) };
+}
+function finalizeCurrencies(rt2, ctx) {
+  if (rt2.t !== "q") return rt2;
+  const comps = compsOf(rt2);
+  if (!comps) return rt2;
+  const cur = comps.filter((c2) => c2.def.currency);
+  if (new Set(cur.map((c2) => c2.def.currency)).size <= 1) return rt2;
+  const net = cur.reduce((s9, c2) => s9 + c2.exp, 0);
+  if (net === 0 && comps.every((c2) => c2.def.currency)) return rt2;
+  const anchor = cur[0];
+  const other = cur.find((c2) => c2.def.currency !== anchor.def.currency);
+  const provider = ctx.rates;
+  if (!provider) {
+    ctx.fxReads?.push({ from: other.def.currency, to: anchor.def.currency, obs: "\u2205;\u2205" });
+    return rt2;
+  }
+  const local = [];
+  const subCtx = { ...ctx, fxTrace: local };
+  let x2 = qx(rt2);
+  const out = comps.map((c2) => ({ ...c2 }));
+  const anchorOut = out.find((c2) => c2.def.id === anchor.def.id);
+  const plan = [];
+  for (const c2 of out) {
+    if (!c2.def.currency || c2.def.currency === anchor.def.currency) continue;
+    const fx = fxRat(provider, c2.def.currency, anchor.def.currency, subCtx);
+    if ("t" in fx) return rt2;
+    plan.push({ c: c2, fx });
+  }
+  if (plan.length === 0) return rt2;
+  for (const { c: c2, fx } of plan) {
+    x2 = rMul(x2, rPowInt(fx, c2.exp));
+    anchorOut.exp += c2.exp;
+    c2.exp = 0;
+  }
+  ctx.fxTrace?.push(...local);
+  const kept = out.filter((c2) => c2.exp !== 0);
+  const raw = { t: "q", ...qv(x2), dim: dimOfComps(kept), symbol: compsSymbol(kept), comps: kept };
+  const one = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+  return combineQuantities(one, raw, "*", ctx);
 }
 function evalAst(ast, env, ctx = {}) {
   switch (ast.k) {
@@ -33068,7 +33108,8 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
     if (!isUnitExpr && !hasComputableContent(inner, env)) {
       const before = out[i2 - 1];
       const after = out[j2];
-      if (before?.kind === "word" && !isReservedWord(before.text) && !env.has(before.text) && (before.end === out[i2].start || after?.kind === "op" || after?.kind === "percent" || after?.kind === "equals")) {
+      const afterIsOpWord = after?.kind === "word" && (lexicon.operatorWords.has(after.text.toLowerCase()) || lexicon.divisionParticles.has(after.text.toLowerCase()) || CORE_OP_WORDS.has(after.text.toLowerCase()));
+      if (before?.kind === "word" && !isReservedWord(before.text) && !env.has(before.text) && (before.end === out[i2].start || after?.kind === "op" || after?.kind === "percent" || after?.kind === "equals" || afterIsOpWord)) {
         violations.push(`\u201C${before.text}\u201D is not a known function`);
         return out;
       }
@@ -33329,11 +33370,15 @@ var serialize = (rt2) => {
       return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}`;
   }
 };
-function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe) {
+function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe, snap, doubtSigs, varDoubt) {
   const parts = [cfgStamp];
-  for (const name of [...entry.deps.variables].sort()) parts.push(`v:${name}=${serialize(env.get(name))}`);
+  for (const name of [...entry.deps.variables].sort()) {
+    parts.push(`v:${name}=${serialize(env.get(name))}`);
+    parts.push(`va:${name}=${varDoubt.get(name) ?? ""}`);
+  }
   for (const idx of [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2)) {
     parts.push(`l:${idx}=${idx > rts.length ? "\u2298" : serialize(rts[idx - 1])}`);
+    parts.push(`la:${idx}=${doubtSigs[idx - 1] ?? ""}`);
   }
   if (entry.deps.usesTotal) {
     const summed = rts.map((v2, j2) => j2 >= sectionStart && !aggDerived[j2] && isSummable(v2) ? serialize(v2) : null).filter((s2) => s2 !== null).join(",");
@@ -33357,7 +33402,10 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
     const inv = d2 === "\u2205" || d2 === "\u26A0" ? safeRate(u2.to, u2.from) : "\xB7";
     parts.push(`fx:${u2.from}/${u2.to}=${d2};${inv}`);
   }
-  if (entry.deps.usesNow) parts.push(`now:${context.now ?? ""}:${context.timezone ?? ""}`);
+  if (entry.deps.usesNow) {
+    if (probe) parts.push(`now:${context.now ?? ""}:${context.timezone ?? ""}`);
+    else parts.push(`now:${snap.now ?? ""}:${snap.tz ?? ""}`);
+  }
   for (const h2 of entry.holidayReads) {
     if (!probe && h2.obs !== void 0) {
       parts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${h2.obs}`);
@@ -33432,6 +33480,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     let ast = parseExpression(exprTokens, rawAssume);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
+    rt2 = finalizeCurrencies(rt2, ctx);
     if (isAssignment) defines = tokens.slice(0, eqIdx).map((t2) => t2.text).join(" ");
   } catch (cause) {
     rt2 = cause instanceof ParseError ? { t: "e", code: cause.code, detail: cause.message } : { t: "e", code: "not-understood", detail: cause instanceof Error ? cause.message : String(cause) };
@@ -33454,8 +33503,16 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       return JSON.stringify(v2);
     };
     const kept = [];
+    const mergeReads = (sub2) => {
+      fxReads.push(...sub2.fxReads);
+      holidayReads.push(...sub2.holidayReads);
+      for (const v9 of sub2.deps.variables) deps.variables.add(v9);
+      for (const r9 of sub2.deps.lineRefs) deps.lineRefs.add(r9);
+      deps.usesNow = deps.usesNow || sub2.deps.usesNow;
+      deps.usesTotal = deps.usesTotal || sub2.deps.usesTotal;
+    };
     const semanticChosen = semantic(rt2);
-    let budget = 8;
+    let budget = ambiguityPolicy === "strict" ? 64 : 8;
     const seen9 = /* @__PURE__ */ new Set();
     const deduped = all.filter((a2) => {
       const key9 = `${a2.code}:${a2.range?.start ?? -1}:${a2.range?.end ?? -1}`;
@@ -33490,6 +33547,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
           "annotate",
           true
         );
+        mergeReads(rw);
         if (rw.rt === null || rw.rt.t === "e" || semantic(rw.rt) !== semanticChosen) delete a2.rewrite;
       };
       if (a2.altRewrite === void 0 || a2.range === void 0) {
@@ -33519,12 +33577,13 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         "annotate",
         true
       );
+      mergeReads(alt);
       if (alt.rt === null || alt.rt.t === "e") continue;
       if (semantic(alt.rt) === semanticChosen) continue;
       a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
       if (a2.impact === "value") {
         const isMoneyRT = (x2) => x2.t === "q" && (x2.def?.currency !== void 0 || x2.rate?.num.currency !== void 0 || (x2.comps?.some((c9) => c9.def.currency) ?? false));
-        const dyn = rt2.t === "ds" || alt.rt.t === "ds" || rt2.t === "wd" || alt.rt.t === "wd" || rt2.t === "ts" || alt.rt.t === "ts" ? "date" : isMoneyRT(rt2) || isMoneyRT(alt.rt) ? "money" : rt2.t === "q" || alt.rt.t === "q" ? "unit" : null;
+        const dyn = rt2.t === "ds" || alt.rt.t === "ds" || rt2.t === "wd" || alt.rt.t === "wd" || rt2.t === "ts" || alt.rt.t === "ts" || rt2.t === "ct" || alt.rt.t === "ct" ? "date" : isMoneyRT(rt2) || isMoneyRT(alt.rt) ? "money" : rt2.t === "q" || alt.rt.t === "q" ? "unit" : null;
         if (dyn !== null) a2.impact = dyn;
       }
       validateRewrite();
@@ -33578,11 +33637,47 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
 function runSheet(text, context, cache2) {
   const grammar = resolveGrammar(context);
   const dateOrder = resolveDateOrder(context);
+  const nowSnap = context.now ?? null;
+  const tzSnap = context.timezone;
+  const fxCache = /* @__PURE__ */ new Map();
+  const cachedRates = context.rates == null ? void 0 : {
+    rate: (f2, t2) => {
+      const key = `${f2}\u2192${t2}`;
+      if (!fxCache.has(key)) {
+        try {
+          const q2 = context.rates.rate(f2, t2);
+          fxCache.set(key, q2 ? { rate: String(q2.rate), asOf: String(q2.asOf), source: String(q2.source) } : void 0);
+        } catch {
+          fxCache.set(key, null);
+        }
+      }
+      const v2 = fxCache.get(key);
+      if (v2 === null) throw new Error("rate provider failed");
+      return v2;
+    }
+  };
+  const holCache = /* @__PURE__ */ new Map();
+  const cachedHolidays = context.holidays == null ? void 0 : {
+    holidays: (f2, t2, r3) => {
+      const key = `${f2}|${t2}|${r3}`;
+      if (!holCache.has(key)) {
+        try {
+          holCache.set(key, context.holidays.holidays(f2, t2, r3).map((h2) => ({ date: String(h2.date), name: String(h2.name) })));
+        } catch {
+          holCache.set(key, null);
+        }
+      }
+      const v2 = holCache.get(key);
+      if (v2 === null) throw new Error("holiday provider failed");
+      return v2;
+    }
+  };
+  const probeContext = { ...context, rates: cachedRates, holidays: cachedHolidays };
   const baseCtx = {
-    now: context.now ?? null,
-    ...context.timezone !== void 0 && { timezone: context.timezone },
-    ...context.rates !== void 0 && context.rates !== null && { rates: context.rates },
-    ...context.holidays !== void 0 && context.holidays !== null && { holidays: context.holidays },
+    now: nowSnap,
+    ...tzSnap !== void 0 && { timezone: tzSnap },
+    ...cachedRates !== void 0 && { rates: cachedRates },
+    ...cachedHolidays !== void 0 && { holidays: cachedHolidays },
     ...context.region !== void 0 && { region: context.region },
     ...context.policies?.monthToDays !== void 0 && { monthToDays: context.policies.monthToDays },
     ...context.policies?.preferFutureForAmbiguousDates !== void 0 && {
@@ -33615,6 +33710,8 @@ function runSheet(text, context, cache2) {
     fx: context.rates != null
   })}`;
   const env = /* @__PURE__ */ new Map();
+  const doubtSigs = [];
+  const varDoubt = /* @__PURE__ */ new Map();
   const lines = text.split("\n").map((l2) => l2.endsWith("\r") ? l2.slice(0, -1) : l2);
   const rts = [];
   const results = [];
@@ -33627,22 +33724,72 @@ function runSheet(text, context, cache2) {
   lines.forEach((line, i2) => {
     let entry;
     const cached2 = cache2?.[i2];
-    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context, cfgStamp, true)) {
+    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, true, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt)) {
       entry = cached2;
     } else {
       entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error", context.policies?.ambiguity ?? "annotate");
       recomputed.push(i2);
     }
-    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, false);
+    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, false, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt);
     const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
     if (entry.defines) {
       if (derived) aggDerivedVars.add(entry.defines);
       else aggDerivedVars.delete(entry.defines);
     }
     aggDerived.push(derived);
-    if (entry.defines && entry.rt) env.set(entry.defines, entry.rt);
-    rts.push(entry.rt);
-    results.push(structuredClone(entry.result));
+    const sigLevel = (s2) => Number(s2.split(":", 1)[0]) || 1;
+    const srcLabels = [];
+    let srcLevel = 1;
+    for (const idx of [...entry.deps.lineRefs].sort((a9, b9) => a9 - b9)) {
+      const s2 = doubtSigs[idx - 1];
+      if (s2) {
+        srcLabels.push(`line(${idx})`);
+        srcLevel = Math.max(srcLevel, sigLevel(s2));
+      }
+    }
+    for (const name of [...entry.deps.variables].sort()) {
+      const s2 = varDoubt.get(name);
+      if (s2) {
+        srcLabels.push(`\u201C${name}\u201D`);
+        srcLevel = Math.max(srcLevel, sigLevel(s2));
+      }
+    }
+    if (entry.deps.usesTotal) {
+      for (let j9 = sectionStart; j9 < doubtSigs.length; j9++) {
+        if (doubtSigs[j9] && !aggDerived[j9] && isSummable(rts[j9] ?? null)) {
+          srcLabels.push(`line(${j9 + 1})`);
+          srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
+        }
+      }
+    }
+    let publicResult = structuredClone(entry.result);
+    let rtOut = entry.rt;
+    if (srcLabels.length > 0 && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
+      const lang9 = formatting.language ?? "fr";
+      const uniq = [...new Set(srcLabels)];
+      const msg = lang9 === "fr" ? `d\xE9pend de ${uniq.join(", ")}, qui comporte une ambigu\xEFt\xE9` : lang9 === "de" ? `h\xE4ngt von ${uniq.join(", ")} ab, das eine Mehrdeutigkeit enth\xE4lt` : `depends on ${uniq.join(", ")}, which carries an ambiguity`;
+      if ((context.policies?.ambiguity ?? "annotate") === "strict") {
+        rtOut = { t: "e", code: "ambiguous", detail: msg };
+        publicResult.value = toPublicValue(rtOut);
+        publicResult.display = null;
+      } else {
+        publicResult.assumptions = [
+          ...publicResult.assumptions ?? [],
+          { code: "ambiguous-reference", level: srcLevel, impact: "reference", message: msg }
+        ];
+      }
+    }
+    const asms9 = publicResult.assumptions ?? [];
+    const ownLevel = asms9.length === 0 ? 0 : Math.max(...asms9.map((a9) => a9.level));
+    const sig9 = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" ? `${Math.max(srcLevel, ownLevel, 1)}:ambiguous` : asms9.length === 0 ? "" : `${ownLevel}:${asms9.map((a9) => a9.code).join(",")}`;
+    doubtSigs.push(sig9);
+    if (entry.defines) {
+      if (sig9) varDoubt.set(entry.defines, sig9);
+      else varDoubt.delete(entry.defines);
+    }
+    if (entry.defines && rtOut) env.set(entry.defines, rtOut);
+    rts.push(rtOut);
+    results.push(publicResult);
     graph.push({
       variables: [...entry.deps.variables].sort(),
       lineRefs: [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2),
