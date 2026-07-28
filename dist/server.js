@@ -29068,6 +29068,17 @@ var DEFS = [
   { id: "kilohertz", symbol: "kHz", dim: { time: -1 }, factor: r2(1e3, 1) },
   { id: "megahertz", symbol: "MHz", dim: { time: -1 }, factor: r2(1e6, 1) },
   { id: "gigahertz", symbol: "GHz", dim: { time: -1 }, factor: r2(1e9, 1) },
+  { id: "terahertz", symbol: "THz", dim: { time: -1 }, factor: r2(1e12, 1) },
+  { id: "millisecond", symbol: "ms", dim: { time: 1 }, factor: r2(1, 1e3) },
+  { id: "nanometre", symbol: "nm", dim: { length: 1 }, factor: r2(1, 1e9) },
+  { id: "newton", symbol: "N", dim: { mass: 1, length: 1, time: -2 }, factor: r2(1, 1) },
+  { id: "pascal", symbol: "Pa", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1, 1) },
+  { id: "kilopascal", symbol: "kPa", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1e3, 1) },
+  { id: "bar", symbol: "bar", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1e5, 1) },
+  { id: "ampere", symbol: "A", dim: { current: 1 }, factor: r2(1, 1) },
+  { id: "volt", symbol: "V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1) },
+  { id: "ohm", symbol: "\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1, 1) },
+  { id: "mole", symbol: "mol", dim: { amount: 1 }, factor: r2(1, 1) },
   { id: "ml", symbol: "ml", dim: { length: 3 }, factor: r2(1, 1e6) },
   { id: "cl", symbol: "cl", dim: { length: 3 }, factor: r2(1, 1e5) },
   { id: "dl", symbol: "dl", dim: { length: 3 }, factor: r2(1, 1e4) },
@@ -29275,6 +29286,18 @@ var ALIASES = [
   { alias: "kHz", unit: "kilohertz" },
   { alias: "MHz", unit: "megahertz" },
   { alias: "GHz", unit: "gigahertz" },
+  { alias: "THz", unit: "terahertz" },
+  { alias: "ms", unit: "millisecond" },
+  { alias: "nm", unit: "nanometre" },
+  { alias: "N", unit: "newton" },
+  { alias: "Pa", unit: "pascal" },
+  { alias: "kPa", unit: "kilopascal" },
+  { alias: "bar", unit: "bar", caseSensitive: false },
+  { alias: "A", unit: "ampere" },
+  { alias: "V", unit: "volt" },
+  { alias: "\u03A9", unit: "ohm" },
+  { alias: "ohm", unit: "ohm", caseSensitive: false },
+  { alias: "mol", unit: "mole" },
   { alias: "litre", unit: "litre", caseSensitive: false },
   { alias: "litres", unit: "litre", caseSensitive: false },
   { alias: "liter", unit: "litre", caseSensitive: false },
@@ -30764,13 +30787,10 @@ function evalAst(ast, env, ctx = {}) {
         if (first.t === "q") {
           const lo9 = items[mid - 1].rt;
           const hi9 = items[mid].rt;
-          const irrM = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-          if (irrM(lo9) || irrM(hi9)) {
-            const half9 = { n: 1n, d: 2n };
-            const merged9 = mergeTerms(termsOf(lo9), termsOf(hi9), 1n).map((t9) => ({ x: rMul(t9.x, half9), comps: t9.comps }));
-            return { ...lo9, ...qv(meanX), terms: merged9.length > 0 ? merged9 : void 0 };
-          }
-          return { ...lo9, ...qv(meanX), terms: void 0 };
+          const sum9 = addSummable(lo9, hi9, ctx);
+          if (sum9.t !== "q") return sum9.t === "e" ? sum9 : { ...lo9, ...qv(meanX), terms: void 0 };
+          const half9 = { n: 1n, d: 2n };
+          return { ...sum9, ...qv(rMul(qx(sum9), half9)), ...scaleTerms(sum9, half9) };
         }
         if (items[mid - 1].rt.t === "f" || items[mid].rt.t === "f") return makeFrac(meanX.n, meanX.d, "derived");
         return { t: "d", ...qv(meanX) };
@@ -31036,7 +31056,7 @@ function evalAst(ast, env, ctx = {}) {
       if (base.t === "q" && isOffsetScale(base)) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
-      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), pf)) };
+      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), pf)), ...scaleTerms(base, pf) };
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
       return { t: "d", ...qv(rMul(numRat(base), pf)) };
     }
@@ -31049,7 +31069,10 @@ function evalAst(ast, env, ctx = {}) {
       if (base.t === "q" && isOffsetScale(base)) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
-      if (base.t === "q") return { ...base, ...qv(rMul(qx(base), rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n }))) };
+      if (base.t === "q") {
+        const kOn = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
+        return { ...base, ...qv(rMul(qx(base), kOn)), ...scaleTerms(base, kOn) };
+      }
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "markup needs a plain number or quantity");
       return { t: "d", ...qv(rMul(numRat(base), rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n }))) };
     }
@@ -31115,7 +31138,7 @@ function evalAst(ast, env, ctx = {}) {
       const denom = ast.sign === 1 ? rAdd(cent, px) : rSub(cent, px);
       if (denom.n === 0n) return err("division-by-zero");
       const factor = rDiv(cent, denom);
-      if (value.t === "q") return { ...value, ...qv(rMul(qx(value), factor)) };
+      if (value.t === "q") return { ...value, ...qv(rMul(qx(value), factor)), ...scaleTerms(value, factor) };
       return { t: "d", ...qv(rMul(numRat(value), factor)) };
     }
     case "weekday": {
@@ -32013,10 +32036,17 @@ var UNIT_LIGATURES = {
   "\u3391": "kHz",
   "\u3392": "MHz",
   "\u3393": "GHz",
+  "\u3394": "THz",
   "\u33A7": "m/s",
   "\u33A8": "m/s\xB2",
+  "\u33AE": "rad/s",
+  "\u33AF": "rad/s\xB2",
   "\u33B2": "\xB5s",
   "\u33B1": "ns",
+  "\u33B3": "ms",
+  "\u339A": "nm",
+  "\u33AA": "kPa",
+  "\u33C0": "k\u03A9",
   "\u33BE": "kW",
   "\u33D7": "pH"
 };
@@ -32237,7 +32267,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         i2 += String.fromCodePoint(cp).length;
         continue;
       }
-      if (c2 === "\xB7" && (isLetter(line[i2 + 1] ?? "") || line[i2 + 1] === "\xB0")) {
+      if (c2 === "\xB7" && (isLetter(line[i2 + 1] ?? "") || line[i2 + 1] === "\xB0" || /[\u3380-\u33FF\u2103\u2109\u2113]/u.test(line[i2 + 1] ?? ""))) {
         i2++;
         continue;
       }
@@ -33775,11 +33805,17 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (!Number.isInteger(e9) || Math.abs(e9) > 999) continue;
     last9 = e9 === 0 ? "" : `${base9}${e9 === 1 ? "" : supOf(e9)}`;
     const parts9 = [...segs9, ...last9 === "" ? [] : [last9]];
+    if (parts9.length === 0 && tokens[idx9 - 1]?.kind === "op" && tokens[idx9 - 1].op === "/") {
+      tokens.splice(idx9 - 1, k9 - idx9 + 2);
+      idx9 -= 2;
+      continue;
+    }
     tokens.splice(
       idx9,
       k9 - idx9 + 1,
       ...parts9.length === 0 ? [] : [{ ...u9, text: parts9.join("\xB7"), end: end9 }]
     );
+    idx9--;
   }
   const out = [];
   for (let idx = 0; idx < tokens.length; idx++) {
@@ -33844,7 +33880,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         const reason = quarantineReason(t2.text);
         if (reason !== null) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
-        } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text)) || // after a PERCENT, only code-like or composite suffixes refuse —
+        } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9)))) || // after a PERCENT, only code-like or composite suffixes refuse —
         // "5% for 10 years" is phrase glue, not a suffix (audit X)
         prev?.kind === "percent" && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -33941,6 +33977,17 @@ function tokenAssumptions(tokens, dateOrder, lang) {
           altRewrite: iso4(t2.orderAlt.y, t2.orderAlt.m, t2.orderAlt.d),
           data: { chosen: iso2, alt: iso4(t2.orderAlt.y, t2.orderAlt.m, t2.orderAlt.d), order: dateOrder.toUpperCase() }
         });
+        if (t2.pivotYear !== void 0) {
+          const altY = t2.orderAlt.y >= 2e3 ? t2.orderAlt.y - 100 : t2.orderAlt.y + 100;
+          out.push({
+            code: "date-order",
+            level: 2,
+            impact: "date",
+            range: { start: t2.start, end: t2.end },
+            altRewrite: iso4(altY, t2.orderAlt.m, t2.orderAlt.d),
+            data: { chosen: iso2, alt: iso4(altY, t2.orderAlt.m, t2.orderAlt.d), order: dateOrder.toUpperCase() }
+          });
+        }
       }
     }
     if (t2.kind === "number" && t2.ordinalOf !== void 0) {
@@ -34110,7 +34157,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     altTexts: [],
     altCands: [],
     altWorlds: [],
-    preStrictSummable: false
+    preStrictSummable: false,
+    preStrictRt: null
   });
   if (line.trim() === "" || HEADING.test(line)) return empty([], []);
   let tokens = [];
@@ -34152,6 +34200,12 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && !rt2.v.isZero() && Math.abs(rt2.v.e) > 9999) {
       rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
     }
+    if (rt2.t === "f") {
+      const digits9 = (x9) => (x9 < 0n ? -x9 : x9).toString().length;
+      if (digits9(rt2.n) > 1e4 || digits9(rt2.d) > 1e4) {
+        rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
+      }
+    }
     if (isAssignment) defines = tokens.slice(0, eqIdx).map((t2) => t2.text).join(" ");
   } catch (cause) {
     rt2 = cause instanceof ParseError ? { t: "e", code: cause.code, detail: cause.message } : { t: "e", code: "not-understood", detail: cause instanceof Error ? cause.message : String(cause) };
@@ -34185,6 +34239,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       return JSON.stringify(v2);
     };
     const kept = [];
+    const pendingRewrites = [];
     const mergeReads = (sub2) => {
       fxReads.push(...sub2.fxReads);
       holidayReads.push(...sub2.holidayReads);
@@ -34204,7 +34259,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     let budget = ambiguityPolicy === "strict" ? 64 : 16;
     const seen9 = /* @__PURE__ */ new Set();
     const deduped = all.filter((a2) => {
-      const key9 = `${a2.code}:${a2.range?.start ?? -1}:${a2.range?.end ?? -1}`;
+      const key9 = `${a2.code}:${a2.range?.start ?? -1}:${a2.range?.end ?? -1}:${a2.altRewrite ?? ""}`;
       if (seen9.has(key9)) return false;
       seen9.add(key9);
       return true;
@@ -34283,7 +34338,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       }
       a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
       upgradeImpact(a2, alt.rt);
-      validateRewrite();
+      pendingRewrites.push(validateRewrite);
       altRts.push(alt.rt);
       altTexts.push(altLine);
       altWorlds.push({ rt: alt.rt, cands: [candIdx(a2)] });
@@ -34357,6 +34412,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         }
       }
     }
+    for (const run9 of pendingRewrites) run9();
     if ((!combosExhaustive || unverifiedGrave.length > 0) && !kept.some((a9) => a9.code === "combination-unverified")) {
       kept.push({
         code: "combination-unverified",
@@ -34382,6 +34438,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     });
   })();
   const preStrictSummable = isSummable(rt2);
+  const preStrictRt = rt2.t !== "e" ? rt2 : null;
   if (misplacedPolicy !== void 0 && ambiguityPolicy === "strict" && rt2.t !== "e") {
     const grave = assumptions?.find((a2) => a2.impact !== "value");
     if (grave) {
@@ -34422,7 +34479,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     altTexts,
     altCands,
     altWorlds,
-    preStrictSummable
+    preStrictSummable,
+    preStrictRt
   };
 }
 function runSheet(text, context, cache2) {
@@ -34441,6 +34499,16 @@ function runSheet(text, context, cache2) {
   const holidaysRef = safeGet(() => context.holidays, { holidays: () => {
     throw new Error("context.holidays getter failed");
   } });
+  const cfgSnap = safeGet(() => ({
+    locale: context.locale,
+    numberGrammar: context.numberGrammar,
+    dateOrder: context.dateOrder,
+    region: context.region,
+    languages: context.languages ? [...context.languages] : void 0,
+    policies: context.policies ? { ...context.policies } : void 0,
+    financial: context.financial,
+    formatting: context.formatting ? { ...context.formatting } : void 0
+  }), {});
   const attempt = (seeds) => {
     const nowSnap = seeds !== void 0 ? seeds.now : safeGet(() => context.now ?? null, null);
     const tzSnap = safeGet(() => context.timezone, void 0);
@@ -34488,14 +34556,14 @@ function runSheet(text, context, cache2) {
       ...tzSnap !== void 0 && { timezone: tzSnap },
       ...cachedRates !== void 0 && { rates: cachedRates },
       ...cachedHolidays !== void 0 && { holidays: cachedHolidays },
-      ...context.region !== void 0 && { region: context.region },
-      ...context.policies?.monthToDays !== void 0 && { monthToDays: context.policies.monthToDays },
-      ...context.policies?.preferFutureForAmbiguousDates !== void 0 && {
-        preferFutureForAmbiguousDates: context.policies.preferFutureForAmbiguousDates
+      ...cfgSnap.region !== void 0 && { region: cfgSnap.region },
+      ...cfgSnap.policies?.monthToDays !== void 0 && { monthToDays: cfgSnap.policies.monthToDays },
+      ...cfgSnap.policies?.preferFutureForAmbiguousDates !== void 0 && {
+        preferFutureForAmbiguousDates: cfgSnap.policies.preferFutureForAmbiguousDates
       }
     };
-    const lexicon = loadLexicon(context.languages ?? DEFAULT_LANGUAGES);
-    const financialCurrency = resolveFinancialCurrency(context.financial);
+    const lexicon = loadLexicon(cfgSnap.languages ?? DEFAULT_LANGUAGES);
+    const financialCurrency = resolveFinancialCurrency(cfgSnap.financial);
     const sepDefaults = {
       ch: { thousandsSeparator: "'", decimalSeparator: "." },
       us: { thousandsSeparator: ",", decimalSeparator: "." },
@@ -34505,17 +34573,17 @@ function runSheet(text, context, cache2) {
       thousandsSeparator: sepDefaults[grammar].thousandsSeparator,
       decimalSeparator: sepDefaults[grammar].decimalSeparator,
       dateOrder,
-      ...context.formatting,
-      language: context.formatting?.language ?? (context.languages ?? DEFAULT_LANGUAGES)[0]
+      ...cfgSnap.formatting,
+      language: cfgSnap.formatting?.language ?? (cfgSnap.languages ?? DEFAULT_LANGUAGES)[0]
     };
     const cfgStamp = `cfg:${JSON.stringify({
       g: grammar,
       d: dateOrder,
-      p: context.policies ?? null,
+      p: cfgSnap.policies ?? null,
       f: financialCurrency,
       fmt: formatting,
-      langs: context.languages ?? null,
-      r: context.region ?? null,
+      langs: cfgSnap.languages ?? null,
+      r: cfgSnap.region ?? null,
       hol: holidaysRef != null,
       fx: ratesRef != null
     })}`;
@@ -34542,7 +34610,7 @@ function runSheet(text, context, cache2) {
       if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, true, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt, cached2.fingerprint)) {
         entry = cached2;
       } else {
-        entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error", context.policies?.ambiguity ?? "annotate");
+        entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, cfgSnap.policies?.misplacedGroupSeparator ?? "error", cfgSnap.policies?.ambiguity ?? "annotate");
         recomputed.push(i2);
       }
       const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, false, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt);
@@ -34637,27 +34705,33 @@ function runSheet(text, context, cache2) {
           if (spans9.some((s9, k9) => k9 > 0 && s9.start < spans9[k9 - 1].end)) return false;
           return true;
         };
-        const probeCap = (context.policies?.ambiguity ?? "annotate") === "strict" ? 64 : 16;
+        const probeCap = (cfgSnap.policies?.ambiguity ?? "annotate") === "strict" ? 64 : 16;
         let sensitive = false;
         let probes = 0;
         let exhausted = false;
+        const probedSigs = /* @__PURE__ */ new Set();
         const probeWorld = (list9) => {
-          if (probes >= probeCap) {
-            exhausted = true;
-            return;
-          }
-          probes++;
           let text9 = line;
           const splices = list9.flatMap((a9) => a9.splices).sort((x9, y9) => y9.start - x9.start);
           for (const s9 of splices) text9 = text9.slice(0, s9.start) + s9.alt + text9.slice(s9.end);
           const rtsP = [...rts];
           const envP = new Map(env);
+          const sigParts = [text9];
           for (const a9 of list9) {
             for (const [l9, w9] of a9.assign) {
               rtsP[l9 - 1] = w9;
+              sigParts.push(`${l9}=${JSON.stringify(toPublicValue(w9))}`);
               for (const n9 of srcByLine.get(l9)?.names ?? []) envP.set(n9, w9);
             }
           }
+          const sig92 = sigParts.sort().join("\u2016");
+          if (probedSigs.has(sig92)) return;
+          if (probes >= probeCap) {
+            exhausted = true;
+            return;
+          }
+          probedSigs.add(sig92);
+          probes++;
           const probe9 = evaluateLine(
             text9,
             envP,
@@ -34670,7 +34744,7 @@ function runSheet(text, context, cache2) {
             dateOrder,
             formatting,
             financialCurrency,
-            context.policies?.misplacedGroupSeparator ?? "error",
+            cfgSnap.policies?.misplacedGroupSeparator ?? "error",
             "annotate",
             true
           );
@@ -34710,7 +34784,7 @@ function runSheet(text, context, cache2) {
         const lang9 = formatting.language ?? "fr";
         const uniq = [...new Set(srcLabels)];
         const msg = lang9 === "fr" ? `d\xE9pend de ${uniq.join(", ")}, qui comporte une ambigu\xEFt\xE9` : lang9 === "de" ? `h\xE4ngt von ${uniq.join(", ")} ab, das eine Mehrdeutigkeit enth\xE4lt` : `depends on ${uniq.join(", ")}, which carries an ambiguity`;
-        if ((context.policies?.ambiguity ?? "annotate") === "strict") {
+        if ((cfgSnap.policies?.ambiguity ?? "annotate") === "strict") {
           rtOut = { t: "e", code: "ambiguous", detail: msg };
           publicResult.value = toPublicValue(rtOut);
           publicResult.display = null;
@@ -34724,7 +34798,7 @@ function runSheet(text, context, cache2) {
       if (comboUnverified && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null && !(publicResult.assumptions ?? []).some((a9) => a9.code === "combination-unverified")) {
         const lang9 = formatting.language ?? "fr";
         const msg9 = lang9 === "fr" ? `toutes les combinaisons d'interpr\xE9tations n'ont pas pu \xEAtre v\xE9rifi\xE9es` : `not every combination of interpretations could be verified`;
-        if ((context.policies?.ambiguity ?? "annotate") === "strict") {
+        if ((cfgSnap.policies?.ambiguity ?? "annotate") === "strict") {
           rtOut = { t: "e", code: "ambiguous", detail: msg9 };
           publicResult.value = toPublicValue(rtOut);
           publicResult.display = null;
@@ -34751,8 +34825,9 @@ function runSheet(text, context, cache2) {
       }
       lineAlts.push(runAlts);
       preSummable.push(entry.preStrictSummable);
-      if (entry.defines && rtOut) env.set(entry.defines, rtOut);
-      rts.push(rtOut);
+      const rtInternal = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" && entry.preStrictRt !== null ? entry.preStrictRt : rtOut;
+      if (entry.defines && rtInternal) env.set(entry.defines, rtInternal);
+      rts.push(rtInternal);
       results.push(publicResult);
       graph.push({
         variables: [...entry.deps.variables].sort(),
