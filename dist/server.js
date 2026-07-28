@@ -32090,6 +32090,7 @@ function parse3(tokens) {
                     // the '.' spelling only exists in grammars whose decimal
                     // set contains it — the sheet drops the rewrite otherwise
                     rewrite: numTok.text.replace(",", "."),
+                    altRewrite: numTok.text.replace(",", "; "),
                     data: { text: numTok.text, canon: numTok.dec.toString() }
                   });
                 }
@@ -32958,8 +32959,10 @@ function assumptionMessage(a2, lang) {
       return fr ? `ann\xE9e \xAB ${a2.data["raw"]} \xBB lue ${a2.data["year"]} (pivot <50 \u2192 20xx)` : `year \u201C${a2.data["raw"]}\u201D read as ${a2.data["year"]} (<50 pivots to 20xx)`;
     case "date-order":
       return fr ? `date lue ${a2.data["chosen"]} (${a2.data["order"]}) \u2014 l'ordre inverse donnerait ${a2.data["alt"]}` : `date read as ${a2.data["chosen"]} (${a2.data["order"]}) \u2014 the other order would give ${a2.data["alt"]}`;
-    case "decimal-comma-argument":
-      return fr ? `\xAB ${a2.data["text"]} \xBB lu comme le d\xE9cimal ${a2.data["canon"]} \u2014 pour deux arguments, \xE9crire \xAB ; \xBB` : `\u201C${a2.data["text"]}\u201D read as the decimal ${a2.data["canon"]} \u2014 use \u201C;\u201D for two arguments`;
+    case "decimal-comma-argument": {
+      const alt = a2.data["altResult"] !== void 0 ? fr ? ` (r\xE9sultat : ${a2.data["altResult"]})` : ` (result: ${a2.data["altResult"]})` : "";
+      return fr ? `\xAB ${a2.data["text"]} \xBB lu comme le d\xE9cimal ${a2.data["canon"]} \u2014 en deux arguments, \xE9crire \xAB ; \xBB${alt}` : `\u201C${a2.data["text"]}\u201D read as the decimal ${a2.data["canon"]} \u2014 use \u201C;\u201D for two arguments${alt}`;
+    }
     case "ordinal-suffix":
       return fr ? `\xAB ${a2.data["text"]} \xBB lu comme l'ordinal ${a2.data["n"]} \u2014 pour la notation scientifique, \xE9crire ${a2.data["n"]}e0` : `\u201C${a2.data["text"]}\u201D read as the ordinal ${a2.data["n"]} \u2014 write ${a2.data["n"]}e0 for scientific notation`;
   }
@@ -32972,12 +32975,14 @@ function tokenAssumptions(tokens, dateOrder) {
       const iso2 = iso4(t2.year, t2.month, t2.day);
       if (t2.pivotYear !== void 0) {
         const sameOrder = t2.text.slice(0, t2.text.length - t2.pivotYear.length) + String(t2.year).padStart(4, "0");
+        const altCentury = t2.year < 2e3 ? t2.year + 100 : t2.year - 100;
         out.push({
           code: "two-digit-year",
           level: 2,
           impact: "date",
           range: { start: t2.start, end: t2.end },
           rewrite: t2.orderAlt ? iso2 : sameOrder,
+          altRewrite: iso4(altCentury, t2.month, t2.day),
           data: { raw: t2.pivotYear, year: String(t2.year) }
         });
       }
@@ -32988,6 +32993,7 @@ function tokenAssumptions(tokens, dateOrder) {
           impact: "date",
           range: { start: t2.start, end: t2.end },
           rewrite: iso2,
+          altRewrite: iso4(t2.orderAlt.y, t2.orderAlt.m, t2.orderAlt.d),
           data: { chosen: iso2, alt: iso4(t2.orderAlt.y, t2.orderAlt.m, t2.orderAlt.d), order: dateOrder.toUpperCase() }
         });
       }
@@ -33098,7 +33104,7 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context) {
   }
   return parts.join("|");
 }
-function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy) {
+function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy, counterfactual = false) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
   const rawAssume = [];
   const ignoredTokens = [];
@@ -33162,11 +33168,49 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     rt2 = cause instanceof ParseError ? { t: "e", code: cause.code, detail: cause.message } : { t: "e", code: "not-understood", detail: cause instanceof Error ? cause.message : String(cause) };
   }
   const assumptions = (() => {
+    if (counterfactual) return void 0;
     const all = [...tokenAssumptions(tokens, dateOrder), ...rawAssume];
     if (all.length === 0) return void 0;
-    all.sort((a2, b2) => b2.level - a2.level || (a2.range?.start ?? 1e9) - (b2.range?.start ?? 1e9));
+    const semantic = (x2) => {
+      const v2 = toPublicValue(x2);
+      if (v2.kind === "datestamp") return `ds:${v2.date}`;
+      if (v2.kind === "error") return "\u26A0";
+      return JSON.stringify(v2);
+    };
+    const kept = [];
+    let budget = 8;
+    for (const a2 of all) {
+      if (a2.altRewrite === void 0 || a2.range === void 0 || budget === 0) {
+        kept.push(a2);
+        continue;
+      }
+      budget--;
+      const altLine = line.slice(0, a2.range.start) + a2.altRewrite + line.slice(a2.range.end);
+      const alt = evaluateLine(
+        altLine,
+        env,
+        rts,
+        sectionStart,
+        aggDerived,
+        baseCtx,
+        lexicon,
+        grammar,
+        dateOrder,
+        formatting,
+        financialCurrency,
+        misplacedPolicy,
+        "annotate",
+        true
+      );
+      if (alt.rt === null || alt.rt.t === "e") continue;
+      if (semantic(alt.rt) === semantic(rt2)) continue;
+      a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
+      kept.push(a2);
+    }
+    if (kept.length === 0) return void 0;
+    kept.sort((a2, b2) => b2.level - a2.level || (a2.range?.start ?? 1e9) - (b2.range?.start ?? 1e9));
     const lang = formatting?.language ?? "fr";
-    return all.map((a2) => {
+    return kept.map((a2) => {
       const rewriteOk = !(a2.code === "decimal-comma-argument" && grammar === "eu");
       return {
         code: a2.code,
@@ -33174,7 +33218,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         impact: a2.impact,
         message: assumptionMessage(a2, lang),
         ...a2.range && { range: a2.range },
-        ...a2.rewrite !== void 0 && rewriteOk && { rewrite: a2.rewrite }
+        ...a2.rewrite !== void 0 && rewriteOk && { rewrite: a2.rewrite },
+        ...a2.altRewrite !== void 0 && { alternative: a2.altRewrite }
       };
     });
   })();
