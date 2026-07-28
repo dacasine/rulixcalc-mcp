@@ -30058,7 +30058,7 @@ function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
   const lc = compsOf(l2);
   const rc = compsOf(r3);
-  if (lc && rc && (lc.length !== 1 || rc.length !== 1 || lc[0].exp !== 1 || rc[0].exp !== 1)) {
+  if (lc && rc && (lc.length !== 1 || rc.length !== 1 || lc[0].exp !== 1 || rc[0].exp !== 1 || lc[0].def.currency !== void 0 && rc[0].def.currency !== void 0 && lc[0].def.currency !== rc[0].def.currency)) {
     const lBase = basePartOf(lc, ctx);
     const rBase = basePartOf(rc, ctx);
     if (lBase && rBase) {
@@ -30086,8 +30086,9 @@ function alignForAdd(l2, r3, ctx) {
     if (needed.length > 0) {
       const provider = ctx.rates;
       if (!provider) {
-        ctx.fxReads?.push({ from: needed[0], to: codes[0], obs: "\u2205;\u2205" });
-        return err("rates-unavailable", `no rate provider for ${needed[0]} \u2192 ${codes[0]}`);
+        const to9 = needed[1] ?? codes.find((c9) => c9 !== needed[0]) ?? needed[0];
+        ctx.fxReads?.push({ from: needed[0], to: to9, obs: "\u2205;\u2205" });
+        return err("rates-unavailable", `no rate provider to relate ${needed.join(" \u2194 ")}`);
       }
       const edges = /* @__PURE__ */ new Map();
       const probe = (a2, b2) => {
@@ -30106,35 +30107,48 @@ function alignForAdd(l2, r3, ctx) {
         edges.set(`${b2}\u2192${a2}`, { rat: rDiv({ n: 1n, d: 1n }, fx), traces: local });
         return fwd;
       };
-      const compOf = /* @__PURE__ */ new Map();
-      const paths = /* @__PURE__ */ new Map();
-      let compId = 0;
-      for (const start of codes) {
-        if (compOf.has(start)) continue;
-        compOf.set(start, compId);
-        paths.set(start, { rat: { n: 1n, d: 1n }, traces: [] });
-        const queue = [start];
-        while (queue.length > 0) {
-          const cur = queue.shift();
-          for (const nxt of codes) {
-            if (compOf.has(nxt)) continue;
-            const edge = probe(nxt, cur);
-            if (edge === null) continue;
-            compOf.set(nxt, compId);
-            const viaCur = paths.get(cur);
-            paths.set(nxt, { rat: rMul(edge.rat, viaCur.rat), traces: [...edge.traces, ...viaCur.traces] });
-            queue.push(nxt);
+      const HUBS = ["USD", "EUR", "GBP", "CHF", "JPY"];
+      let compOf = /* @__PURE__ */ new Map();
+      let paths = /* @__PURE__ */ new Map();
+      const runBfs = (nodes) => {
+        compOf = /* @__PURE__ */ new Map();
+        paths = /* @__PURE__ */ new Map();
+        let compId = 0;
+        for (const start of nodes) {
+          if (compOf.has(start)) continue;
+          compOf.set(start, compId);
+          paths.set(start, { rat: { n: 1n, d: 1n }, traces: [] });
+          const queue = [start];
+          while (queue.length > 0) {
+            const cur = queue.shift();
+            for (const nxt of nodes) {
+              if (compOf.has(nxt)) continue;
+              const edge = probe(nxt, cur);
+              if (edge === null) continue;
+              compOf.set(nxt, compId);
+              const viaCur = paths.get(cur);
+              paths.set(nxt, { rat: rMul(edge.rat, viaCur.rat), traces: [...edge.traces, ...viaCur.traces] });
+              queue.push(nxt);
+            }
           }
+          compId++;
         }
-        compId++;
-      }
-      const compNet = /* @__PURE__ */ new Map();
-      for (const c9 of codes) {
-        const id9 = compOf.get(c9);
-        compNet.set(id9, (compNet.get(id9) ?? 0) + nets.get(c9).net);
-      }
-      for (const [, net9] of compNet) {
-        if (net9 !== 0) return err("rates-unavailable", `no rate path to convert ${needed.join(", ")} (${l2.symbol} vs ${r3.symbol})`);
+      };
+      const netsResolved = () => {
+        const compNet = /* @__PURE__ */ new Map();
+        for (const c9 of codes) {
+          const id9 = compOf.get(c9);
+          compNet.set(id9, (compNet.get(id9) ?? 0) + (nets.get(c9)?.net ?? 0));
+        }
+        return [...compNet.values()].every((n9) => n9 === 0);
+      };
+      runBfs(codes);
+      if (!netsResolved()) {
+        const expanded = [...codes, ...HUBS.filter((h9) => !codes.includes(h9))];
+        runBfs(expanded);
+        if (!netsResolved()) {
+          return err("rates-unavailable", `no rate path to relate ${needed.join(" \u2194 ")} (${l2.symbol} vs ${r3.symbol})`);
+        }
       }
       const usedTraces = /* @__PURE__ */ new Map();
       for (const c9 of needed) {
@@ -33042,6 +33056,28 @@ function resolveGrammar(context) {
   return "ch";
 }
 var HEADING = /^\s*#{1,6}\s/;
+var perturbRT = (x2) => {
+  switch (x2.t) {
+    case "d":
+      return { t: "d", v: x2.v.plus(1) };
+    case "p":
+      return { t: "p", v: x2.v.plus(1) };
+    case "f":
+      return { t: "f", n: x2.n + x2.d, d: x2.d, origin: x2.origin };
+    case "q":
+      return { ...x2, v: x2.v.plus(1), vx: void 0 };
+    case "ds":
+      return { ...x2, pd: x2.pd.add({ days: 1 }) };
+    case "ts":
+      return { t: "ts", c: { ...x2.c, days: (x2.c.days ?? 0) + 1 } };
+    case "wd":
+      return { ...x2, n: x2.n + 1 };
+    case "ct":
+      return { ...x2, mins: (x2.mins + 1) % 1440 };
+    default:
+      return x2;
+  }
+};
 var REF_WORDS = /* @__PURE__ */ new Set(["line", "ligne"]);
 function extractReferences(tokens, rts, formatting) {
   const refs = [];
@@ -33083,6 +33119,13 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
     if (!isUnitExpr && !hasComputableContent(inner, env)) {
       const before = out[i2 - 1];
       const after = out[j2];
+      const droppable = (t2) => t2?.kind === "word" && !isReservedWord(t2.text) && !env.has(t2.text) && !lexicon.operatorWords.has(t2.text.toLowerCase()) && !lexicon.divisionParticles.has(t2.text.toLowerCase()) && !CORE_OP_WORDS.has(t2.text.toLowerCase());
+      let bi = i2 - 1;
+      while (bi >= 0 && droppable(out[bi])) bi--;
+      const beforeEff = bi >= 0 ? out[bi] : void 0;
+      let ai = j2;
+      while (ai < out.length && droppable(out[ai])) ai++;
+      const afterEff = ai < out.length ? out[ai] : void 0;
       const afterIsOpWord = after?.kind === "word" && (lexicon.operatorWords.has(after.text.toLowerCase()) || lexicon.divisionParticles.has(after.text.toLowerCase()) || CORE_OP_WORDS.has(after.text.toLowerCase()));
       if (before?.kind === "word" && !isReservedWord(before.text) && !env.has(before.text) && (before.end === out[i2].start || after?.kind === "op" || after?.kind === "percent" || after?.kind === "equals" || afterIsOpWord)) {
         violations.push(`\u201C${before.text}\u201D is not a known function`);
@@ -33097,7 +33140,8 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
-      if (inner.length > 0 && ((before?.kind === "number" || before?.kind === "fraction") && after?.kind === "word" || before?.kind === "op" && (after?.kind === "number" || after?.kind === "fraction" || after?.kind === "word"))) {
+      const sandwiched = (b2, a2) => (b2?.kind === "number" || b2?.kind === "fraction") && a2?.kind === "word" || b2?.kind === "op" && (a2?.kind === "number" || a2?.kind === "fraction" || a2?.kind === "word");
+      if (inner.length > 0 && (sandwiched(before, after) || sandwiched(beforeEff, after) || sandwiched(before, afterEff) || sandwiched(beforeEff, afterEff))) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
@@ -33345,8 +33389,9 @@ var serialize = (rt2) => {
       return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}`;
   }
 };
-function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe, snap, doubtSigs, varDoubt) {
+function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe, snap, doubtSigs, varDoubt, stored) {
   const parts = [cfgStamp];
+  const provParts = [];
   for (const name of [...entry.deps.variables].sort()) {
     parts.push(`v:${name}=${serialize(env.get(name))}`);
     parts.push(`va:${name}=${varDoubt.get(name) ?? ""}`);
@@ -33360,6 +33405,11 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
     parts.push(`t:${sectionStart}:${summed}`);
   }
   for (const w2 of entry.commentWords) parts.push(`w:${w2}=${serialize(env.get(w2))}`);
+  if (entry.deps.usesNow) {
+    parts.push(`now:${snap.now ?? ""}:${snap.tz ?? ""}`);
+  }
+  const core = parts.join("|");
+  if (probe && stored !== void 0 && !stored.startsWith(`${core}\u2016`)) return "\u2260";
   const safeRate = (f2, t2) => {
     try {
       const q2 = context.rates?.rate(f2, t2);
@@ -33370,20 +33420,16 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
   };
   for (const u2 of entry.fxReads) {
     if (!probe && u2.obs !== void 0) {
-      parts.push(`fx:${u2.from}/${u2.to}=${u2.obs}`);
+      provParts.push(`fx:${u2.from}/${u2.to}=${u2.obs}`);
       continue;
     }
     const d2 = safeRate(u2.from, u2.to);
     const inv = d2 === "\u2205" || d2 === "\u26A0" ? safeRate(u2.to, u2.from) : "\xB7";
-    parts.push(`fx:${u2.from}/${u2.to}=${d2};${inv}`);
-  }
-  if (entry.deps.usesNow) {
-    if (probe) parts.push(`now:${context.now ?? ""}:${context.timezone ?? ""}`);
-    else parts.push(`now:${snap.now ?? ""}:${snap.tz ?? ""}`);
+    provParts.push(`fx:${u2.from}/${u2.to}=${d2};${inv}`);
   }
   for (const h2 of entry.holidayReads) {
     if (!probe && h2.obs !== void 0) {
-      parts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${h2.obs}`);
+      provParts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${h2.obs}`);
       continue;
     }
     let dates = "\u2205";
@@ -33392,9 +33438,9 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
     } catch {
       dates = "\u26A0";
     }
-    parts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${dates}`);
+    provParts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${dates}`);
   }
-  return parts.join("|");
+  return `${core}\u2016${provParts.join("|")}`;
 }
 function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy, counterfactual = false) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
@@ -33595,7 +33641,16 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       value: toPublicValue(rt2),
       display: formatRT(rt2, formatting),
       references: extractReferences(tokens, rts, formatting),
-      ...fxTrace.length > 0 && { fx: fxTrace },
+      ...fxTrace.length > 0 && {
+        // ONE entry per quote — the same quote reached both directly and as
+        // an inverse keeps the 'direct' label (audit R: duplicated provenance)
+        fx: [...fxTrace.reduce((m9, f9) => {
+          const k9 = `${f9.from}|${f9.to}|${f9.rate}|${f9.asOf}|${f9.source}`;
+          const prev9 = m9.get(k9);
+          if (!prev9 || prev9.via === "inverse" && f9.via === "direct") m9.set(k9, f9);
+          return m9;
+        }, /* @__PURE__ */ new Map()).values()]
+      },
       ...assumptions && { assumptions },
       ...ignoredTokens.length > 0 && { ignored: ignoredTokens },
       diagnostics: diagnosticsFor(rt2, line)
@@ -33612,169 +33667,239 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
 function runSheet(text, context, cache2) {
   const grammar = resolveGrammar(context);
   const dateOrder = resolveDateOrder(context);
-  const nowSnap = context.now ?? null;
-  const tzSnap = context.timezone;
-  const fxCache = /* @__PURE__ */ new Map();
-  const cachedRates = context.rates == null ? void 0 : {
-    rate: (f2, t2) => {
-      const key = `${f2}\u2192${t2}`;
-      if (!fxCache.has(key)) {
-        try {
-          const q2 = context.rates.rate(f2, t2);
-          fxCache.set(key, q2 ? { rate: String(q2.rate), asOf: String(q2.asOf), source: String(q2.source) } : void 0);
-        } catch {
-          fxCache.set(key, null);
+  const attempt = () => {
+    const nowSnap = context.now ?? null;
+    const tzSnap = context.timezone;
+    const fxCache = /* @__PURE__ */ new Map();
+    const cachedRates = context.rates == null ? void 0 : {
+      rate: (f2, t2) => {
+        const key = `${f2}\u2192${t2}`;
+        if (!fxCache.has(key)) {
+          try {
+            const q2 = context.rates.rate(f2, t2);
+            fxCache.set(key, q2 ? { rate: String(q2.rate), asOf: String(q2.asOf), source: String(q2.source) } : void 0);
+          } catch {
+            fxCache.set(key, null);
+          }
         }
+        const v2 = fxCache.get(key);
+        if (v2 === null) throw new Error("rate provider failed");
+        return v2;
       }
-      const v2 = fxCache.get(key);
-      if (v2 === null) throw new Error("rate provider failed");
-      return v2;
-    }
-  };
-  const holCache = /* @__PURE__ */ new Map();
-  const cachedHolidays = context.holidays == null ? void 0 : {
-    holidays: (f2, t2, r3) => {
-      const key = `${f2}|${t2}|${r3}`;
-      if (!holCache.has(key)) {
-        try {
-          holCache.set(key, context.holidays.holidays(f2, t2, r3).map((h2) => ({ date: String(h2.date), name: String(h2.name) })));
-        } catch {
-          holCache.set(key, null);
+    };
+    const holCache = /* @__PURE__ */ new Map();
+    const cachedHolidays = context.holidays == null ? void 0 : {
+      holidays: (f2, t2, r3) => {
+        const key = `${f2}|${t2}|${r3}`;
+        if (!holCache.has(key)) {
+          try {
+            const list = context.holidays.holidays(f2, t2, r3).map((h2) => ({ date: String(h2.date), name: String(h2.name) }));
+            if (list.some((h2) => !/^\d{4}-\d{2}-\d{2}$/.test(h2.date))) holCache.set(key, null);
+            else holCache.set(key, list);
+          } catch {
+            holCache.set(key, null);
+          }
         }
+        const v2 = holCache.get(key);
+        if (v2 === null) throw new Error("holiday provider failed");
+        return v2;
       }
-      const v2 = holCache.get(key);
-      if (v2 === null) throw new Error("holiday provider failed");
-      return v2;
-    }
-  };
-  const probeContext = { ...context, rates: cachedRates, holidays: cachedHolidays };
-  const baseCtx = {
-    now: nowSnap,
-    ...tzSnap !== void 0 && { timezone: tzSnap },
-    ...cachedRates !== void 0 && { rates: cachedRates },
-    ...cachedHolidays !== void 0 && { holidays: cachedHolidays },
-    ...context.region !== void 0 && { region: context.region },
-    ...context.policies?.monthToDays !== void 0 && { monthToDays: context.policies.monthToDays },
-    ...context.policies?.preferFutureForAmbiguousDates !== void 0 && {
-      preferFutureForAmbiguousDates: context.policies.preferFutureForAmbiguousDates
-    }
-  };
-  const lexicon = loadLexicon(context.languages ?? DEFAULT_LANGUAGES);
-  const financialCurrency = resolveFinancialCurrency(context.financial);
-  const sepDefaults = {
-    ch: { thousandsSeparator: "'", decimalSeparator: "." },
-    us: { thousandsSeparator: ",", decimalSeparator: "." },
-    eu: { thousandsSeparator: ".", decimalSeparator: "," }
-  };
-  const formatting = {
-    thousandsSeparator: sepDefaults[grammar].thousandsSeparator,
-    decimalSeparator: sepDefaults[grammar].decimalSeparator,
-    dateOrder,
-    ...context.formatting,
-    language: context.formatting?.language ?? (context.languages ?? DEFAULT_LANGUAGES)[0]
-  };
-  const cfgStamp = `cfg:${JSON.stringify({
-    g: grammar,
-    d: dateOrder,
-    p: context.policies ?? null,
-    f: financialCurrency,
-    fmt: formatting,
-    langs: context.languages ?? null,
-    r: context.region ?? null,
-    hol: context.holidays != null,
-    fx: context.rates != null
-  })}`;
-  const env = /* @__PURE__ */ new Map();
-  const doubtSigs = [];
-  const varDoubt = /* @__PURE__ */ new Map();
-  const lines = text.split("\n").map((l2) => l2.endsWith("\r") ? l2.slice(0, -1) : l2);
-  const rts = [];
-  const results = [];
-  const graph = [];
-  const cacheOut = [];
-  const recomputed = [];
-  let sectionStart = 0;
-  const aggDerived = [];
-  const aggDerivedVars = /* @__PURE__ */ new Set();
-  lines.forEach((line, i2) => {
-    let entry;
-    const cached2 = cache2?.[i2];
-    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, true, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt)) {
-      entry = cached2;
-    } else {
-      entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error", context.policies?.ambiguity ?? "annotate");
-      recomputed.push(i2);
-    }
-    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, false, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt);
-    const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
-    if (entry.defines) {
-      if (derived) aggDerivedVars.add(entry.defines);
-      else aggDerivedVars.delete(entry.defines);
-    }
-    aggDerived.push(derived);
-    const sigLevel = (s2) => Number(s2.split(":", 1)[0]) || 1;
-    const srcLabels = [];
-    let srcLevel = 1;
-    for (const idx of [...entry.deps.lineRefs].sort((a9, b9) => a9 - b9)) {
-      const s2 = doubtSigs[idx - 1];
-      if (s2) {
-        srcLabels.push(`line(${idx})`);
-        srcLevel = Math.max(srcLevel, sigLevel(s2));
+    };
+    const probeContext = { ...context, rates: cachedRates, holidays: cachedHolidays };
+    const baseCtx = {
+      now: nowSnap,
+      ...tzSnap !== void 0 && { timezone: tzSnap },
+      ...cachedRates !== void 0 && { rates: cachedRates },
+      ...cachedHolidays !== void 0 && { holidays: cachedHolidays },
+      ...context.region !== void 0 && { region: context.region },
+      ...context.policies?.monthToDays !== void 0 && { monthToDays: context.policies.monthToDays },
+      ...context.policies?.preferFutureForAmbiguousDates !== void 0 && {
+        preferFutureForAmbiguousDates: context.policies.preferFutureForAmbiguousDates
       }
-    }
-    for (const name of [...entry.deps.variables].sort()) {
-      const s2 = varDoubt.get(name);
-      if (s2) {
-        srcLabels.push(`\u201C${name}\u201D`);
-        srcLevel = Math.max(srcLevel, sigLevel(s2));
-      }
-    }
-    if (entry.deps.usesTotal) {
-      for (let j9 = sectionStart; j9 < doubtSigs.length; j9++) {
-        if (doubtSigs[j9] && !aggDerived[j9] && isSummable(rts[j9] ?? null)) {
-          srcLabels.push(`line(${j9 + 1})`);
-          srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
-        }
-      }
-    }
-    let publicResult = structuredClone(entry.result);
-    let rtOut = entry.rt;
-    if (srcLabels.length > 0 && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
-      const lang9 = formatting.language ?? "fr";
-      const uniq = [...new Set(srcLabels)];
-      const msg = lang9 === "fr" ? `d\xE9pend de ${uniq.join(", ")}, qui comporte une ambigu\xEFt\xE9` : lang9 === "de" ? `h\xE4ngt von ${uniq.join(", ")} ab, das eine Mehrdeutigkeit enth\xE4lt` : `depends on ${uniq.join(", ")}, which carries an ambiguity`;
-      if ((context.policies?.ambiguity ?? "annotate") === "strict") {
-        rtOut = { t: "e", code: "ambiguous", detail: msg };
-        publicResult.value = toPublicValue(rtOut);
-        publicResult.display = null;
+    };
+    const lexicon = loadLexicon(context.languages ?? DEFAULT_LANGUAGES);
+    const financialCurrency = resolveFinancialCurrency(context.financial);
+    const sepDefaults = {
+      ch: { thousandsSeparator: "'", decimalSeparator: "." },
+      us: { thousandsSeparator: ",", decimalSeparator: "." },
+      eu: { thousandsSeparator: ".", decimalSeparator: "," }
+    };
+    const formatting = {
+      thousandsSeparator: sepDefaults[grammar].thousandsSeparator,
+      decimalSeparator: sepDefaults[grammar].decimalSeparator,
+      dateOrder,
+      ...context.formatting,
+      language: context.formatting?.language ?? (context.languages ?? DEFAULT_LANGUAGES)[0]
+    };
+    const cfgStamp = `cfg:${JSON.stringify({
+      g: grammar,
+      d: dateOrder,
+      p: context.policies ?? null,
+      f: financialCurrency,
+      fmt: formatting,
+      langs: context.languages ?? null,
+      r: context.region ?? null,
+      hol: context.holidays != null,
+      fx: context.rates != null
+    })}`;
+    const env = /* @__PURE__ */ new Map();
+    const doubtSigs = [];
+    const varDoubt = /* @__PURE__ */ new Map();
+    const lines = text.split("\n").map((l2) => l2.endsWith("\r") ? l2.slice(0, -1) : l2);
+    const rts = [];
+    const results = [];
+    const graph = [];
+    const cacheOut = [];
+    const recomputed = [];
+    let sectionStart = 0;
+    const aggDerived = [];
+    const aggDerivedVars = /* @__PURE__ */ new Set();
+    lines.forEach((line, i2) => {
+      let entry;
+      const cached2 = cache2?.[i2];
+      if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, true, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt, cached2.fingerprint)) {
+        entry = cached2;
       } else {
-        publicResult.assumptions = [
-          ...publicResult.assumptions ?? [],
-          { code: "ambiguous-reference", level: srcLevel, impact: "reference", message: msg }
-        ];
+        entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error", context.policies?.ambiguity ?? "annotate");
+        recomputed.push(i2);
       }
-    }
-    const asms9 = publicResult.assumptions ?? [];
-    const ownLevel = asms9.length === 0 ? 0 : Math.max(...asms9.map((a9) => a9.level));
-    const sig9 = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" ? `${Math.max(srcLevel, ownLevel, 1)}:ambiguous` : asms9.length === 0 ? "" : `${ownLevel}:${asms9.map((a9) => a9.code).join(",")}`;
-    doubtSigs.push(sig9);
-    if (entry.defines) {
-      if (sig9) varDoubt.set(entry.defines, sig9);
-      else varDoubt.delete(entry.defines);
-    }
-    if (entry.defines && rtOut) env.set(entry.defines, rtOut);
-    rts.push(rtOut);
-    results.push(publicResult);
-    graph.push({
-      variables: [...entry.deps.variables].sort(),
-      lineRefs: [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2),
-      usesTotal: entry.deps.usesTotal,
-      ...entry.defines !== null && { defines: entry.defines }
+      const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, false, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt);
+      const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
+      if (entry.defines) {
+        if (derived) aggDerivedVars.add(entry.defines);
+        else aggDerivedVars.delete(entry.defines);
+      }
+      aggDerived.push(derived);
+      const sigLevel = (s2) => Number(s2.split(":", 1)[0]) || 1;
+      const isAmbErr = (x2) => x2 !== null && x2 !== void 0 && x2.t === "e" && x2.code === "ambiguous";
+      const srcLabels = [];
+      const srcLineIdxs = [];
+      const srcVars = [];
+      let srcLevel = 1;
+      let droppedAmbiguous = false;
+      for (const idx of [...entry.deps.lineRefs].sort((a9, b9) => a9 - b9)) {
+        const s2 = doubtSigs[idx - 1];
+        if (s2) {
+          srcLabels.push(`line(${idx})`);
+          srcLineIdxs.push(idx);
+          srcLevel = Math.max(srcLevel, sigLevel(s2));
+        }
+      }
+      for (const name of [...entry.deps.variables].sort()) {
+        const s2 = varDoubt.get(name);
+        if (s2) {
+          srcLabels.push(`\u201C${name}\u201D`);
+          srcVars.push(name);
+          srcLevel = Math.max(srcLevel, sigLevel(s2));
+        }
+      }
+      if (entry.deps.usesTotal) {
+        for (let j9 = sectionStart; j9 < doubtSigs.length; j9++) {
+          if (!doubtSigs[j9] || aggDerived[j9]) continue;
+          if (isAmbErr(rts[j9])) {
+            srcLabels.push(`line(${j9 + 1})`);
+            srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
+            droppedAmbiguous = true;
+          } else if (isSummable(rts[j9] ?? null)) {
+            srcLabels.push(`line(${j9 + 1})`);
+            srcLineIdxs.push(j9 + 1);
+            srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
+          }
+        }
+      }
+      let publicResult = structuredClone(entry.result);
+      let rtOut = entry.rt;
+      if (srcLabels.length > 0 && !droppedAmbiguous && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
+        const rtsP = rts.map((r9, k9) => srcLineIdxs.includes(k9 + 1) ? perturbRT(r9) : r9);
+        const envP = new Map(env);
+        for (const name of srcVars) {
+          const bound = envP.get(name);
+          if (bound) envP.set(name, perturbRT(bound));
+        }
+        const probe9 = evaluateLine(
+          line,
+          envP,
+          rtsP,
+          sectionStart,
+          aggDerived,
+          baseCtx,
+          lexicon,
+          grammar,
+          dateOrder,
+          formatting,
+          financialCurrency,
+          context.policies?.misplacedGroupSeparator ?? "error",
+          "annotate",
+          true
+        );
+        if (probe9.rt !== null && JSON.stringify(toPublicValue(probe9.rt)) === JSON.stringify(publicResult.value)) {
+          srcLabels.length = 0;
+        }
+      }
+      if (srcLabels.length > 0 && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
+        const lang9 = formatting.language ?? "fr";
+        const uniq = [...new Set(srcLabels)];
+        const msg = lang9 === "fr" ? `d\xE9pend de ${uniq.join(", ")}, qui comporte une ambigu\xEFt\xE9` : lang9 === "de" ? `h\xE4ngt von ${uniq.join(", ")} ab, das eine Mehrdeutigkeit enth\xE4lt` : `depends on ${uniq.join(", ")}, which carries an ambiguity`;
+        if ((context.policies?.ambiguity ?? "annotate") === "strict") {
+          rtOut = { t: "e", code: "ambiguous", detail: msg };
+          publicResult.value = toPublicValue(rtOut);
+          publicResult.display = null;
+        } else {
+          publicResult.assumptions = [
+            ...publicResult.assumptions ?? [],
+            { code: "ambiguous-reference", level: srcLevel, impact: "reference", message: msg }
+          ];
+        }
+      }
+      const asms9 = publicResult.assumptions ?? [];
+      const ownLevel = asms9.length === 0 ? 0 : Math.max(...asms9.map((a9) => a9.level));
+      const sig9 = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" ? `${Math.max(srcLevel, ownLevel, 1)}:ambiguous` : asms9.length === 0 ? "" : `${ownLevel}:${asms9.map((a9) => a9.code).join(",")}`;
+      doubtSigs.push(sig9);
+      if (entry.defines) {
+        if (sig9) varDoubt.set(entry.defines, sig9);
+        else varDoubt.delete(entry.defines);
+      }
+      if (entry.defines && rtOut) env.set(entry.defines, rtOut);
+      rts.push(rtOut);
+      results.push(publicResult);
+      graph.push({
+        variables: [...entry.deps.variables].sort(),
+        lineRefs: [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2),
+        usesTotal: entry.deps.usesTotal,
+        ...entry.defines !== null && { defines: entry.defines }
+      });
+      cacheOut.push({ ...entry, text: line, fingerprint });
+      if (HEADING.test(line)) sectionStart = i2 + 1;
     });
-    cacheOut.push({ ...entry, text: line, fingerprint });
-    if (HEADING.test(line)) sectionStart = i2 + 1;
-  });
-  return { result: { lines: results, graph }, cacheOut, recomputed };
+    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache };
+  };
+  let out = attempt();
+  if (out.fxCache.size + out.holCache.size >= 2) {
+    const fxTorn = [...out.fxCache].some(([key9, snap9]) => {
+      const [f9, t9] = key9.split("\u2192");
+      let fresh9;
+      try {
+        const q9 = context.rates?.rate(f9, t9);
+        fresh9 = q9 ? { rate: String(q9.rate), asOf: String(q9.asOf), source: String(q9.source) } : void 0;
+      } catch {
+        fresh9 = null;
+      }
+      return JSON.stringify(fresh9 ?? null) !== JSON.stringify(snap9 ?? null);
+    });
+    const holTorn = !fxTorn && [...out.holCache].some(([key9, snap9]) => {
+      const [f9, t9, r9] = key9.split("|");
+      let fresh9;
+      try {
+        fresh9 = context.holidays?.holidays(f9, t9, r9).map((h9) => ({ date: String(h9.date), name: String(h9.name) })) ?? null;
+        if (fresh9?.some((h9) => !/^\d{4}-\d{2}-\d{2}$/.test(h9.date))) fresh9 = null;
+      } catch {
+        fresh9 = null;
+      }
+      return JSON.stringify(fresh9) !== JSON.stringify(snap9);
+    });
+    if (fxTorn || holTorn) out = attempt();
+  }
+  return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed };
 }
 function evaluateSheet(text, context) {
   return runSheet(text, context, null).result;
