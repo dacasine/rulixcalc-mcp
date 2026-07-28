@@ -29078,6 +29078,8 @@ var DEFS = [
   { id: "ampere", symbol: "A", dim: { current: 1 }, factor: r2(1, 1) },
   { id: "volt", symbol: "V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1) },
   { id: "ohm", symbol: "\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1, 1) },
+  { id: "kilohm", symbol: "k\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1e3, 1) },
+  { id: "megohm", symbol: "M\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1e6, 1) },
   { id: "mole", symbol: "mol", dim: { amount: 1 }, factor: r2(1, 1) },
   { id: "ml", symbol: "ml", dim: { length: 3 }, factor: r2(1, 1e6) },
   { id: "cl", symbol: "cl", dim: { length: 3 }, factor: r2(1, 1e5) },
@@ -29297,6 +29299,8 @@ var ALIASES = [
   { alias: "V", unit: "volt" },
   { alias: "\u03A9", unit: "ohm" },
   { alias: "ohm", unit: "ohm", caseSensitive: false },
+  { alias: "k\u03A9", unit: "kilohm" },
+  { alias: "M\u03A9", unit: "megohm" },
   { alias: "mol", unit: "mole" },
   { alias: "litre", unit: "litre", caseSensitive: false },
   { alias: "litres", unit: "litre", caseSensitive: false },
@@ -30947,7 +30951,7 @@ function evalAst(ast, env, ctx = {}) {
           out = rDiv(rMul(principal, r3), denom);
         }
       }
-      return amount.t === "q" ? { ...amount, ...qv(out) } : { t: "d", ...qv(out) };
+      return amount.t === "q" ? { ...amount, ...qv(out), terms: void 0 } : { t: "d", ...qv(out) };
     }
     case "unitCompound": {
       const e = evalAst(ast.e, env, ctx);
@@ -32023,24 +32027,30 @@ var UNIT_LIGATURES = {
   "\u33A1": "m\xB2",
   "\u33A0": "cm\xB2",
   "\u33A2": "km\xB2",
+  "\u339F": "mm\xB2",
   "\u33A5": "m\xB3",
   "\u33A4": "cm\xB3",
   "\u33A6": "km\xB3",
+  "\u33A3": "mm\xB3",
   "\u2103": "\xB0C",
   "\u2109": "\xB0F",
   "\u3396": "ml",
   "\u3397": "dl",
   "\u2113": "l",
   "\u3398": "m\xB3",
+  "\u33C0": "k\u03A9",
+  "\u33C1": "M\u03A9",
   "\u3390": "Hz",
   "\u3391": "kHz",
   "\u3392": "MHz",
   "\u3393": "GHz",
   "\u3394": "THz",
-  "\u33A7": "m/s",
-  "\u33A8": "m/s\xB2",
-  "\u33AE": "rad/s",
-  "\u33AF": "rad/s\xB2",
+  "\u33A7": "m\u2215s",
+  "\u33A8": "m\u2215s\xB2",
+  "\u33AE": "rad\u2215s",
+  "\u33AF": "rad\u2215s\xB2",
+  "\u33DE": "V\u2215m",
+  "\u33DF": "A\u2215m",
   "\u33B2": "\xB5s",
   "\u33B1": "ns",
   "\u33B3": "ms",
@@ -32053,7 +32063,7 @@ var UNIT_LIGATURES = {
 function nfkcWord(text) {
   let mapped = "";
   for (const ch of text) mapped += UNIT_LIGATURES[ch] ?? ch;
-  text = mapped.replace(/\u2215/g, "/");
+  text = mapped;
   const nfc = text.normalize("NFC");
   if (nfc.normalize("NFKC") === nfc) return nfc;
   let out = "";
@@ -32330,7 +32340,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (c2 === "=") {
+    if (c2 === "=" || c2 === "\uFF1D" || c2 === "\uFE66") {
       tokens.push({ kind: "equals", text: c2, start, end: i2 + 1 });
       i2++;
       continue;
@@ -33612,6 +33622,35 @@ var CONFUSABLES = {
   "\u15EA": "D",
   "\u054D": "U",
   "\u054F": "S",
+  "\uA4D0": "B",
+  "\uA4D2": "P",
+  "\uA4D3": "D",
+  "\uA4D4": "T",
+  "\uA4D6": "G",
+  "\uA4D7": "K",
+  "\uA4D9": "J",
+  "\uA4DA": "C",
+  "\uA4DB": "Q",
+  "\uA4DD": "F",
+  "\uA4DF": "M",
+  "\uA4E0": "N",
+  "\uA4E1": "L",
+  "\uA4E2": "S",
+  "\uA4E3": "R",
+  "\uA4E4": "R",
+  "\uA4E6": "V",
+  "\uA4EA": "W",
+  "\uA4EB": "X",
+  "\uA4EC": "Y",
+  "\uA4EE": "A",
+  "\uA4F0": "E",
+  "\uA4F1": "E",
+  "\uA4F2": "I",
+  "\uA4F3": "O",
+  "\uA4F4": "U",
+  "\uA4F5": "U",
+  "\uA4F9": "E",
+  "\uA4D5": "T",
   "\u13E6": "K",
   "\u13DF": "C",
   "\u13AC": "E",
@@ -33749,16 +33788,30 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   }
   for (let idx9 = 0; idx9 < tokens.length; idx9++) {
     const t9 = tokens[idx9];
-    if (t9.kind !== "word" || !t9.text.includes("/")) continue;
-    const [n9, d9, extra9] = t9.text.split("/");
-    if (extra9 !== void 0 || !n9 || !d9 || !isUnitWord(n9) || !isUnitWord(d9)) continue;
-    tokens.splice(
-      idx9,
-      1,
-      { ...t9, text: n9, end: t9.start + 1 },
+    if (t9.kind !== "word" || !t9.text.includes("\u2215")) continue;
+    const parts9 = t9.text.split(/([∕·])/u).filter((s9) => s9 !== "");
+    const segs9 = parts9.filter((s9) => s9 !== "\u2215" && s9 !== "\xB7");
+    if (segs9.some((s9) => !isUnitWord(s9))) {
+      violations.push(`\u201C${t9.text.replace(/\u2215/g, "/")}\u201D is not a number, unit or date`);
+      continue;
+    }
+    const nums9 = [];
+    const dens9 = [];
+    for (let p9 = 0; p9 < parts9.length; p9++) {
+      const s9 = parts9[p9];
+      if (s9 === "\xB7") continue;
+      if (s9 === "\u2215") {
+        dens9.push(parts9[++p9]);
+        continue;
+      }
+      nums9.push(s9);
+    }
+    const text9 = dens9.length === 0 ? nums9.join("\xB7") : `${nums9.join("\xB7")}/${dens9.join("\xB7")}`;
+    tokens.splice(idx9, 1, ...dens9.length === 0 ? [{ ...t9, text: text9 }] : [
+      { ...t9, text: nums9.join("\xB7"), end: t9.start + 1 },
       { kind: "op", op: "/", text: "/", start: t9.start, end: t9.start + 1 },
-      { ...t9, text: d9, start: t9.start + 1 }
-    );
+      { ...t9, text: dens9.join("\xB7"), start: t9.start + 1 }
+    ]);
   }
   const SUPS = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
   const supOf = (n9) => {
@@ -33794,17 +33847,44 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     const segs9 = u9.text.split("\xB7");
     let last9 = segs9.pop();
     const supm9 = /^(.*?)([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)$/u.exec(last9);
+    const dm9 = supm9 ? null : new RegExp("^(\\p{L}+)([23])$", "u").exec(last9);
     let base9 = last9;
     let prev9 = 1;
     if (supm9) {
       base9 = supm9[1];
       const SUPMAP = { "\u207B": "-", "\u2070": "0", "\xB9": "1", "\xB2": "2", "\xB3": "3", "\u2074": "4", "\u2075": "5", "\u2076": "6", "\u2077": "7", "\u2078": "8", "\u2079": "9" };
       prev9 = Number([...supm9[2]].map((c0) => SUPMAP[c0]).join(""));
+    } else if (dm9 && isUnitWord(dm9[1])) {
+      base9 = dm9[1];
+      prev9 = Number(dm9[2]);
     }
     const e9 = prev9 * e9raw;
     if (!Number.isInteger(e9) || Math.abs(e9) > 999) continue;
+    if (e9 === 0) {
+      let kk9 = k9 + 1;
+      while (tokens[kk9]?.kind === "op" && tokens[kk9].op === "^") {
+        let jj9 = kk9 + 1;
+        if (tokens[jj9]?.kind === "lparen") jj9++;
+        const sTok9 = tokens[jj9];
+        if (sTok9?.kind === "op" && (sTok9.op === "-" || sTok9.op === "+")) jj9++;
+        if (tokens[jj9]?.kind !== "number") break;
+        jj9++;
+        if (tokens[jj9 - 2]?.kind === "lparen" || tokens[kk9 + 1]?.kind === "lparen") {
+          if (tokens[jj9]?.kind !== "rparen") break;
+          jj9++;
+        }
+        kk9 = jj9;
+      }
+      k9 = kk9 - 1;
+    }
     last9 = e9 === 0 ? "" : `${base9}${e9 === 1 ? "" : supOf(e9)}`;
     const parts9 = [...segs9, ...last9 === "" ? [] : [last9]];
+    if (parts9.length === 0 && tokens[idx9 - 1]?.kind === "lparen" && tokens[k9 + 1]?.kind === "rparen") {
+      const from9 = tokens[idx9 - 2]?.kind === "op" && tokens[idx9 - 2].op === "/" ? idx9 - 2 : idx9 - 1;
+      tokens.splice(from9, k9 + 2 - from9);
+      idx9 = from9 - 1;
+      continue;
+    }
     if (parts9.length === 0 && tokens[idx9 - 1]?.kind === "op" && tokens[idx9 - 1].op === "/") {
       tokens.splice(idx9 - 1, k9 - idx9 + 2);
       idx9 -= 2;
@@ -33888,7 +33968,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || // cross-script HOMOGLYPHS (UЅD, СHF, ΕUR, USᎠ, °С, К) are never
         // counting prose — mixed scripts refuse, and so does any word
         // whose Latin SKELETON is a known unit or code (audit W)
-        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || // unit + glued code (kgCHFF): a unit PREFIX followed by an
+        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || // unit + glued code (kgCHFF): a unit PREFIX followed by an
         // uppercase-led remainder is never prose (audit X)
         [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9)))) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
@@ -34499,17 +34579,18 @@ function runSheet(text, context, cache2) {
   const holidaysRef = safeGet(() => context.holidays, { holidays: () => {
     throw new Error("context.holidays getter failed");
   } });
-  const cfgSnap = safeGet(() => ({
-    locale: context.locale,
-    numberGrammar: context.numberGrammar,
-    dateOrder: context.dateOrder,
-    region: context.region,
-    languages: context.languages ? [...context.languages] : void 0,
-    policies: context.policies ? { ...context.policies } : void 0,
-    financial: context.financial,
-    formatting: context.formatting ? { ...context.formatting } : void 0
-  }), {});
   const attempt = (seeds) => {
+    const cfgSnap = safeGet(() => ({
+      locale: context.locale,
+      numberGrammar: context.numberGrammar,
+      dateOrder: context.dateOrder,
+      region: context.region,
+      languages: context.languages ? [...context.languages] : void 0,
+      policies: context.policies ? { ...context.policies } : void 0,
+      financial: context.financial,
+      formatting: context.formatting ? { ...context.formatting } : void 0
+    }), {});
+    validateFormatting(cfgSnap);
     const nowSnap = seeds !== void 0 ? seeds.now : safeGet(() => context.now ?? null, null);
     const tzSnap = safeGet(() => context.timezone, void 0);
     const fxCache = new Map(seeds?.fx);
@@ -34682,6 +34763,7 @@ function runSheet(text, context, cache2) {
         for (const [line9] of srcByLine) {
           for (const e9 of lineAlts[line9 - 1] ?? []) {
             const a9 = atomMap.get(e9.root) ?? { id: e9.root, assign: /* @__PURE__ */ new Map(), splices: [] };
+            for (const [pl9, pw9] of e9.assign ?? []) if (!a9.assign.has(pl9)) a9.assign.set(pl9, pw9);
             a9.assign.set(line9, e9.rt);
             atomMap.set(e9.root, a9);
           }
@@ -34754,7 +34836,9 @@ function runSheet(text, context, cache2) {
           }
           if (JSON.stringify(toPublicValue(probe9.rt)) !== JSON.stringify(publicResult.value)) {
             sensitive = true;
-            runAlts.push({ rt: probe9.rt, root: list9.map((a9) => a9.id).sort().join("+") });
+            const assign9 = /* @__PURE__ */ new Map();
+            for (const a9 of list9) for (const [l9, w9] of a9.assign) assign9.set(l9, w9);
+            runAlts.push({ rt: probe9.rt, root: list9.map((a9) => a9.id).sort().join("+"), assign: assign9 });
           }
         };
         if (atoms.length > 20) exhausted = true;
