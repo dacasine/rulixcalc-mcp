@@ -29678,12 +29678,12 @@ function applyExactFunction(fn, rts) {
       return null;
     // magnitude checks live in factorial()
     case "log": {
-      if (rts.length === 2 && rCmp(numRat(rts[0]), numRat(rts[1])) === 0 && numRat(rts[0]).n > 0n) {
-        return { t: "d", v: new DecC(1) };
-      }
       if (rts.length === 2) {
         const b2 = numRat(rts[1]);
         if (b2.n === b2.d) return err("inexact", "log base 1 is undefined");
+        if (rCmp(numRat(rts[0]), b2) === 0 && numRat(rts[0]).n > 0n) {
+          return { t: "d", v: new DecC(1) };
+        }
       }
       return null;
     }
@@ -29782,6 +29782,10 @@ function applyFunction(fn, args) {
     return err("inexact", cause instanceof Error ? cause.message : String(cause));
   }
 }
+function guardDate(pd) {
+  if (pd.year > 9999 || pd.year < 0) return err("inexact", "dates outside 0000\u20139999 are not supported");
+  return pd;
+}
 function applySpanToDate(pd, c2, sign2) {
   let d2 = pd;
   try {
@@ -29800,6 +29804,7 @@ function applySpanToDate(pd, c2, sign2) {
   }
 }
 function referencePlainDate(ctx) {
+  if (ctx.deps) ctx.deps.usesNow = true;
   if (!ctx.now) {
     return err("anchor-required", "date keywords need an injected clock (context.now)");
   }
@@ -29827,6 +29832,7 @@ function addWorkdays(ds, n2, sign2, ctx) {
   let horizon = Math.ceil(n2 * 2) + 30;
   let from = sign2 === 1 ? ds.pd : ds.pd.subtract({ days: horizon });
   let to = sign2 === 1 ? ds.pd.add({ days: horizon }) : ds.pd;
+  ctx.holidayReads?.push({ from: from.toString(), to: to.toString(), region: ctx.region ?? "CH" });
   let holidaySet = new Set(
     provider.holidays(from.toString(), to.toString(), ctx.region ?? "CH").map((h2) => h2.date)
   );
@@ -29840,12 +29846,14 @@ function addWorkdays(ds, n2, sign2, ctx) {
       horizon += Math.max(horizon, 60);
       from = sign2 === 1 ? from : ds.pd.subtract({ days: horizon });
       to = sign2 === 1 ? ds.pd.add({ days: horizon }) : to;
+      ctx.holidayReads?.push({ from: from.toString(), to: to.toString(), region: ctx.region ?? "CH" });
       holidaySet = new Set(provider.holidays(from.toString(), to.toString(), ctx.region ?? "CH").map((h2) => h2.date));
     }
     if (d2.dayOfWeek <= 5 && !holidaySet.has(d2.toString())) remaining--;
   }
   if (remaining > 0) return err("inexact", "workday walk exceeded its horizon");
-  return { t: "ds", pd: d2, precision: ds.precision };
+  const g2 = guardDate(d2);
+  return g2 instanceof Pt.PlainDate ? { t: "ds", pd: g2, precision: ds.precision } : g2;
 }
 function easterMonthDay(year) {
   const a2 = year % 19, b2 = Math.floor(year / 100), c2 = year % 100;
@@ -29902,17 +29910,29 @@ var addSpans = (a2, b2, sign2) => {
   return out;
 };
 function fxRat(provider, from, to, ctx) {
+  ctx.fxReads?.push({ from, to });
   const direct = provider.rate(from, to);
+  const validRate = (raw) => {
+    try {
+      const d2 = new DecC(raw);
+      if (!d2.isFinite() || d2.lte(0) || Math.abs(d2.e) > 9999) return null;
+      return d2;
+    } catch {
+      return null;
+    }
+  };
   if (direct) {
+    const d2 = validRate(direct.rate);
+    if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${direct.rate}\u201D for ${from} \u2192 ${to}`);
     ctx.fxTrace?.push({ from, to, rate: direct.rate, asOf: direct.asOf, source: direct.source });
-    return decToRat(new DecC(direct.rate));
+    return decToRat(d2);
   }
   const inverse = provider.rate(to, from);
   if (inverse) {
-    const rr = decToRat(new DecC(inverse.rate));
-    if (rr.n === 0n) return err("rates-unavailable");
+    const d2 = validRate(inverse.rate);
+    if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${inverse.rate}\u201D for ${to} \u2192 ${from}`);
     ctx.fxTrace?.push({ from: to, to: from, rate: inverse.rate, asOf: inverse.asOf, source: inverse.source });
-    return rDiv({ n: 1n, d: 1n }, rr);
+    return rDiv({ n: 1n, d: 1n }, decToRat(d2));
   }
   return err("rates-unavailable", `no rate for ${from} \u2192 ${to}`);
 }
@@ -29945,6 +29965,7 @@ function convertQuantity(rt2, to, ctx) {
     if (from.currency === to.currency) return { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] };
     const provider = ctx.rates;
     if (!provider) {
+      ctx.fxReads?.push({ from: from.currency, to: to.currency });
       return err("rates-unavailable", `no rate provider for ${from.currency} \u2192 ${to.currency}`);
     }
     const fx = fxRat(provider, from.currency, to.currency, ctx);
@@ -30025,7 +30046,10 @@ function alignForAdd(l2, r3, ctx) {
       }
       if (m2.def.currency && lcomp.def.currency && lcomp.exp === m2.exp) {
         const provider = ctx.rates;
-        if (!provider) return err("rates-unavailable", `no rate provider for ${m2.def.currency} \u2192 ${lcomp.def.currency}`);
+        if (!provider) {
+          ctx.fxReads?.push({ from: m2.def.currency, to: lcomp.def.currency });
+          return err("rates-unavailable", `no rate provider for ${m2.def.currency} \u2192 ${lcomp.def.currency}`);
+        }
         const fx = fxRat(provider, m2.def.currency, lcomp.def.currency, ctx);
         if ("t" in fx) return fx;
         ratio = rMul(ratio, rPowInt(fx, lcomp.exp));
@@ -30140,7 +30164,10 @@ function combineQuantities(l2, r3, op, ctx) {
   if (new Set(curComps.map((c2) => c2.def.currency)).size > 1) {
     const anchor = curComps[0];
     const provider = ctx.rates;
-    if (!provider) return err("rates-unavailable", `no rate provider for ${curComps[1].def.currency} \u2192 ${anchor.def.currency}`);
+    if (!provider) {
+      ctx.fxReads?.push({ from: curComps[1].def.currency, to: anchor.def.currency });
+      return err("rates-unavailable", `no rate provider for ${curComps[1].def.currency} \u2192 ${anchor.def.currency}`);
+    }
     for (const c2 of curComps.slice(1)) {
       if (c2.def.currency === anchor.def.currency) {
         anchor.exp += c2.exp;
@@ -30177,7 +30204,10 @@ function combineQuantities(l2, r3, op, ctx) {
     if (fxFrom !== null || fxTo !== null) {
       if (fxFrom === null || fxTo === null) return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       const provider = ctx.rates;
-      if (!provider) return err("rates-unavailable", `no rate provider for ${fxFrom} \u2192 ${fxTo}`);
+      if (!provider) {
+        ctx.fxReads?.push({ from: fxFrom, to: fxTo });
+        return err("rates-unavailable", `no rate provider for ${fxFrom} \u2192 ${fxTo}`);
+      }
       const fx = fxRat(provider, fxFrom, fxTo, ctx);
       if ("t" in fx) return fx;
       x2 = rMul(x2, fx);
@@ -30185,6 +30215,21 @@ function combineQuantities(l2, r3, op, ctx) {
     if (decScale !== null) return { t: "d", v: ratToDec(x2).times(decScale) };
     const xn = rnorm(x2);
     return { t: "d", v: ratToDec(xn), ...!ratIsExactDec(xn) && { vx: xn } };
+  }
+  if (ctx.monthToDays !== "30" && comps.some((c2) => c2.def.dim["calmonths"]) && comps.some((c2) => c2.def.dim["caldays"])) {
+    return err("anchor-required", "months/years and days/weeks only combine around a date");
+  }
+  if (comps.length === 1 && comps[0].exp === 1 && Object.keys(comps[0].def.dim).every((k2) => k2 === "calmonths" || k2 === "caldays")) {
+    const inBase = rMul(x2, ratOfFactor(comps[0].def.factor));
+    if (inBase.d !== 1n) {
+      return err("anchor-required", `${ratToDec(x2).toString()} ${comps[0].def.symbol} has no fixed length \u2014 anchor to a date first`);
+    }
+    if (inBase.n > 9007199254740991n || inBase.n < -9007199254740991n) {
+      return err("inexact", "timespan exceeds the safe range");
+    }
+    const key = comps[0].def.dim["calmonths"] ? "months" : "days";
+    const n0 = Number(inBase.n);
+    return { t: "ts", c: n0 === 0 ? {} : { [key]: n0 } };
   }
   let def;
   let symbol;
@@ -30321,11 +30366,12 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t !== "d" || numRat(e).d !== 1n) {
         return err("unsupported-pair", "only whole numbers convert to hex/binary/octal");
       }
-      return { t: "d", v: e.v, vx: numRat(e), base: ast.base };
+      return { t: "d", v: e.v, ...e.vx && { vx: e.vx }, base: ast.base };
     }
     case "clock":
       return { t: "ct", mins: ast.mins };
     case "timeIn": {
+      if (ctx.deps) ctx.deps.usesNow = true;
       if (!ctx.now) {
         return err("anchor-required", "\u201Ctime in \u2026\u201D needs an injected clock (context.now)");
       }
@@ -30349,6 +30395,14 @@ function evalAst(ast, env, ctx = {}) {
         const ref = referencePlainDate(ctx);
         if (!(ref instanceof Pt.PlainDate)) return ref;
         year = ref.year;
+        if (ctx.preferFutureForAmbiguousDates) {
+          const thisYear = ast.which === "christmas" ? new Pt.PlainDate(year, 12, 25) : (() => {
+            const [em0, ed0] = easterMonthDay(year);
+            const easter0 = new Pt.PlainDate(year, em0, ed0);
+            return ast.which === "easter" ? easter0 : ast.which === "ascension" ? easter0.add({ days: 39 }) : easter0.add({ days: 49 });
+          })();
+          if (Pt.PlainDate.compare(thisYear, ref) < 0) year += 1;
+        }
       }
       if (ast.which === "christmas") return { t: "ds", pd: new Pt.PlainDate(year, 12, 25), precision };
       const [em, ed] = easterMonthDay(year);
@@ -30518,6 +30572,12 @@ function evalAst(ast, env, ctx = {}) {
         if (!(ref instanceof Pt.PlainDate)) return ref;
         year = ref.year;
         precision = "dayAndMonth";
+        if (ctx.preferFutureForAmbiguousDates) {
+          try {
+            if (Pt.PlainDate.compare(new Pt.PlainDate(year, ast.month, ast.day), ref) < 0) year += 1;
+          } catch {
+          }
+        }
       }
       try {
         return { t: "ds", pd: new Pt.PlainDate(year, ast.month, ast.day), precision };
@@ -30556,7 +30616,10 @@ function evalAst(ast, env, ctx = {}) {
       else if (ast.qual === "bare") delta = (ast.dow - cur + 7) % 7;
       else if (ast.qual === "next") delta = (ast.dow - cur + 6) % 7 + 1;
       else delta = -((cur - ast.dow + 6) % 7 + 1);
-      return { t: "ds", pd: ref.add({ days: delta }), precision: "weekday" };
+      {
+        const g2 = guardDate(ref.add({ days: delta }));
+        return g2 instanceof Pt.PlainDate ? { t: "ds", pd: g2, precision: "weekday" } : g2;
+      }
     }
     case "fromNow": {
       const ref = referencePlainDate(ctx);
@@ -30581,10 +30644,14 @@ function evalAst(ast, env, ctx = {}) {
       switch (ast.kw) {
         case "today":
           return { t: "ds", pd: ref, precision: "today" };
-        case "tomorrow":
-          return { t: "ds", pd: ref.add({ days: 1 }), precision: "tomorrow" };
-        case "yesterday":
-          return { t: "ds", pd: ref.subtract({ days: 1 }), precision: "yesterday" };
+        case "tomorrow": {
+          const g2 = guardDate(ref.add({ days: 1 }));
+          return g2 instanceof Pt.PlainDate ? { t: "ds", pd: g2, precision: "tomorrow" } : g2;
+        }
+        case "yesterday": {
+          const g2 = guardDate(ref.subtract({ days: 1 }));
+          return g2 instanceof Pt.PlainDate ? { t: "ds", pd: g2, precision: "yesterday" } : g2;
+        }
         case "now":
           return { t: "ds", pd: ref, precision: "now" };
       }
@@ -30674,6 +30741,7 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "d" || e.t === "f") {
         const x2 = e.t === "f" ? rnorm({ n: e.n, d: e.d }) : e.vx ?? decToRat(e.v);
         const comps = unitComps(ast.word) ?? [{ def, exp: 1 }];
+        if (comps.length === 0 || dimIsEmpty(def.dim)) return { t: "d", ...qv(x2) };
         const raw = { t: "q", ...qv(x2), dim: def.dim, symbol: def.symbol, def, comps };
         if (new Set(comps.filter((c2) => c2.def.currency).map((c2) => c2.def.currency)).size > 1) {
           const one = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
@@ -30805,33 +30873,19 @@ function evalAst(ast, env, ctx = {}) {
           return combineQuantities(lq, r3, "/", ctx);
         }
         {
-          const isErr = (x2) => "t" in x2;
-          const rateSide = l2.t === "q" ? l2 : r3;
-          const otherSide = l2.t === "q" ? r3 : l2;
-          if (otherSide.t === "ts" && ast.op === "*" && rateSide.rate) {
-            const den = rateSide.rate.den;
-            if (den.dim["calmonths"] === 1 || den.dim["caldays"] === 1) {
-              const count = spanInCalUnit(otherSide.c, den, ctx);
-              if (isErr(count)) return count;
-              const num = rateSide.rate.num;
-              return mkQ(rMul(qx(rateSide), count), num);
-            }
-          }
-          if (l2.t === "q" && r3.t === "ts" && ast.op === "/") {
-            const lc0 = compsOf(l2);
-            if (!lc0) return err("unsupported-pair", "this quantity cannot form calendar rates");
-            if (lc0.some((c2) => c2.def.dim["calmonths"] !== void 0 || c2.def.dim["caldays"] !== void 0)) {
-              return err("unsupported-pair", "this rate already has a denominator");
-            }
-            const den = calUnitForSpan(r3.c);
+          const isErr = (x0) => "t" in x0;
+          const tsSide = l2.t === "ts" ? l2 : r3.t === "ts" ? r3 : null;
+          const qSide = l2.t === "q" ? l2 : r3.t === "q" ? r3 : null;
+          if (tsSide && qSide && (ast.op === "*" || ast.op === "/")) {
+            const den = calUnitForSpan(tsSide.c);
             if ("t" in den) return den;
-            const count = spanInCalUnit(r3.c, den, ctx);
+            const count = spanInCalUnit(tsSide.c, den, ctx);
             if (isErr(count)) return count;
-            if (count.n === 0n) return err("division-by-zero");
-            const denQ = { t: "q", v: new DecC(1), dim: den.dim, symbol: den.symbol, def: den, comps: [{ def: den, exp: 1 }] };
-            const denOne = combineQuantities(l2, denQ, "/", ctx);
-            if (denOne.t !== "q") return denOne;
-            return { ...denOne, ...qv(rDiv(qx(l2), count)) };
+            const tq = { t: "q", ...qv(count), dim: den.dim, symbol: den.symbol, def: den, comps: [{ def: den, exp: 1 }] };
+            const lq = l2.t === "ts" ? tq : l2;
+            const rq = r3.t === "ts" ? tq : r3;
+            if (ast.op === "/" && qx(rq).n === 0n) return err("division-by-zero");
+            return combineQuantities(lq, rq, ast.op, ctx);
           }
         }
         return err("unsupported-pair", "this combination of quantity operands is undefined");
@@ -31016,7 +31070,22 @@ function evalAst(ast, env, ctx = {}) {
               return err("inexact", "integer exponents above 10000 exceed exact arithmetic");
             }
             if (a2.isNegative() && rExact && rExact.d !== 1n) {
-              return err("inexact", "a negative base with a non-integer exponent is undefined");
+              if (rExact.d % 2n === 0n) {
+                return err("inexact", "a negative base with an even-root exponent is undefined");
+              }
+              const sign2 = rExact.n % 2n === 0n ? 1 : -1;
+              const lAbs = numRat(l2);
+              const absBase = { n: lAbs.n < 0n ? -lAbs.n : lAbs.n, d: lAbs.d };
+              const rootN = perfectRoot(absBase.n, rExact.d);
+              const rootD = perfectRoot(absBase.d, rExact.d);
+              if (rootN !== null && rootD !== null) {
+                const powed = rPowInt({ n: rootN, d: rootD }, Number(rExact.n < 0n ? -rExact.n : rExact.n));
+                const out2 = rExact.n < 0n ? rDiv({ n: BigInt(sign2), d: 1n }, powed) : rMul({ n: BigInt(sign2), d: 1n }, powed);
+                return { t: "d", ...qv(out2) };
+              }
+              const resNeg = a2.abs().pow(b2).times(sign2);
+              if (resNeg.isNaN() || !isRepresentable(resNeg)) return err("inexact", "result is not a representable number");
+              return { t: "d", v: resNeg };
             }
             const res = a2.pow(b2);
             if (res.isNaN() || !isRepresentable(res)) return err("inexact", "result is not a representable number");
@@ -31086,7 +31155,7 @@ function formatRT(rt2, prefs) {
     return `${rt2.n} ${word}`;
   }
   if (rt2.base !== void 0) {
-    const value = rt2.vx !== void 0 && rt2.vx.d === 1n ? rt2.vx.n : BigInt(canonDec(rt2.v));
+    const value = rt2.vx !== void 0 && rt2.vx.d === 1n ? rt2.vx.n : BigInt(rt2.v.toFixed());
     const neg = value < 0n;
     const abs3 = neg ? -value : value;
     const prefix = rt2.base === 16 ? "0x" : rt2.base === 2 ? "0b" : "0o";
@@ -31244,7 +31313,11 @@ function matchDate(slice, order) {
     const y3 = Number(c1);
     const mo = Number(c2);
     const d2 = Number(c3);
-    if (c3.length > 2 || !isValidDate(y3, mo, d2)) return null;
+    if (c3.length > 2) return null;
+    if (mo >= 1 && mo <= 12 && !isValidDate(y3, mo, d2)) {
+      return { len: full.length, y: y3, m: mo, d: d2, iso: true, invalid: true };
+    }
+    if (!isValidDate(y3, mo, d2)) return null;
     return { len: full.length, y: y3, m: mo, d: d2, iso: true };
   }
   if (order === "ymd") {
@@ -31272,7 +31345,6 @@ function matchDate(slice, order) {
 var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
 var isLetter = (ch) => ch !== void 0 && new RegExp("\\p{L}", "u").test(ch);
 function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error") {
-  line = line.normalize("NFC");
   const g2 = GRAMMARS[grammar];
   const tokens = [];
   let i2 = 0;
@@ -31284,6 +31356,11 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
   const scanNumber = () => {
     const start = i2;
     const dm = matchDate(line.slice(i2), dateOrder);
+    if (dm?.invalid) {
+      i2 += dm.len;
+      tokens.push({ kind: "badnumber", text: line.slice(start, i2), start, end: i2 });
+      return;
+    }
     if (dm) {
       i2 += dm.len;
       tokens.push({
@@ -31464,7 +31541,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         continue;
       }
       const cp = line.codePointAt(i2);
-      if (new RegExp("\\p{L}", "u").test(String.fromCodePoint(cp))) {
+      if (/[\p{L}\p{M}]/u.test(String.fromCodePoint(cp))) {
         i2 += String.fromCodePoint(cp).length;
         continue;
       }
@@ -31478,7 +31555,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       }
       break;
     }
-    tokens.push({ kind: "word", text: line.slice(start, i2), start, end: i2 });
+    tokens.push({ kind: "word", text: line.slice(start, i2).normalize("NFC"), start, end: i2 });
   };
   while (i2 < line.length) {
     const c2 = line[i2];
@@ -31847,6 +31924,7 @@ var MONTH_WORDS = {
 var NEXT_QUALIFIERS = /* @__PURE__ */ new Set(["prochain", "prochaine", "next", "n\xE4chste", "n\xE4chsten", "n\xE4chster"]);
 var LAST_QUALIFIERS = /* @__PURE__ */ new Set(["dernier", "derni\xE8re", "pass\xE9", "pass\xE9e", "last", "letzte", "letzten", "letzter"]);
 var FROM_NOW_WORDS = /* @__PURE__ */ new Set(["dans", "in"]);
+var AGO_PREFIX_WORDS = /* @__PURE__ */ new Set(["vor"]);
 var FROM_SUFFIX_WORDS = /* @__PURE__ */ new Set(["from"]);
 var MORE_LESS_WORDS = /* @__PURE__ */ new Set(["more", "less", "than"]);
 var AGO_WORDS = /* @__PURE__ */ new Set(["ago"]);
@@ -32272,6 +32350,7 @@ function parse3(tokens) {
           continue;
         }
         const prep = PERCENT_PREPOSITIONS[t2.text.toLowerCase()];
+        if (prep === void 0) throw new ParseError("syntax", `unexpected \u201C${t2.text}\u201D here`);
         if (left.k !== "pct") throw new ParseError("syntax", `\u201C${t2.text}\u201D without a preceding percentage`);
         const base = expr(12);
         left = prep === "of" ? { k: "pctOf", pct: left, base } : prep === "on" ? { k: "pctOn", pct: left, base } : { k: "pctOff", pct: left, base };
@@ -32375,7 +32454,7 @@ function isReservedWord(word) {
 }
 function isReservedCore(word) {
   const lower = word.toLowerCase();
-  return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || UHR_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || FROM_SUFFIX_WORDS.has(lower) || MORE_LESS_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
+  return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || UHR_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || AGO_PREFIX_WORDS.has(lower) || FROM_SUFFIX_WORDS.has(lower) || MORE_LESS_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
 }
 function isComputableWord(word) {
   const lower = word.toLowerCase();
@@ -32420,6 +32499,10 @@ function matchDatePrototypes(tokens) {
     const span = parseSpanTokens(tokens.slice(1));
     if (span) return { k: "fromNow", span, sign: 1 };
   }
+  if (first !== void 0 && AGO_PREFIX_WORDS.has(first) && tokens.length > 1) {
+    const span = parseSpanTokens(tokens.slice(1));
+    if (span) return { k: "fromNow", span, sign: -1 };
+  }
   const last = wordAt(tokens.length - 1);
   if (last !== void 0 && AGO_WORDS.has(last) && tokens.length > 1) {
     const span = parseSpanTokens(tokens.slice(0, -1));
@@ -32459,8 +32542,10 @@ function matchFinancePrototypes(tokens) {
   }
   const amountTokens = tokens.slice(1, pctIdx - 1);
   if (amountTokens.length === 0) return null;
+  const FILLERS = /* @__PURE__ */ new Set(["sur", "over", "pendant", "pour", "durant", "f\xFCr", "fuer", "on", "\xE0", "a"]);
   for (let i2 = pctIdx + 1; i2 < n2 - 2; i2++) {
-    if (tokens[i2].kind !== "word") return null;
+    const tk = tokens[i2];
+    if (tk.kind !== "word" || !FILLERS.has(tk.text.toLowerCase())) return null;
   }
   try {
     return {
@@ -32697,7 +32782,7 @@ function stripParentheticalComments(tokens, env, violations) {
     if (!isUnitExpr && !hasComputableContent(inner, env)) {
       const before = out[i2 - 1];
       const after = out[j2];
-      if ((before?.kind === "number" || before?.kind === "fraction") && after?.kind === "word" && inner.length > 0) {
+      if (inner.length > 0 && ((before?.kind === "number" || before?.kind === "fraction") && after?.kind === "word" || before?.kind === "op" && (after?.kind === "number" || after?.kind === "fraction" || after?.kind === "word"))) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
@@ -32711,7 +32796,9 @@ function prepareTokens(tokens, env, lexicon, violations) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
   tokens = stripParentheticalComments(tokens, env, violations);
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
-  if (colonIdx > 0 && tokens[colonIdx - 1].kind === "word") tokens = tokens.slice(colonIdx + 1);
+  if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
+    tokens = tokens.slice(colonIdx + 1);
+  }
   const out = [];
   for (let idx = 0; idx < tokens.length; idx++) {
     const t2 = tokens[idx];
@@ -32733,7 +32820,8 @@ function prepareTokens(tokens, env, lexicon, violations) {
     }
     const INCREASE_WORDS = /* @__PURE__ */ new Set(["increased", "augment\xE9", "augmente", "augment\xE9e"]);
     const DECREASE_WORDS = /* @__PURE__ */ new Set(["decreased", "reduced", "diminu\xE9", "diminue", "diminu\xE9e", "r\xE9duit", "r\xE9duite"]);
-    if (INCREASE_WORDS.has(lower) || DECREASE_WORDS.has(lower)) {
+    const prevIsValue = prev !== void 0 && (prev.kind === "number" || prev.kind === "fraction" || prev.kind === "percent" || prev.kind === "rparen" || prev.kind === "word" && env.has(prev.text));
+    if ((INCREASE_WORDS.has(lower) || DECREASE_WORDS.has(lower)) && !env.has(t2.text) && prevIsValue) {
       const nxt = tokens[idx + 1];
       if (nxt?.kind === "word" && ["by", "de", "of", "d'"].includes(nxt.text.toLowerCase())) idx++;
       out.push({ ...t2, kind: "op", op: INCREASE_WORDS.has(lower) ? "+" : "-" });
@@ -32767,7 +32855,7 @@ function prepareTokens(tokens, env, lexicon, violations) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
         } else if (looksLikeCode(t2.text) && (prev?.kind === "number" || tokens[idx + 1]?.kind === "number")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
-        } else if (prev?.kind === "number" && prev.end === t2.start && !["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower)) {
+        } else if ((prev?.kind === "number" || prev?.kind === "fraction") && prev.end === t2.start && !["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower)) {
           violations.push(`\u201C${prev.text}${t2.text}\u201D is not a number, unit or date`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction") && /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text)) {
           violations.push(`\u201C${t2.text}\u201D is not a valid unit`);
@@ -32859,7 +32947,7 @@ var serialize = (rt2) => {
       return `e:${rt2.code}:${rt2.detail ?? ""}`;
   }
 };
-function readsFingerprint(entry, env, rts, sectionStart, aggDerived, rates) {
+function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context) {
   const parts = [];
   for (const name of [...entry.deps.variables].sort()) parts.push(`v:${name}=${serialize(env.get(name))}`);
   for (const idx of [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2)) {
@@ -32870,15 +32958,25 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, rates) {
     parts.push(`t:${sectionStart}:${summed}`);
   }
   for (const w2 of entry.commentWords) parts.push(`w:${w2}=${serialize(env.get(w2))}`);
-  for (const u2 of entry.result.fx ?? []) {
-    const q2 = rates?.rate(u2.from, u2.to);
-    parts.push(`fx:${u2.from}/${u2.to}=${q2 ? `${q2.rate}@${q2.asOf}` : "\u2205"}`);
+  for (const u2 of entry.fxReads) {
+    const d2 = context.rates?.rate(u2.from, u2.to);
+    const inv = context.rates?.rate(u2.to, u2.from);
+    parts.push(
+      `fx:${u2.from}/${u2.to}=${d2 ? `${d2.rate}@${d2.asOf}@${d2.source}` : "\u2205"};${inv ? `${inv.rate}@${inv.asOf}@${inv.source}` : "\u2205"}`
+    );
+  }
+  if (entry.deps.usesNow) parts.push(`now:${context.now ?? ""}:${context.timezone ?? ""}`);
+  for (const h2 of entry.holidayReads) {
+    const dates = context.holidays?.holidays(h2.from, h2.to, h2.region).map((x2) => x2.date).join(",") ?? "\u2205";
+    parts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${dates}`);
   }
   return parts.join("|");
 }
 function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
   const fxTrace = [];
+  const fxReads = [];
+  const holidayReads = [];
   const empty = (tokens2, commentWords) => ({
     result: {
       tokens: tokens2.map(toPublicToken),
@@ -32889,6 +32987,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     },
     rt: null,
     deps,
+    fxReads,
+    holidayReads,
     defines: null,
     sectionStart,
     commentWords
@@ -32925,7 +33025,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     }
     if (violations.length > 0) throw new ParseError("not-understood", violations[0]);
     if (exprTokens.length === 0) throw new ParseError("syntax", "empty expression");
-    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace };
+    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace, fxReads, holidayReads };
     let ast = parseExpression(exprTokens);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
@@ -32944,6 +33044,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     },
     rt: rt2,
     deps,
+    fxReads,
+    holidayReads,
     defines,
     sectionStart,
     commentWords: envWords
@@ -32990,13 +33092,13 @@ function runSheet(text, context, cache2) {
   lines.forEach((line, i2) => {
     let entry;
     const cached2 = cache2?.[i2];
-    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context.rates ?? void 0)) {
+    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context)) {
       entry = cached2;
     } else {
       entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error");
       recomputed.push(i2);
     }
-    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context.rates ?? void 0);
+    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context);
     const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
     if (entry.defines) {
       if (derived) aggDerivedVars.add(entry.defines);
@@ -33079,6 +33181,9 @@ var Dec = decimal_default.clone({ precision: 50 });
 function createSnapshotProvider(snapshot) {
   const perBase = /* @__PURE__ */ new Map([[snapshot.base.toUpperCase(), new Dec(1)]]);
   for (const [code, rate] of Object.entries(snapshot.rates)) {
+    if (perBase.has(code.toUpperCase())) {
+      throw new Error(`rate snapshot: duplicate currency key \u201C${code}\u201D (case-insensitive)`);
+    }
     perBase.set(code.toUpperCase(), new Dec(rate));
   }
   return {
