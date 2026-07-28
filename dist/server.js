@@ -29909,10 +29909,11 @@ function spanInCalUnit(c2, den, ctx) {
   }
   return rDiv({ n: total, d: 1n }, ratOfFactor(den.factor));
 }
-function calUnitForSpan(c2) {
+function calUnitForSpan(c2, ctx) {
   const months = (c2.months ?? 0) + 12 * (c2.years ?? 0);
   const days = (c2.days ?? 0) + 7 * (c2.weeks ?? 0);
   if (months !== 0 && days !== 0) {
+    if (ctx?.monthToDays === "30") return CAL_RATE_DEFS.day;
     return err("anchor-required", "months/years and days/weeks only combine around a date");
   }
   if (months !== 0) {
@@ -29938,9 +29939,11 @@ var addSpans = (a2, b2, sign2) => {
     }
   }
   if (!any) {
-    for (const key of ["years", "months", "weeks", "days"]) {
-      if (a2[key] !== void 0 || b2[key] !== void 0) out[key] = 0;
-    }
+    const has = (k2) => a2[k2] !== void 0 || b2[k2] !== void 0;
+    if (has("years") && !has("months")) out.years = 0;
+    else if (has("years") || has("months")) out.months = 0;
+    else if (has("weeks") && !has("days")) out.weeks = 0;
+    else if (has("weeks") || has("days")) out.days = 0;
   }
   return out;
 };
@@ -30346,8 +30349,14 @@ function combineQuantities(l2, r3, op, ctx) {
   const rate = outComps.length === 2 && pos.length === 1 && neg.length === 1 ? { num: pos[0].def, den: neg[0].def } : void 0;
   return { t: "q", ...qv(x2), dim, symbol, ...def && { def }, ...rate && { rate }, comps: outComps };
 }
-var isSummable = (rt2) => rt2 !== null && (rt2.t === "d" || rt2.t === "f" || rt2.t === "q");
+var isSummable = (rt2) => rt2 !== null && (rt2.t === "d" || rt2.t === "f" || rt2.t === "q" || rt2.t === "ts");
 function addSummable(acc, v2, ctx) {
+  if (acc.t === "ts" || v2.t === "ts") {
+    if (acc.t !== "ts" || v2.t !== "ts") return err("unit-mismatch", "a total cannot mix timespans and other values");
+    const c2 = addSpans(acc.c, v2.c, 1);
+    if (!spanIsSafe(c2)) return err("inexact", "timespan exceeds the safe range");
+    return { t: "ts", c: c2 };
+  }
   if (acc.t === "q" || v2.t === "q") {
     if (acc.t !== "q" || v2.t !== "q") {
       return err("unit-mismatch", "a total cannot mix quantities and bare numbers");
@@ -30368,6 +30377,7 @@ function addSummable(acc, v2, ctx) {
 }
 function finalizeCurrencies(rt2, ctx) {
   if (rt2.t !== "q") return rt2;
+  if (rt2.chosen) return rt2;
   const comps = compsOf(rt2);
   if (!comps) return rt2;
   const cur = comps.filter((c2) => c2.def.currency);
@@ -30381,29 +30391,22 @@ function finalizeCurrencies(rt2, ctx) {
     ctx.fxReads?.push({ from: other.def.currency, to: anchor.def.currency, obs: "\u2205;\u2205" });
     return rt2;
   }
-  const local = [];
-  const subCtx = { ...ctx, fxTrace: local };
-  let x2 = qx(rt2);
-  const out = comps.map((c2) => ({ ...c2 }));
-  const anchorOut = out.find((c2) => c2.def.id === anchor.def.id);
-  const plan = [];
-  for (const c2 of out) {
-    if (!c2.def.currency || c2.def.currency === anchor.def.currency) continue;
-    const fx = fxRat(provider, c2.def.currency, anchor.def.currency, subCtx);
-    if ("t" in fx) return rt2;
-    plan.push({ c: c2, fx });
-  }
-  if (plan.length === 0) return rt2;
-  for (const { c: c2, fx } of plan) {
-    x2 = rMul(x2, rPowInt(fx, c2.exp));
-    anchorOut.exp += c2.exp;
-    c2.exp = 0;
-  }
-  ctx.fxTrace?.push(...local);
-  const kept = out.filter((c2) => c2.exp !== 0);
-  const raw = { t: "q", ...qv(x2), dim: dimOfComps(kept), symbol: compsSymbol(kept), comps: kept };
+  const net9 = cur.reduce((s9, c2) => s9 + c2.exp, 0);
+  const targetComps = [
+    ...net9 !== 0 ? [{ def: anchor.def, exp: net9 }] : [],
+    ...comps.filter((c2) => !c2.def.currency).map((c2) => ({ ...c2 }))
+  ];
+  const template = {
+    t: "q",
+    v: new DecC(1),
+    dim: dimOfComps(targetComps),
+    symbol: compsSymbol(targetComps),
+    comps: targetComps
+  };
+  const aligned = alignForAdd(template, rt2, ctx);
+  if (aligned.t !== "q") return rt2;
   const one = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
-  return combineQuantities(one, raw, "*", ctx);
+  return combineQuantities(one, aligned, "*", ctx);
 }
 function evalAst(ast, env, ctx = {}) {
   switch (ast.k) {
@@ -30441,8 +30444,38 @@ function evalAst(ast, env, ctx = {}) {
       if (ast.fn === "median") {
         if (values.length === 0) return err("not-understood", "nothing to take a median of in this section");
         const first = values[0];
+        if (first.t === "ts") {
+          const scal = [];
+          for (const val of values) {
+            if (val.t !== "ts") return err("unit-mismatch", "a median cannot mix timespans and other values");
+            const months9 = (val.c.months ?? 0) + 12 * (val.c.years ?? 0);
+            const days9 = (val.c.days ?? 0) + 7 * (val.c.weeks ?? 0);
+            if (months9 !== 0 && days9 !== 0 && ctx.monthToDays !== "30") {
+              return err("anchor-required", "months/years and days/weeks only compare around a date");
+            }
+            const x9 = ctx.monthToDays === "30" ? months9 * 30 + days9 : months9 !== 0 ? months9 : days9;
+            scal.push({ x: x9, rt: val });
+          }
+          const groups = new Set(scal.map((s9) => (s9.rt.c.months ?? 0) + 12 * (s9.rt.c.years ?? 0) !== 0 ? "m" : "d"));
+          if (groups.size > 1 && ctx.monthToDays !== "30") {
+            return err("anchor-required", "months/years and days/weeks only compare around a date");
+          }
+          scal.sort((a9, b9) => a9.x - b9.x);
+          const mid9 = scal.length >> 1;
+          if (scal.length % 2 === 1) return scal[mid9].rt;
+          const sum9 = addSpans(scal[mid9 - 1].rt.c, scal[mid9].rt.c, 1);
+          const half9 = {};
+          for (const k9 of ["years", "months", "weeks", "days"]) {
+            const v9 = sum9[k9];
+            if (v9 === void 0) continue;
+            if (v9 % 2 !== 0) return err("anchor-required", "this median is a fractional timespan \u2014 anchor to a date first");
+            half9[k9] = v9 / 2;
+          }
+          return { t: "ts", c: half9 };
+        }
         const items = [];
         for (const val of values) {
+          if (val.t === "ts") return err("unit-mismatch", "a median cannot mix timespans and other values");
           if (first.t === "q") {
             if (val.t !== "q") return err("unit-mismatch", "a median cannot mix quantities and bare numbers");
             if (!dimsCompatible(first.dim, val.dim, ctx)) return err("unit-mismatch", `a median cannot mix ${first.symbol} and ${val.symbol}`);
@@ -30474,9 +30507,22 @@ function evalAst(ast, env, ctx = {}) {
         if (sum2.t === "e") return sum2;
         acc = sum2;
       }
+      if (acc !== null && acc.t === "q" && dimEquals(acc.dim, { temperature: 1 })) {
+        return err("unit-mismatch", "totalling absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for offsets");
+      }
       if (ast.fn === "total") return acc ?? { t: "d", v: new DecC(0) };
       if (acc === null) return err("not-understood", "nothing to average in this section");
       const n2 = { n: BigInt(values.length), d: 1n };
+      if (acc.t === "ts") {
+        const c9 = {};
+        for (const k9 of ["years", "months", "weeks", "days"]) {
+          const v9 = acc.c[k9];
+          if (v9 === void 0) continue;
+          if (v9 % values.length !== 0) return err("anchor-required", "this average is a fractional timespan \u2014 anchor to a date first");
+          c9[k9] = v9 / values.length;
+        }
+        return { t: "ts", c: c9 };
+      }
       if (acc.t === "q") return { ...acc, ...qv(rDiv(qx(acc), n2)) };
       const mean = rDiv(numRat(acc), n2);
       if (acc.t === "f") return makeFrac(mean.n, mean.d, "derived");
@@ -30932,10 +30978,10 @@ function evalAst(ast, env, ctx = {}) {
         ...rate && { rate },
         comps: tComps
       };
-      if (e.symbol === symbol) return { ...template, ...qv(qx(e)) };
+      if (e.symbol === symbol) return { ...template, ...qv(qx(e)), chosen: true };
       const aligned = alignForAdd(template, e, ctx);
       if (aligned.t === "e") return aligned;
-      return aligned;
+      return { ...aligned, chosen: true };
     }
     case "bin": {
       const l2 = evalAst(ast.l, env, ctx);
@@ -31097,7 +31143,7 @@ function evalAst(ast, env, ctx = {}) {
               const zq = { t: "q", v: new DecC(0), dim: zeroDef.dim, symbol: zeroDef.symbol, def: zeroDef, comps: [{ def: zeroDef, exp: 1 }] };
               return combineQuantities(qSide, zq, "*", ctx);
             }
-            const den = calUnitForSpan(tsSide.c);
+            const den = calUnitForSpan(tsSide.c, ctx);
             if ("t" in den) return den;
             const count = spanInCalUnit(tsSide.c, den, ctx);
             if (isErr(count)) return count;
@@ -33126,8 +33172,9 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
       let ai = j2;
       while (ai < out.length && droppable(out[ai])) ai++;
       const afterEff = ai < out.length ? out[ai] : void 0;
-      const afterIsOpWord = after?.kind === "word" && (lexicon.operatorWords.has(after.text.toLowerCase()) || lexicon.divisionParticles.has(after.text.toLowerCase()) || CORE_OP_WORDS.has(after.text.toLowerCase()));
-      if (before?.kind === "word" && !isReservedWord(before.text) && !env.has(before.text) && (before.end === out[i2].start || after?.kind === "op" || after?.kind === "percent" || after?.kind === "equals" || afterIsOpWord)) {
+      const isOpWordTok = (t9) => t9?.kind === "word" && (lexicon.operatorWords.has(t9.text.toLowerCase()) || lexicon.divisionParticles.has(t9.text.toLowerCase()) || CORE_OP_WORDS.has(t9.text.toLowerCase()));
+      const opish = (t9) => t9?.kind === "op" || t9?.kind === "percent" || t9?.kind === "equals" || isOpWordTok(t9);
+      if (before?.kind === "word" && !isReservedWord(before.text) && !env.has(before.text) && (before.end === out[i2].start || opish(after) || opish(afterEff))) {
         violations.push(`\u201C${before.text}\u201D is not a known function`);
         return out;
       }
@@ -33136,7 +33183,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
         violations.push(`\u201C(${inner.map((t2) => t2.text).join(" ")})\u201D is not supported \u2014 ${quarantineReason(quar0.text)}`);
         return out;
       }
-      if (before?.kind === "word" && isDateKeywordWord(before.text) && after !== void 0) {
+      if ((before?.kind === "word" && isDateKeywordWord(before.text) || beforeEff?.kind === "word" && isDateKeywordWord(beforeEff.text)) && after !== void 0) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
@@ -33383,7 +33430,7 @@ var serialize = (rt2) => {
     case "q": {
       const comps = (rt2.comps ?? []).map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7");
       const rate = rt2.rate ? `${rt2.rate.num.id}/${rt2.rate.den.id}` : "";
-      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}`;
+      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}`;
     }
     case "e":
       return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}`;
@@ -33391,7 +33438,6 @@ var serialize = (rt2) => {
 };
 function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe, snap, doubtSigs, varDoubt, stored) {
   const parts = [cfgStamp];
-  const provParts = [];
   for (const name of [...entry.deps.variables].sort()) {
     parts.push(`v:${name}=${serialize(env.get(name))}`);
     parts.push(`va:${name}=${varDoubt.get(name) ?? ""}`);
@@ -33410,6 +33456,12 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
   }
   const core = parts.join("|");
   if (probe && stored !== void 0 && !stored.startsWith(`${core}\u2016`)) return "\u2260";
+  const storedProv = probe && stored !== void 0 ? stored.slice(core.length + 1) : null;
+  let provBuilt = "";
+  const pushProv = (part) => {
+    provBuilt = provBuilt === "" ? part : `${provBuilt}|${part}`;
+    return storedProv === null || storedProv.startsWith(provBuilt);
+  };
   const safeRate = (f2, t2) => {
     try {
       const q2 = context.rates?.rate(f2, t2);
@@ -33420,16 +33472,16 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
   };
   for (const u2 of entry.fxReads) {
     if (!probe && u2.obs !== void 0) {
-      provParts.push(`fx:${u2.from}/${u2.to}=${u2.obs}`);
+      if (!pushProv(`fx:${u2.from}/${u2.to}=${u2.obs}`)) return "\u2260";
       continue;
     }
     const d2 = safeRate(u2.from, u2.to);
     const inv = d2 === "\u2205" || d2 === "\u26A0" ? safeRate(u2.to, u2.from) : "\xB7";
-    provParts.push(`fx:${u2.from}/${u2.to}=${d2};${inv}`);
+    if (!pushProv(`fx:${u2.from}/${u2.to}=${d2};${inv}`)) return "\u2260";
   }
   for (const h2 of entry.holidayReads) {
     if (!probe && h2.obs !== void 0) {
-      provParts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${h2.obs}`);
+      if (!pushProv(`hol:${h2.from}:${h2.to}:${h2.region}=${h2.obs}`)) return "\u2260";
       continue;
     }
     let dates = "\u2205";
@@ -33438,9 +33490,9 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
     } catch {
       dates = "\u26A0";
     }
-    provParts.push(`hol:${h2.from}:${h2.to}:${h2.region}=${dates}`);
+    if (!pushProv(`hol:${h2.from}:${h2.to}:${h2.region}=${dates}`)) return "\u2260";
   }
-  return `${core}\u2016${provParts.join("|")}`;
+  return `${core}\u2016${provBuilt}`;
 }
 function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy, counterfactual = false) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
@@ -33463,7 +33515,9 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     holidayReads,
     defines: null,
     sectionStart,
-    commentWords
+    commentWords,
+    altRts: [],
+    preStrictSummable: false
   });
   if (line.trim() === "" || HEADING.test(line)) return empty([], []);
   let tokens = [];
@@ -33513,6 +33567,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     }
   }
   const unverifiedGrave = [];
+  const altRts = [];
   const assumptions = (() => {
     if (counterfactual) return void 0;
     const all = [...tokenAssumptions(tokens, dateOrder, formatting?.language ?? "fr"), ...rawAssume];
@@ -33533,6 +33588,13 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       deps.usesTotal = deps.usesTotal || sub2.deps.usesTotal;
     };
     const semanticChosen = semantic(rt2);
+    const dissolved = [];
+    const upgradeImpact = (a2, altRt) => {
+      if (a2.impact !== "value") return;
+      const isMoneyRT = (x2) => x2.t === "q" && (x2.def?.currency !== void 0 || x2.rate?.num.currency !== void 0 || (x2.comps?.some((c9) => c9.def.currency) ?? false));
+      const dyn = rt2.t === "ds" || altRt.t === "ds" || rt2.t === "wd" || altRt.t === "wd" || rt2.t === "ts" || altRt.t === "ts" || rt2.t === "ct" || altRt.t === "ct" ? "date" : isMoneyRT(rt2) || isMoneyRT(altRt) ? "money" : rt2.t === "q" || altRt.t === "q" ? "unit" : null;
+      if (dyn !== null) a2.impact = dyn;
+    };
     let budget = ambiguityPolicy === "strict" ? 64 : 8;
     const seen9 = /* @__PURE__ */ new Set();
     const deduped = all.filter((a2) => {
@@ -33600,15 +33662,56 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       );
       mergeReads(alt);
       if (alt.rt === null || alt.rt.t === "e") continue;
-      if (semantic(alt.rt) === semanticChosen) continue;
-      a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
-      if (a2.impact === "value") {
-        const isMoneyRT = (x2) => x2.t === "q" && (x2.def?.currency !== void 0 || x2.rate?.num.currency !== void 0 || (x2.comps?.some((c9) => c9.def.currency) ?? false));
-        const dyn = rt2.t === "ds" || alt.rt.t === "ds" || rt2.t === "wd" || alt.rt.t === "wd" || rt2.t === "ts" || alt.rt.t === "ts" || rt2.t === "ct" || alt.rt.t === "ct" ? "date" : isMoneyRT(rt2) || isMoneyRT(alt.rt) ? "money" : rt2.t === "q" || alt.rt.t === "q" ? "unit" : null;
-        if (dyn !== null) a2.impact = dyn;
+      if (semantic(alt.rt) === semanticChosen) {
+        dissolved.push(a2);
+        continue;
       }
+      a2.data["altResult"] = formatRT(alt.rt, formatting) ?? semantic(alt.rt);
+      upgradeImpact(a2, alt.rt);
       validateRewrite();
+      altRts.push(alt.rt);
       kept.push(a2);
+    }
+    const byCode = /* @__PURE__ */ new Map();
+    for (const a2 of dissolved) {
+      if (a2.range === void 0 || a2.altRewrite === void 0) continue;
+      const list9 = byCode.get(a2.code) ?? [];
+      list9.push(a2);
+      byCode.set(a2.code, list9);
+    }
+    for (const [, group] of byCode) {
+      if (group.length < 2 || budget === 0) continue;
+      budget--;
+      let jointLine = line;
+      for (const a2 of [...group].sort((x9, y9) => y9.range.start - x9.range.start)) {
+        jointLine = jointLine.slice(0, a2.range.start) + a2.altRewrite + jointLine.slice(a2.range.end);
+      }
+      const joint = evaluateLine(
+        jointLine,
+        env,
+        rts,
+        sectionStart,
+        aggDerived,
+        baseCtx,
+        lexicon,
+        grammar,
+        dateOrder,
+        formatting,
+        financialCurrency,
+        misplacedPolicy,
+        "annotate",
+        true
+      );
+      mergeReads(joint);
+      if (joint.rt === null || joint.rt.t === "e") continue;
+      if (semantic(joint.rt) === semanticChosen) continue;
+      const jointShown = formatRT(joint.rt, formatting) ?? semantic(joint.rt);
+      for (const a2 of group) {
+        a2.data["altResult"] = jointShown;
+        upgradeImpact(a2, joint.rt);
+        kept.push(a2);
+      }
+      altRts.push(joint.rt);
     }
     if (kept.length === 0) return void 0;
     kept.sort((a2, b2) => b2.level - a2.level || (a2.range?.start ?? 1e9) - (b2.range?.start ?? 1e9));
@@ -33626,6 +33729,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       };
     });
   })();
+  const preStrictSummable = isSummable(rt2);
   if (misplacedPolicy !== void 0 && ambiguityPolicy === "strict" && rt2.t !== "e") {
     const grave = assumptions?.find((a2) => a2.impact !== "value");
     if (grave) {
@@ -33661,7 +33765,9 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     holidayReads,
     defines,
     sectionStart,
-    commentWords: envWords
+    commentWords: envWords,
+    altRts,
+    preStrictSummable
   };
 }
 function runSheet(text, context, cache2) {
@@ -33694,7 +33800,13 @@ function runSheet(text, context, cache2) {
         if (!holCache.has(key)) {
           try {
             const list = context.holidays.holidays(f2, t2, r3).map((h2) => ({ date: String(h2.date), name: String(h2.name) }));
-            if (list.some((h2) => !/^\d{4}-\d{2}-\d{2}$/.test(h2.date))) holCache.set(key, null);
+            const realDate = (s9) => {
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(s9)) return false;
+              const [y9, m9, d9] = s9.split("-").map(Number);
+              const dt9 = new Date(Date.UTC(y9, m9 - 1, d9));
+              return dt9.getUTCFullYear() === y9 && dt9.getUTCMonth() === m9 - 1 && dt9.getUTCDate() === d9;
+            };
+            if (list.some((h2) => !realDate(h2.date))) holCache.set(key, null);
             else holCache.set(key, list);
           } catch {
             holCache.set(key, null);
@@ -33705,7 +33817,7 @@ function runSheet(text, context, cache2) {
         return v2;
       }
     };
-    const probeContext = { ...context, rates: cachedRates, holidays: cachedHolidays };
+    const probeContext = { rates: cachedRates, holidays: cachedHolidays };
     const baseCtx = {
       now: nowSnap,
       ...tzSnap !== void 0 && { timezone: tzSnap },
@@ -33743,8 +33855,12 @@ function runSheet(text, context, cache2) {
       fx: context.rates != null
     })}`;
     const env = /* @__PURE__ */ new Map();
+    let usedNow = false;
     const doubtSigs = [];
     const varDoubt = /* @__PURE__ */ new Map();
+    const lineAlts = [];
+    const varAlts = /* @__PURE__ */ new Map();
+    const preSummable = [];
     const lines = text.split("\n").map((l2) => l2.endsWith("\r") ? l2.slice(0, -1) : l2);
     const rts = [];
     const results = [];
@@ -33770,6 +33886,7 @@ function runSheet(text, context, cache2) {
         else aggDerivedVars.delete(entry.defines);
       }
       aggDerived.push(derived);
+      usedNow = usedNow || entry.deps.usesNow;
       const sigLevel = (s2) => Number(s2.split(":", 1)[0]) || 1;
       const isAmbErr = (x2) => x2 !== null && x2 !== void 0 && x2.t === "e" && x2.code === "ambiguous";
       const srcLabels = [];
@@ -33797,6 +33914,7 @@ function runSheet(text, context, cache2) {
         for (let j9 = sectionStart; j9 < doubtSigs.length; j9++) {
           if (!doubtSigs[j9] || aggDerived[j9]) continue;
           if (isAmbErr(rts[j9])) {
+            if (!preSummable[j9]) continue;
             srcLabels.push(`line(${j9 + 1})`);
             srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
             droppedAmbiguous = true;
@@ -33810,31 +33928,56 @@ function runSheet(text, context, cache2) {
       let publicResult = structuredClone(entry.result);
       let rtOut = entry.rt;
       if (srcLabels.length > 0 && !droppedAmbiguous && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
-        const rtsP = rts.map((r9, k9) => srcLineIdxs.includes(k9 + 1) ? perturbRT(r9) : r9);
-        const envP = new Map(env);
-        for (const name of srcVars) {
-          const bound = envP.get(name);
-          if (bound) envP.set(name, perturbRT(bound));
+        let sensitive = false;
+        let probes = 0;
+        const moved = (mutate) => {
+          if (probes >= 16) return true;
+          probes++;
+          const rtsP = [...rts];
+          const envP = new Map(env);
+          mutate(rtsP, envP);
+          const probe9 = evaluateLine(
+            line,
+            envP,
+            rtsP,
+            sectionStart,
+            aggDerived,
+            baseCtx,
+            lexicon,
+            grammar,
+            dateOrder,
+            formatting,
+            financialCurrency,
+            context.policies?.misplacedGroupSeparator ?? "error",
+            "annotate",
+            true
+          );
+          return probe9.rt === null || JSON.stringify(toPublicValue(probe9.rt)) !== JSON.stringify(publicResult.value);
+        };
+        for (const idx of srcLineIdxs) {
+          const alts9 = lineAlts[idx - 1] ?? [];
+          const worlds9 = alts9.length > 0 ? alts9 : rts[idx - 1] ? [perturbRT(rts[idx - 1])] : [];
+          if (worlds9.some((w9) => moved((rtsP) => {
+            rtsP[idx - 1] = w9;
+          }))) {
+            sensitive = true;
+            break;
+          }
         }
-        const probe9 = evaluateLine(
-          line,
-          envP,
-          rtsP,
-          sectionStart,
-          aggDerived,
-          baseCtx,
-          lexicon,
-          grammar,
-          dateOrder,
-          formatting,
-          financialCurrency,
-          context.policies?.misplacedGroupSeparator ?? "error",
-          "annotate",
-          true
-        );
-        if (probe9.rt !== null && JSON.stringify(toPublicValue(probe9.rt)) === JSON.stringify(publicResult.value)) {
-          srcLabels.length = 0;
+        if (!sensitive) {
+          for (const name of srcVars) {
+            const alts9 = varAlts.get(name) ?? [];
+            const bound9 = env.get(name);
+            const worlds9 = alts9.length > 0 ? alts9 : bound9 ? [perturbRT(bound9)] : [];
+            if (worlds9.some((w9) => moved((_r, envP) => {
+              envP.set(name, w9);
+            }))) {
+              sensitive = true;
+              break;
+            }
+          }
         }
+        if (!sensitive) srcLabels.length = 0;
       }
       if (srcLabels.length > 0 && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
         const lang9 = formatting.language ?? "fr";
@@ -33856,9 +33999,16 @@ function runSheet(text, context, cache2) {
       const sig9 = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" ? `${Math.max(srcLevel, ownLevel, 1)}:ambiguous` : asms9.length === 0 ? "" : `${ownLevel}:${asms9.map((a9) => a9.code).join(",")}`;
       doubtSigs.push(sig9);
       if (entry.defines) {
-        if (sig9) varDoubt.set(entry.defines, sig9);
-        else varDoubt.delete(entry.defines);
+        if (sig9) {
+          varDoubt.set(entry.defines, sig9);
+          varAlts.set(entry.defines, entry.altRts);
+        } else {
+          varDoubt.delete(entry.defines);
+          varAlts.delete(entry.defines);
+        }
       }
+      lineAlts.push(entry.altRts);
+      preSummable.push(entry.preStrictSummable);
       if (entry.defines && rtOut) env.set(entry.defines, rtOut);
       rts.push(rtOut);
       results.push(publicResult);
@@ -33871,10 +34021,10 @@ function runSheet(text, context, cache2) {
       cacheOut.push({ ...entry, text: line, fingerprint });
       if (HEADING.test(line)) sectionStart = i2 + 1;
     });
-    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache };
+    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache, usedNow, nowSnap };
   };
   let out = attempt();
-  if (out.fxCache.size + out.holCache.size >= 2) {
+  if (out.fxCache.size + out.holCache.size + (out.usedNow ? 1 : 0) >= 2) {
     const fxTorn = [...out.fxCache].some(([key9, snap9]) => {
       const [f9, t9] = key9.split("\u2192");
       let fresh9;
@@ -33882,7 +34032,7 @@ function runSheet(text, context, cache2) {
         const q9 = context.rates?.rate(f9, t9);
         fresh9 = q9 ? { rate: String(q9.rate), asOf: String(q9.asOf), source: String(q9.source) } : void 0;
       } catch {
-        fresh9 = null;
+        return false;
       }
       return JSON.stringify(fresh9 ?? null) !== JSON.stringify(snap9 ?? null);
     });
@@ -33891,13 +34041,20 @@ function runSheet(text, context, cache2) {
       let fresh9;
       try {
         fresh9 = context.holidays?.holidays(f9, t9, r9).map((h9) => ({ date: String(h9.date), name: String(h9.name) })) ?? null;
-        if (fresh9?.some((h9) => !/^\d{4}-\d{2}-\d{2}$/.test(h9.date))) fresh9 = null;
       } catch {
-        fresh9 = null;
+        return false;
       }
       return JSON.stringify(fresh9) !== JSON.stringify(snap9);
     });
-    if (fxTorn || holTorn) out = attempt();
+    let nowTorn = false;
+    if (!fxTorn && !holTorn && out.usedNow) {
+      try {
+        nowTorn = (context.now ?? null) !== out.nowSnap;
+      } catch {
+        nowTorn = false;
+      }
+    }
+    if (fxTorn || holTorn || nowTorn) out = attempt();
   }
   return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed };
 }
