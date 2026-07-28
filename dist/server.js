@@ -29059,6 +29059,12 @@ var DEFS = [
   { id: "hour", symbol: "h", dim: { time: 1 }, factor: r2(3600) },
   // volume (base m³, consistent with length³ exponent lookup)
   { id: "litre", symbol: "l", dim: { length: 3 }, factor: r2(1, 1e3) },
+  { id: "microgram", symbol: "\xB5g", dim: { mass: 1 }, factor: r2(1, 1e9) },
+  { id: "micrometre", symbol: "\xB5m", dim: { length: 1 }, factor: r2(1, 1e6) },
+  { id: "microlitre", symbol: "\xB5l", dim: { length: 3 }, factor: r2(1, 1e9) },
+  { id: "hertz", symbol: "Hz", dim: { time: -1 }, factor: r2(1, 1) },
+  { id: "kilohertz", symbol: "kHz", dim: { time: -1 }, factor: r2(1e3, 1) },
+  { id: "megahertz", symbol: "MHz", dim: { time: -1 }, factor: r2(1e6, 1) },
   { id: "ml", symbol: "ml", dim: { length: 3 }, factor: r2(1, 1e6) },
   { id: "cl", symbol: "cl", dim: { length: 3 }, factor: r2(1, 1e5) },
   { id: "dl", symbol: "dl", dim: { length: 3 }, factor: r2(1, 1e4) },
@@ -29252,6 +29258,16 @@ var ALIASES = [
   // volume
   { alias: "l", unit: "litre" },
   { alias: "L", unit: "litre" },
+  { alias: "\xB5g", unit: "microgram" },
+  { alias: "\u03BCg", unit: "microgram" },
+  { alias: "\xB5m", unit: "micrometre" },
+  { alias: "\u03BCm", unit: "micrometre" },
+  { alias: "\xB5l", unit: "microlitre" },
+  { alias: "\u03BCl", unit: "microlitre" },
+  { alias: "Hz", unit: "hertz" },
+  { alias: "hertz", unit: "hertz", caseSensitive: false },
+  { alias: "kHz", unit: "kilohertz" },
+  { alias: "MHz", unit: "megahertz" },
   { alias: "litre", unit: "litre", caseSensitive: false },
   { alias: "litres", unit: "litre", caseSensitive: false },
   { alias: "liter", unit: "litre", caseSensitive: false },
@@ -30384,7 +30400,7 @@ var spanGroups = (c2) => ({
   hasM: c2.months !== void 0 || c2.years !== void 0,
   hasD: c2.days !== void 0 || c2.weeks !== void 0
 });
-var spanEmit = (months, days, groups) => {
+var spanEmit = (months, days, groups, thirty) => {
   const MAXI = 9007199254740991n;
   const clamp2 = (v2) => v2 > MAXI ? MAXI : v2 < -MAXI ? -MAXI : v2;
   let years = clamp2(months / 12n);
@@ -30396,8 +30412,14 @@ var spanEmit = (months, days, groups) => {
   let weeks = 0n;
   let outDays = days;
   if (days > MAXI || days < -MAXI) {
-    weeks = clamp2(days / 7n);
-    outDays = days - weeks * 7n;
+    if (thirty === true && months === 0n) {
+      years = clamp2(days / 360n);
+      restM = clamp2((days - years * 360n) / 30n);
+      outDays = days - years * 360n - restM * 30n;
+    } else {
+      weeks = clamp2(days / 7n);
+      outDays = days - weeks * 7n;
+    }
   }
   for (const v2 of [years, restM, weeks, outDays]) {
     if (v2 > MAXI || v2 < -MAXI) return err("inexact", "timespan exceeds the safe range");
@@ -30446,7 +30468,23 @@ function addSummable(acc, v2, ctx) {
     }
     const rhs = alignForAdd(acc, v2, ctx);
     if (rhs.t === "e") return rhs;
-    return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))) };
+    const irr9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+    if (irr9(acc) || irr9(v2)) {
+      const merged9 = mergeTerms(termsOf(acc), termsOf(v2), 1n);
+      if (merged9.length === 1) {
+        const t9 = merged9[0];
+        const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+        return combineQuantities(one9, {
+          t: "q",
+          ...qv(t9.x),
+          dim: dimOfComps(t9.comps),
+          symbol: compsSymbol(t9.comps),
+          comps: t9.comps
+        }, "*", ctx);
+      }
+      return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))), terms: merged9 };
+    }
+    return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))), terms: void 0 };
   }
   const a2 = numRat(acc);
   const b2 = numRat(v2);
@@ -30458,6 +30496,31 @@ function foldIrrationalResidue(rt2) {
   const comps = compsOf(rt2);
   if (!comps || !comps.some((c2) => c2.def.factorDec !== void 0)) return rt2;
   if (comps.length > 12) {
+    const work = comps.map((c2) => ({ ...c2 }));
+    let dec0 = null;
+    let rat0 = { n: 1n, d: 1n };
+    for (let a9 = 0; a9 < work.length; a9++) {
+      for (let b9 = a9 + 1; b9 < work.length; b9++) {
+        const ca = work[a9];
+        const cb = work[b9];
+        if (ca.exp === 0 || cb.exp === 0) continue;
+        if (ca.def.factorDec === void 0 && cb.def.factorDec === void 0) continue;
+        if (!dimIsEmpty(dimOfComps([ca, cb]))) continue;
+        if (ca.def.factorDec === void 0 && !isPureLinear(ca.def) || cb.def.factorDec === void 0 && !isPureLinear(cb.def)) continue;
+        for (const c9 of [ca, cb]) {
+          if (c9.def.factorDec !== void 0) dec0 = (dec0 ?? new DecC(1)).times(new DecC(c9.def.factorDec).pow(c9.exp));
+          else rat0 = rMul(rat0, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+        }
+        ca.exp = 0;
+        cb.exp = 0;
+      }
+    }
+    if (dec0 !== null) {
+      const rest0 = work.filter((c2) => c2.exp !== 0);
+      const v0 = ratToDec(rMul(rt2.vx ?? decToRat(rt2.v), rat0)).times(dec0);
+      if (rest0.length === 0) return { t: "d", v: v0 };
+      return { t: "q", v: v0, dim: dimOfComps(rest0), symbol: compsSymbol(rest0), comps: rest0 };
+    }
     if (!dimIsEmpty(dimOfComps(comps)) || comps.some((c2) => !isPureLinear(c2.def) && c2.def.factorDec === void 0)) return rt2;
     let rat9 = { n: 1n, d: 1n };
     let dec9 = new DecC(1);
@@ -30497,9 +30560,9 @@ function foldIrrationalResidue(rt2) {
 }
 function finalizeCurrencies(rt2, ctx) {
   if (rt2.t !== "q") return rt2;
+  if (rt2.chosen) return rt2;
   rt2 = foldIrrationalResidue(rt2);
   if (rt2.t !== "q") return rt2;
-  if (rt2.chosen) return rt2;
   const comps = compsOf(rt2);
   if (!comps) return rt2;
   const cur = comps.filter((c2) => c2.def.currency);
@@ -30654,7 +30717,7 @@ function evalAst(ast, env, ctx = {}) {
             return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
           }
           const meanK9 = mkQ(rDiv(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), { n: 2n, d: 1n }), K9);
-          const f9 = scal9[0].rt;
+          const f9 = values[0];
           return f9.def !== void 0 && f9.def.id !== "kelvin" && (f9.def.affine !== void 0 || f9.def.factor !== void 0) ? convertQuantity(meanK9, f9.def, ctx) : meanK9;
         }
         const items = [];
@@ -30717,7 +30780,7 @@ function evalAst(ast, env, ctx = {}) {
           tsM = 0n;
           tsHasM = false;
         }
-        if (ast.fn === "total") return spanEmit(tsM, tsD, { hasM: tsHasM, hasD: tsHasD });
+        if (ast.fn === "total") return spanEmit(tsM, tsD, { hasM: tsHasM, hasD: tsHasD }, ctx.monthToDays === "30");
         return spanHalf(tsM, tsD, { hasM: tsHasM, hasD: tsHasD }, BigInt(values.length), ctx);
       }
       if (ast.fn === "total" && acc !== null && acc.t === "q" && dimEquals(acc.dim, { temperature: 1 })) {
@@ -30743,7 +30806,7 @@ function evalAst(ast, env, ctx = {}) {
         const { months: m9, days: d9 } = spanCanon(acc.c);
         return spanHalf(m9, d9, spanGroups(acc.c), BigInt(values.length), ctx);
       }
-      if (acc.t === "q") return { ...acc, ...qv(rDiv(qx(acc), n2)) };
+      if (acc.t === "q") return { ...acc, ...qv(rDiv(qx(acc), n2)), ...scaleTerms(acc, rDiv({ n: 1n, d: 1n }, n2)) };
       const mean = rDiv(numRat(acc), n2);
       if (acc.t === "f") return makeFrac(mean.n, mean.d, "derived");
       return { t: "d", ...qv(mean) };
@@ -31223,11 +31286,11 @@ function evalAst(ast, env, ctx = {}) {
           const cent = { n: 100n, d: 1n };
           switch (ast.op) {
             case "+":
-              return { ...l2, ...qv(rMul(qx(l2), rDiv(rAdd(cent, p2), cent))) };
+              return { ...l2, ...qv(rMul(qx(l2), rDiv(rAdd(cent, p2), cent))), ...scaleTerms(l2, rDiv(rAdd(cent, p2), cent)) };
             case "-":
-              return { ...l2, ...qv(rMul(qx(l2), rDiv(rSub(cent, p2), cent))) };
+              return { ...l2, ...qv(rMul(qx(l2), rDiv(rSub(cent, p2), cent))), ...scaleTerms(l2, rDiv(rSub(cent, p2), cent)) };
             case "*":
-              return { ...l2, ...qv(rMul(qx(l2), rDiv(p2, cent))) };
+              return { ...l2, ...qv(rMul(qx(l2), rDiv(p2, cent))), ...scaleTerms(l2, rDiv(p2, cent)) };
             case "/":
               if (p2.n === 0n) return err("division-by-zero");
               return { ...l2, ...qv(rDiv(qx(l2), rDiv(p2, cent))) };
@@ -31290,7 +31353,7 @@ function evalAst(ast, env, ctx = {}) {
             if (rhs.t === "e") return rhs;
             const xr = qx(rhs);
             const irr = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-            if ((irr(l2) || irr(r3)) && termKey(compsOf(l2) ?? []) !== termKey(compsOf(r3) ?? [])) {
+            if (irr(l2) || irr(r3)) {
               const merged = mergeTerms(termsOf(l2), termsOf(r3), ast.op === "+" ? 1n : -1n);
               if (merged.length === 0) return { t: "d", v: new DecC(0) };
               if (merged.length === 1) {
@@ -31308,7 +31371,7 @@ function evalAst(ast, env, ctx = {}) {
               const dec9 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
               return { ...l2, ...qv(dec9), terms: merged };
             }
-            return { ...l2, ...qv(ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr)) };
+            return { ...l2, ...qv(ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr)), terms: void 0 };
           }
           if (ast.op === "*" || ast.op === "/") {
             if (isOffsetScale(l2) || isOffsetScale(r3)) {
@@ -31316,7 +31379,8 @@ function evalAst(ast, env, ctx = {}) {
             }
             const prod9 = combineQuantities(l2, r3, ast.op, ctx);
             const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
-            if (prod9.t === "q" && (l2.chosen && !hasCur9(r3) || r3.chosen && !hasCur9(l2))) {
+            const overlap9 = (a9, b9) => Object.keys(a9.dim).some((k9) => (b9.dim[k9] ?? 0) !== 0);
+            if (prod9.t === "q" && (l2.chosen && !hasCur9(r3) && !overlap9(l2, r3) || r3.chosen && !hasCur9(l2) && !overlap9(r3, l2))) {
               return { ...prod9, chosen: true };
             }
             return prod9;
@@ -31377,7 +31441,7 @@ function evalAst(ast, env, ctx = {}) {
             return err("unit-mismatch", "scaling offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
           }
           const b3 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : l2.vx ?? decToRat(l2.v);
-          if (ast.op === "*") return { ...r3, ...qv(rMul(qx(r3), b3)) };
+          if (ast.op === "*") return { ...r3, ...qv(rMul(qx(r3), b3)), ...scaleTerms(r3, b3) };
           const lq = { t: "q", ...qv(b3), dim: {}, symbol: "", comps: [] };
           const invRes = combineQuantities(lq, r3, "/", ctx);
           return r3.chosen && invRes.t === "q" ? { ...invRes, chosen: true } : invRes;
@@ -31904,7 +31968,7 @@ var UNIT_LIGATURES = {
   "\u3396": "ml",
   "\u3397": "dl",
   "\u2113": "l",
-  "\u3398": "kl",
+  "\u3398": "m\xB3",
   "\u3390": "Hz",
   "\u3391": "kHz",
   "\u3392": "MHz",
@@ -33472,7 +33536,28 @@ var CONFUSABLES = {
   "\u13A0": "D",
   "\u15EA": "D",
   "\u054D": "U",
-  "\u054F": "S"
+  "\u054F": "S",
+  "\u13E6": "K",
+  "\u13DF": "C",
+  "\u13AC": "E",
+  "\u13BB": "H",
+  "\u13B7": "M",
+  "\u13D2": "R",
+  "\u13DA": "S",
+  "\u13D4": "W",
+  "\u13AA": "A",
+  "\u13F4": "B",
+  "\u{10314}": "S",
+  "\u{1030F}": "O",
+  "\u{10302}": "C",
+  "\u{10304}": "E",
+  "\u{10306}": "Z",
+  "\u{1030A}": "K",
+  "\u{1030C}": "M",
+  "\u{1030D}": "N",
+  "\u{10310}": "P",
+  "\u{10313}": "R",
+  "\u{10315}": "T"
 };
 var skeleton = (w2) => {
   let out = "";
@@ -33480,7 +33565,7 @@ var skeleton = (w2) => {
   return out;
 };
 var CORE_OP_WORDS = /* @__PURE__ */ new Set(["mod", "modulo"]);
-function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
+function stripParentheticalComments(tokens, env, lexicon, violations, ignored, rts) {
   const out = [...tokens];
   for (let i2 = 0; i2 < out.length; i2++) {
     if (out[i2].kind !== "lparen") continue;
@@ -33529,16 +33614,30 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
         if (b2?.kind !== "rparen") return false;
         const bi9 = out.indexOf(b2);
         const w9 = out[bi9 - 3];
-        return bi9 >= 3 && w9?.kind === "word" && REF_WORDS.has(w9.text.toLowerCase()) && out[bi9 - 2]?.kind === "lparen" && out[bi9 - 1]?.kind === "number";
+        if (!(bi9 >= 3 && w9?.kind === "word" && REF_WORDS.has(w9.text.toLowerCase()) && out[bi9 - 2]?.kind === "lparen" && out[bi9 - 1]?.kind === "number")) return false;
+        const idx9 = Number(out[bi9 - 1].text);
+        const target9 = Number.isInteger(idx9) && idx9 >= 1 && idx9 <= rts.length ? rts[idx9 - 1] : null;
+        if (target9 !== null && (target9.t === "ds" || target9.t === "ct" || target9.t === "wd")) return false;
+        return true;
       };
       const datePhraseNumber = (b2) => {
         if (b2?.kind !== "number") return false;
         const bi9 = out.indexOf(b2);
         const w9 = out[bi9 - 1];
-        return bi9 >= 1 && (w9?.kind === "word" && isComputableWord(w9.text) && !env.has(w9.text) && !isAggWord(w9.text) && !isUnitWord(w9.text) || w9?.kind === "number" && out[bi9 - 2]?.kind === "word" && isComputableWord(out[bi9 - 2].text) && !isUnitWord(out[bi9 - 2].text));
+        const back9 = (k9) => {
+          let j9 = bi9 - 1;
+          for (let s9 = 0; s9 < k9; s9++) {
+            while (out[j9]?.kind === "comma") j9--;
+            if (s9 < k9 - 1) j9--;
+          }
+          return out[j9];
+        };
+        const w9b = back9(1);
+        const w9c = back9(2);
+        return bi9 >= 1 && (w9b?.kind === "word" && isComputableWord(w9b.text) && !env.has(w9b.text) && !isAggWord(w9b.text) && !isUnitWord(w9b.text) || w9b?.kind === "number" && w9c?.kind === "word" && isComputableWord(w9c.text) && !isUnitWord(w9c.text));
       };
       const innerHasCode = meaningful.some((t9) => t9.kind === "word" && (looksLikeCode(t9.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t9.text)));
-      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && (env.has(b2.text) || isComputableWord(b2.text) || isReservedWord(b2.text)));
+      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
       if (qualifies(before) || qualifies(beforeEff)) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
         return out;
@@ -33558,9 +33657,9 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored) {
   }
   return out;
 }
-function prepareTokens(tokens, env, lexicon, violations, ignored) {
+function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
-  tokens = stripParentheticalComments(tokens, env, lexicon, violations, ignored);
+  tokens = stripParentheticalComments(tokens, env, lexicon, violations, ignored, rts);
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
     tokens = tokens.slice(colonIdx + 1);
@@ -33571,13 +33670,36 @@ function prepareTokens(tokens, env, lexicon, violations, ignored) {
     return `${n9 < 0 ? "\u207B" : ""}${body9}`;
   };
   for (let idx9 = 0; idx9 + 2 < tokens.length; idx9++) {
-    const [u9, c9, n9] = [tokens[idx9], tokens[idx9 + 1], tokens[idx9 + 2]];
-    if (u9.kind === "word" && isUnitWord(u9.text) && c9.kind === "op" && c9.op === "^" && n9.kind === "number" && n9.plainInt === true) {
-      const e9 = n9.dec.toNumber();
-      if (Number.isInteger(e9) && Math.abs(e9) <= 999 && e9 !== 0) {
-        tokens.splice(idx9, 3, { ...u9, text: `${u9.text}${e9 === 1 ? "" : supOf(e9)}`, end: n9.end });
-      }
+    const u9 = tokens[idx9];
+    const c9 = tokens[idx9 + 1];
+    if (!(u9.kind === "word" && isUnitWord(u9.text) && c9.kind === "op" && c9.op === "^")) continue;
+    let k9 = idx9 + 2;
+    let paren9 = false;
+    if (tokens[k9]?.kind === "lparen") {
+      paren9 = true;
+      k9++;
     }
+    let sign9 = 1;
+    const s9 = tokens[k9];
+    if (s9?.kind === "op" && (s9.op === "-" || s9.op === "+")) {
+      sign9 = s9.op === "-" ? -1 : 1;
+      k9++;
+    }
+    const n9 = tokens[k9];
+    if (!(n9?.kind === "number" && n9.plainInt === true)) continue;
+    let end9 = n9.end;
+    if (paren9) {
+      if (tokens[k9 + 1]?.kind !== "rparen") continue;
+      end9 = tokens[k9 + 1].end;
+      k9++;
+    }
+    const e9 = sign9 * n9.dec.toNumber();
+    if (!Number.isInteger(e9) || Math.abs(e9) > 999) continue;
+    tokens.splice(
+      idx9,
+      k9 - idx9 + 1,
+      ...e9 === 0 ? [] : [{ ...u9, text: `${u9.text}${e9 === 1 ? "" : supOf(e9)}`, end: end9 }]
+    );
   }
   const out = [];
   for (let idx = 0; idx < tokens.length; idx++) {
@@ -33642,13 +33764,17 @@ function prepareTokens(tokens, env, lexicon, violations, ignored) {
         const reason = quarantineReason(t2.text);
         if (reason !== null) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
-        } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text))) {
+        } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text)) || // after a PERCENT, only code-like or composite suffixes refuse —
+        // "5% for 10 years" is phrase glue, not a suffix (audit X)
+        prev?.kind === "percent" && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
         } else if ((looksLikeCode(t2.text) || // uppercase-led alphanumeric codes (GMT2) after values
         new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || // cross-script HOMOGLYPHS (UЅD, СHF, ΕUR, USᎠ, °С, К) are never
         // counting prose — mixed scripts refuse, and so does any word
         // whose Latin SKELETON is a known unit or code (audit W)
-        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}]/u.test(t2.text) && /[\p{Script=Latin}]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)))) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
+        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || // unit + glued code (kgCHFF): a unit PREFIX followed by an
+        // uppercase-led remainder is never prose (audit X)
+        [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9)))) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
         } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -33932,7 +34058,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       }
     }
     const violations = [];
-    const exprTokens = prepareTokens(rawExpr, env, lexicon, violations, ignoredTokens);
+    const exprTokens = prepareTokens(rawExpr, env, lexicon, violations, ignoredTokens, rts);
     if (!hasComputableContent(exprTokens, env)) {
       return empty(tokens, envWords);
     }
@@ -34085,8 +34211,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     ).values()].sort((x9, y9) => x9.range.start - y9.range.start);
     let combosExhaustive = true;
     if (comboCands.length >= 2) {
-      if (comboCands.length > 4) combosExhaustive = false;
-      const k9 = Math.min(comboCands.length, 4);
+      if (comboCands.length > 16) combosExhaustive = false;
+      const k9 = Math.min(comboCands.length, 16);
       const pop = (m9) => {
         let c9 = 0;
         for (let x9 = m9; x9 > 0; x9 >>= 1) c9 += x9 & 1;
@@ -34481,9 +34607,12 @@ function runSheet(text, context, cache2) {
           for (let m9 = 1; m9 < 1 << atoms.length; m9++) masks.push(m9);
           masks.sort((a9, b9) => pop9(a9) - pop9(b9));
           for (const mask of masks) {
-            if (exhausted || sensitive && probes >= probeCap) break;
             const list9 = atoms.filter((_2, k9) => mask >> k9 & 1);
             if (!compatible(list9)) continue;
+            if (probes >= probeCap) {
+              exhausted = true;
+              break;
+            }
             probeWorld(list9);
           }
         }
