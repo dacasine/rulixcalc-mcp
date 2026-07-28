@@ -29397,7 +29397,7 @@ function lookupPowerUnit(word) {
 }
 function unitComps(word) {
   const one = (w2) => {
-    const direct = exactAliases.get(w2) ?? ciAliases.get(w2.toLowerCase());
+    const direct = exactAliases.get(w2) ?? ciAliases.get(w2.toLowerCase()) ?? CAL_BY_SYMBOL[w2.toLowerCase()];
     if (direct) return direct.affine ? void 0 : { def: direct, exp: 1 };
     const p2 = parsePowerWord(w2);
     return p2 ? { def: p2.base, exp: p2.n } : void 0;
@@ -29410,16 +29410,18 @@ function unitComps(word) {
   for (const part of word.split("\xB7")) {
     const c2 = one(part);
     if (!c2) return void 0;
-    out.push(c2);
+    const same = out.find((o2) => o2.def.id === c2.def.id);
+    if (same) same.exp += c2.exp;
+    else out.push(c2);
   }
-  return out;
+  return out.filter((o2) => o2.exp !== 0);
 }
 function compoundUnitParts(word) {
   if (!word.includes("\xB7")) return void 0;
   const parts = word.split("\xB7");
   const defs = [];
   for (const p2 of parts) {
-    const d2 = exactAliases.get(p2) ?? ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2);
+    const d2 = exactAliases.get(p2) ?? ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2) ?? CAL_BY_SYMBOL[p2.toLowerCase()];
     if (!d2 || d2.affine) return void 0;
     defs.push(d2);
   }
@@ -29444,6 +29446,18 @@ function lookupCompoundUnit(word) {
   derivedCache.set(word, def);
   return def;
 }
+var CAL_UNIT_DEFS = {
+  day: { id: "cal.day", symbol: "jour", dim: { caldays: 1 }, factor: { n: 1n, d: 1n } },
+  week: { id: "cal.week", symbol: "semaine", dim: { caldays: 1 }, factor: { n: 7n, d: 1n } },
+  month: { id: "cal.month", symbol: "mois", dim: { calmonths: 1 }, factor: { n: 1n, d: 1n } },
+  year: { id: "cal.year", symbol: "an", dim: { calmonths: 1 }, factor: { n: 12n, d: 1n } }
+};
+var CAL_BY_SYMBOL = {
+  jour: CAL_UNIT_DEFS.day,
+  semaine: CAL_UNIT_DEFS.week,
+  mois: CAL_UNIT_DEFS.month,
+  an: CAL_UNIT_DEFS.year
+};
 function lookupUnit(word) {
   return exactAliases.get(word) ?? ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word) ?? lookupCompoundUnit(word);
 }
@@ -29657,11 +29671,29 @@ function applyExactFunction(fn, rts) {
       return { t: "d", v: new DecC((-rFloor({ n: -x2.n, d: x2.d })).toString()) };
     case "trunc":
       return { t: "d", v: new DecC((x2.n / x2.d).toString()) };
+    case "fact":
+    case "factorial":
+    case "factorielle":
+      if (numRat(rts[0]).d !== 1n) return err("inexact", "factorial needs a whole number \u2265 0");
+      return null;
+    // magnitude checks live in factorial()
+    case "log": {
+      if (rts.length === 2 && rCmp(numRat(rts[0]), numRat(rts[1])) === 0 && numRat(rts[0]).n > 0n) {
+        return { t: "d", v: new DecC(1) };
+      }
+      if (rts.length === 2) {
+        const b2 = numRat(rts[1]);
+        if (b2.n === b2.d) return err("inexact", "log base 1 is undefined");
+      }
+      return null;
+    }
     case "round": {
       const dpRt = rts[1];
-      if (dpRt !== void 0 && (dpRt.t !== "d" || !dpRt.v.isInteger() || dpRt.v.isNegative())) return null;
-      const dp = dpRt === void 0 ? 0n : BigInt(dpRt.v.toFixed());
-      if (dp > 100n) return null;
+      if (dpRt !== void 0 && (numRat(dpRt).d !== 1n || numRat(dpRt).n < 0n)) {
+        return err("inexact", "round() decimal places must be a whole number \u2265 0");
+      }
+      const dp = dpRt === void 0 ? 0n : numRat(dpRt).n;
+      if (dp > 9999n) return err("inexact", "round() supports at most 9999 decimal places");
       const scale = 10n ** dp;
       const neg = x2.n < 0n;
       const scaled = { n: (neg ? -x2.n : x2.n) * scale, d: x2.d };
@@ -29759,6 +29791,9 @@ function applySpanToDate(pd, c2, sign2) {
       if (!Number.isSafeInteger(n2)) return err("inexact", "timespan exceeds the safe range");
       d2 = d2.add({ [key]: sign2 * n2 });
     }
+    if (d2.year > 9999 || d2.year < 0) {
+      return err("inexact", "dates outside 0000\u20139999 are not supported");
+    }
     return d2;
   } catch (cause) {
     return err("inexact", cause instanceof Error ? cause.message : String(cause));
@@ -29821,15 +29856,10 @@ function easterMonthDay(year) {
   return [Math.floor((h2 + l2 - 7 * m2 + 114) / 31), (h2 + l2 - 7 * m2 + 114) % 31 + 1];
 }
 function quantityToMinutes(q2) {
-  if (!q2.def || !dimEquals(q2.dim, { time: 1 })) return null;
-  return convertExact(q2.v, q2.def, lookupUnit("min"));
+  if (!q2.def?.factor || dimEquals(q2.dim, { time: 1 }) === false) return null;
+  return rMul(qx(q2), rDiv(ratOfFactor(q2.def.factor), ratOfFactor(lookupUnit("min").factor)));
 }
-var CAL_RATE_DEFS = {
-  day: { id: "cal.day", symbol: "jour", dim: { caldays: 1 }, factor: { n: 1n, d: 1n } },
-  week: { id: "cal.week", symbol: "semaine", dim: { caldays: 1 }, factor: { n: 7n, d: 1n } },
-  month: { id: "cal.month", symbol: "mois", dim: { calmonths: 1 }, factor: { n: 1n, d: 1n } },
-  year: { id: "cal.year", symbol: "an", dim: { calmonths: 1 }, factor: { n: 12n, d: 1n } }
-};
+var CAL_RATE_DEFS = CAL_UNIT_DEFS;
 function spanInCalUnit(c2, den, ctx) {
   const months = (c2.months ?? 0) + 12 * (c2.years ?? 0);
   const days = (c2.days ?? 0) + 7 * (c2.weeks ?? 0);
@@ -30083,6 +30113,9 @@ function combineQuantities(l2, r3, op, ctx) {
     merged.push({ def: c2.def, exp: e });
   }
   let comps = merged.filter((m2) => m2.exp !== 0);
+  if (comps.some((m2) => Math.abs(m2.exp) > 999)) {
+    return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
+  }
   const dimZero = (d2) => dimIsEmpty(ctx.monthToDays === "30" ? calDim(d2) : d2);
   for (; ; ) {
     const pure = comps.filter((c2) => isPureLinear(c2.def));
@@ -30288,7 +30321,7 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t !== "d" || numRat(e).d !== 1n) {
         return err("unsupported-pair", "only whole numbers convert to hex/binary/octal");
       }
-      return { t: "d", v: e.v, ...e.vx && { vx: e.vx }, base: ast.base };
+      return { t: "d", v: e.v, vx: numRat(e), base: ast.base };
     }
     case "clock":
       return { t: "ct", mins: ast.mins };
@@ -30363,7 +30396,9 @@ function evalAst(ast, env, ctx = {}) {
       const dim = dimAdd(num.dim, den.dim, -1);
       const def = {
         id: `${num.id}/${den.id}`,
-        symbol: `${num.symbol}/${den.symbol}`,
+        // a compound denominator keeps its parens — "CHF/mois·m" would
+        // re-read as (CHF/mois)·m (audit K)
+        symbol: den.symbol.includes("\xB7") ? `${num.symbol}/(${den.symbol})` : `${num.symbol}/${den.symbol}`,
         dim,
         ...num.factor && den.factor && {
           factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n }
@@ -30528,6 +30563,9 @@ function evalAst(ast, env, ctx = {}) {
       if (!(ref instanceof Pt.PlainDate)) return ref;
       const span = evalAst(ast.span, env, ctx);
       if (span.t === "e") return span;
+      if (span.t === "wd") {
+        return addWorkdays({ t: "ds", pd: ref, precision: "today" }, span.n, ast.sign, ctx);
+      }
       if (span.t !== "ts") return err("unsupported-pair", "\u201Cdans/il y a\u201D needs a timespan");
       try {
         const applied = applySpanToDate(ref, span.c, ast.sign);
@@ -30621,7 +30659,11 @@ function evalAst(ast, env, ctx = {}) {
       if ((e.c.months || e.c.years) && ctx.monthToDays !== "30") {
         return err("anchor-required", "months/years have no fixed day count \u2014 anchor to a date first");
       }
-      const days = (e.c.years ?? 0) * 360 + (e.c.months ?? 0) * 30 + (e.c.weeks ?? 0) * 7 + (e.c.days ?? 0);
+      const daysBig = BigInt(e.c.years ?? 0) * 360n + BigInt(e.c.months ?? 0) * 30n + BigInt(e.c.weeks ?? 0) * 7n + BigInt(e.c.days ?? 0);
+      if (daysBig > 9007199254740991n || daysBig < -9007199254740991n) {
+        return err("inexact", "timespan exceeds the safe range");
+      }
+      const days = Number(daysBig);
       return { t: "ts", c: days === 0 ? {} : { days } };
     }
     case "unit": {
@@ -30776,31 +30818,20 @@ function evalAst(ast, env, ctx = {}) {
             }
           }
           if (l2.t === "q" && r3.t === "ts" && ast.op === "/") {
-            if (l2.rate) return err("unsupported-pair", "this rate already has a denominator");
-            if (!l2.def) return err("unsupported-pair", "compound units cannot form calendar rates");
+            const lc0 = compsOf(l2);
+            if (!lc0) return err("unsupported-pair", "this quantity cannot form calendar rates");
+            if (lc0.some((c2) => c2.def.dim["calmonths"] !== void 0 || c2.def.dim["caldays"] !== void 0)) {
+              return err("unsupported-pair", "this rate already has a denominator");
+            }
             const den = calUnitForSpan(r3.c);
             if ("t" in den) return den;
             const count = spanInCalUnit(r3.c, den, ctx);
             if (isErr(count)) return count;
             if (count.n === 0n) return err("division-by-zero");
-            const dim = dimAdd(l2.dim, den.dim, -1);
-            const def = {
-              id: `${l2.def.id}/${den.id}`,
-              symbol: `${l2.def.symbol}/${den.symbol}`,
-              dim,
-              ...l2.def.factor && den.factor && {
-                factor: { n: l2.def.factor.n * den.factor.d, d: l2.def.factor.d * den.factor.n }
-              }
-            };
-            return {
-              t: "q",
-              ...qv(rDiv(qx(l2), count)),
-              dim,
-              symbol: def.symbol,
-              def,
-              rate: { num: l2.def, den },
-              comps: [{ def: l2.def, exp: 1 }, { def: den, exp: -1 }]
-            };
+            const denQ = { t: "q", v: new DecC(1), dim: den.dim, symbol: den.symbol, def: den, comps: [{ def: den, exp: 1 }] };
+            const denOne = combineQuantities(l2, denQ, "/", ctx);
+            if (denOne.t !== "q") return denOne;
+            return { ...denOne, ...qv(rDiv(qx(l2), count)) };
           }
         }
         return err("unsupported-pair", "this combination of quantity operands is undefined");
@@ -30816,10 +30847,10 @@ function evalAst(ast, env, ctx = {}) {
           if (l2.t !== "ct" && ast.op === "-") return err("unsupported-pair", "cannot subtract a time from a duration");
           const mins = quantityToMinutes(other);
           if (mins === null) return err("unsupported-pair", "clock times only combine with h/min/s durations");
-          if (!mins.isInteger()) return err("inexact", "sub-minute clock arithmetic is not supported");
-          const delta = ast.op === "+" ? mins : mins.neg();
-          const total = new DecC(clock.mins).plus(delta);
-          const wrapped = total.mod(1440).plus(1440).mod(1440).toNumber();
+          if (mins.d !== 1n) return err("inexact", "sub-minute clock arithmetic is not supported");
+          const delta = ast.op === "+" ? mins.n : -mins.n;
+          const total = BigInt(clock.mins) + delta;
+          const wrapped = Number((total % 1440n + 1440n) % 1440n);
           return { t: "ct", mins: wrapped };
         }
         return err("unsupported-pair", "this combination with a clock time is undefined");
@@ -30980,6 +31011,13 @@ function evalAst(ast, env, ctx = {}) {
             return { t: "d", v: a2.mod(b2) };
           case "^": {
             if (b2.abs().gt(MAX_POW_EXPONENT)) return err("inexact", "exponent magnitude too large");
+            const rExact = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
+            if (rExact && rExact.d === 1n) {
+              return err("inexact", "integer exponents above 10000 exceed exact arithmetic");
+            }
+            if (a2.isNegative() && rExact && rExact.d !== 1n) {
+              return err("inexact", "a negative base with a non-integer exponent is undefined");
+            }
             const res = a2.pow(b2);
             if (res.isNaN() || !isRepresentable(res)) return err("inexact", "result is not a representable number");
             return { t: "d", v: res };
@@ -31001,7 +31039,10 @@ var TIMESPAN_WORDS = {
 function formatRT(rt2, prefs) {
   if (rt2.t === "e") return null;
   if (rt2.t === "f") return `${rt2.n}/${rt2.d}`;
-  if (rt2.t === "p") return `${canonDec(rt2.v)}%`;
+  if (rt2.t === "p") {
+    const inner = formatRT({ t: "d", v: rt2.v }, prefs);
+    return inner === null ? null : `${inner}%`;
+  }
   if (rt2.t === "ds") {
     const order = prefs?.dateOrder ?? "dmy";
     const y2 = rt2.pd.year < 1e3 ? String(rt2.pd.year).padStart(4, "0") : String(rt2.pd.year);
@@ -31137,7 +31178,7 @@ function loadLexicon(languages) {
 var DEFAULT_LANGUAGES = ["fr", "en"];
 
 // ../textual-calculator/core/packages/engine/src/lexer.ts
-var SPACES = [" ", "\xA0", "\u2009", "\u202F"];
+var SPACES = [" ", "\xA0", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", "\u2007", "\u2008", "\u2009", "\u200A", "\u202F", "\u205F"];
 var GRAMMARS = {
   ch: { group: /* @__PURE__ */ new Set(["'", "\u2019", ...SPACES]), decimal: /* @__PURE__ */ new Set([".", ","]) },
   eu: { group: /* @__PURE__ */ new Set([".", ...SPACES]), decimal: /* @__PURE__ */ new Set([","]) },
@@ -31231,7 +31272,7 @@ function matchDate(slice, order) {
 var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
 var isLetter = (ch) => ch !== void 0 && new RegExp("\\p{L}", "u").test(ch);
 function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error") {
-  line = line.replace(/−/g, "-");
+  line = line.normalize("NFC");
   const g2 = GRAMMARS[grammar];
   const tokens = [];
   let i2 = 0;
@@ -31289,20 +31330,20 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         if (!isDigit(line[i2 + 1])) break;
         i2++;
         segs.push({ sep: s2 === "\u2019" ? "'" : s2, digits: readDigits() });
-      } else if (s2 === " " || s2 === "\xA0" || s2 === "\u2009" || s2 === "\u202F") {
-        const m2 = /^[ \u00A0\u2009\u202F](\d{3})(?!\d)/.exec(line.slice(i2));
+      } else if (s2 === " " || s2 >= "\u2000" && s2 <= "\u200A" || s2 === "\xA0" || s2 === "\u202F" || s2 === "\u205F") {
+        const m2 = /^[ \u00A0\u2000-\u200A\u202F\u205F](\d{3})(?!\d)/.exec(line.slice(i2));
         if (!m2) break;
         i2 += 4;
         segs.push({ sep: " ", digits: m2[1] });
       } else break;
     }
     let exp2 = "";
-    const em = /^[eE][+-]?\d+/.exec(line.slice(i2));
+    const em = /^[eE][+\-−–]?\d+/.exec(line.slice(i2));
     if (em) {
-      exp2 = em[0];
+      exp2 = em[0].replace(/[−–]/, "-");
       i2 += em[0].length;
-    } else if (/^[eE]([+-](?!\d)|$|[^\p{L}\d])/u.test(line.slice(i2))) {
-      const bad = /^[eE][+-]?/.exec(line.slice(i2))[0];
+    } else if (/^[eE]([+\-−–](?!\d)|$|[^\p{L}\d])/u.test(line.slice(i2))) {
+      const bad = /^[eE][+\-−–]?/.exec(line.slice(i2))[0];
       i2 += bad.length;
       tokens.push({ kind: "badnumber", text: line.slice(start, i2), start, end: i2 });
       return;
@@ -31380,7 +31421,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
           tokens.pop();
           const num = BigInt(last2.text) * 60n + BigInt(hm[1]);
           tokens.push({ kind: "fraction", text: line.slice(start, i2), start, end: i2, num, den: 60n });
-          tokens.push({ kind: "word", text: "h", start: hStart, end: hStart + 1 });
+          tokens.push({ kind: "word", text: "h", start: i2, end: i2 });
           return;
         }
       }
@@ -31415,11 +31456,16 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
   };
   const scanWord = () => {
     const start = i2;
-    i2++;
+    i2 += String.fromCodePoint(line.codePointAt(i2)).length;
     while (i2 < line.length) {
       const c2 = line[i2];
-      if (isLetter(c2) || isDigit(c2) || c2 === "_" || c2 === "\xB0" || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B".includes(c2)) {
+      if (isDigit(c2) || c2 === "_" || c2 === "\xB0" || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B".includes(c2)) {
         i2++;
+        continue;
+      }
+      const cp = line.codePointAt(i2);
+      if (new RegExp("\\p{L}", "u").test(String.fromCodePoint(cp))) {
+        i2 += String.fromCodePoint(cp).length;
         continue;
       }
       if (c2 === "\xB7" && (isLetter(line[i2 + 1] ?? "") || line[i2 + 1] === "\xB0")) {
@@ -31436,7 +31482,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
   };
   while (i2 < line.length) {
     const c2 = line[i2];
-    if (c2 === " " || c2 === "	" || c2 === "\xA0" || c2 === "\u2009" || c2 === "\u202F") {
+    if (c2 === " " || c2 === "	" || c2 === "\xA0" || c2 >= "\u2000" && c2 <= "\u200A" || c2 === "\u202F" || c2 === "\u205F") {
       i2++;
       continue;
     }
@@ -31451,7 +31497,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (isLetter(c2) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
+    if (new RegExp("\\p{L}", "u").test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
       scanWord();
       continue;
     }
@@ -31609,6 +31655,7 @@ var BASE_WORDS = {
 };
 var CLOCK_CONSTANTS = { midi: 720, noon: 720, minuit: 0, midnight: 0 };
 var AMPM_WORDS = /* @__PURE__ */ new Set(["am", "pm"]);
+var UHR_WORDS = /* @__PURE__ */ new Set(["uhr"]);
 var HOLIDAY_DATE_WORDS = {
   "p\xE2ques": "easter",
   paques: "easter",
@@ -31685,8 +31732,10 @@ var PERCENT_PREPOSITIONS = {
   of: "of",
   de: "of",
   du: "of",
+  von: "of",
   on: "on",
   sur: "on",
+  auf: "on",
   off: "off"
 };
 var WHAT_WORDS = /* @__PURE__ */ new Set(["quel", "quelle", "what"]);
@@ -31697,12 +31746,16 @@ var DATE_KEYWORDS = {
   "aujourd\u2019hui": "today",
   auj: "today",
   today: "today",
+  heute: "today",
   demain: "tomorrow",
   tomorrow: "tomorrow",
+  morgen: "tomorrow",
   hier: "yesterday",
   yesterday: "yesterday",
+  gestern: "yesterday",
   maintenant: "now",
-  now: "now"
+  now: "now",
+  jetzt: "now"
 };
 var TIMESPAN_UNITS = {
   jour: "day",
@@ -31795,6 +31848,7 @@ var NEXT_QUALIFIERS = /* @__PURE__ */ new Set(["prochain", "prochaine", "next", 
 var LAST_QUALIFIERS = /* @__PURE__ */ new Set(["dernier", "derni\xE8re", "pass\xE9", "pass\xE9e", "last", "letzte", "letzten", "letzter"]);
 var FROM_NOW_WORDS = /* @__PURE__ */ new Set(["dans", "in"]);
 var FROM_SUFFIX_WORDS = /* @__PURE__ */ new Set(["from"]);
+var MORE_LESS_WORDS = /* @__PURE__ */ new Set(["more", "less", "than"]);
 var AGO_WORDS = /* @__PURE__ */ new Set(["ago"]);
 var ParseError = class extends Error {
   constructor(code, message) {
@@ -31834,6 +31888,7 @@ function parse3(tokens) {
       if (MOD_WORDS.has(t2.text.toLowerCase())) return 20;
       if (WORKDAY_WORDS.has(t2.text.toLowerCase())) return 45;
       if (AMPM_WORDS.has(t2.text.toLowerCase())) return 45;
+      if (UHR_WORDS.has(t2.text.toLowerCase())) return 45;
       if (CONVERT_WORDS.has(t2.text.toLowerCase())) return 8;
       if (PERCENT_PREPOSITIONS[t2.text.toLowerCase()] !== void 0) return 12;
       if (ROUND_WORDS.has(t2.text.toLowerCase())) return 6;
@@ -31868,13 +31923,18 @@ function parse3(tokens) {
     if (!t2) throw new ParseError("syntax", "unexpected end of expression");
     switch (t2.kind) {
       case "number": {
-        const monthTok = tokens[pos];
+        let mIdx = pos;
+        if (tokens[mIdx]?.kind === "unknown" && tokens[mIdx].text === "." && tokens[mIdx + 1]?.kind === "word" && MONTH_WORDS[tokens[mIdx + 1].text.toLowerCase()] !== void 0) {
+          mIdx++;
+        }
+        const monthTok = tokens[mIdx];
         if (t2.plainInt && monthTok?.kind === "word") {
           const month = MONTH_WORDS[monthTok.text.toLowerCase()];
           const day = t2.dec.toNumber();
           if (month !== void 0 && Number.isInteger(day) && day >= 1 && day <= 31) {
-            pos++;
+            pos = mIdx + 1;
             let year = null;
+            if (tokens[pos]?.kind === "comma") pos++;
             const yearTok = tokens[pos];
             if (yearTok?.kind === "number" && yearTok.plainInt && yearTok.text.length === 4) {
               year = yearTok.dec.toNumber();
@@ -31902,6 +31962,35 @@ function parse3(tokens) {
           if (tokens[pos]?.kind === "rparen") pos++;
           else {
             for (; ; ) {
+              {
+                let depth2 = 0;
+                let k2 = pos;
+                while (k2 < tokens.length) {
+                  const tk = tokens[k2];
+                  if (tk.kind === "lparen") depth2++;
+                  else if (tk.kind === "rparen") {
+                    if (depth2 === 0) break;
+                    depth2--;
+                  } else if (tk.kind === "comma" && depth2 === 0) break;
+                  k2++;
+                }
+                const slice = tokens.slice(pos, k2);
+                const proto = slice.length >= 2 ? matchDatePrototypes(slice) ?? matchPercentPrototypes(slice) ?? matchTimePrototypes(slice) ?? matchFinancePrototypes(slice) : null;
+                if (proto) {
+                  args.push(proto);
+                  pos = k2;
+                  const sep0 = tokens[pos];
+                  if (sep0?.kind === "comma") {
+                    pos++;
+                    continue;
+                  }
+                  if (sep0?.kind === "rparen") {
+                    pos++;
+                    break;
+                  }
+                  throw new ParseError("syntax", `missing \u201C)\u201D after ${t2.text}(\u2026`);
+                }
+              }
               args.push(expr(0));
               const sep = tokens[pos];
               if (sep?.kind === "comma") {
@@ -31974,6 +32063,7 @@ function parse3(tokens) {
             if (Number.isInteger(day) && day >= 1 && day <= 31) {
               pos++;
               let year = null;
+              if (tokens[pos]?.kind === "comma") pos++;
               const yearTok = tokens[pos];
               if (yearTok?.kind === "number" && yearTok.plainInt && yearTok.text.length === 4) {
                 year = yearTok.dec.toNumber();
@@ -32111,6 +32201,12 @@ function parse3(tokens) {
             continue;
           }
         }
+        if (UHR_WORDS.has(t2.text.toLowerCase()) && left.k === "num") {
+          const h2 = left.dec.toNumber();
+          if (!Number.isInteger(h2) || h2 < 0 || h2 > 23) throw new ParseError("syntax", `\u201C${t2.text}\u201D needs an hour between 0 and 23`);
+          left = { k: "clock", mins: h2 * 60 };
+          continue;
+        }
         if (AMPM_WORDS.has(t2.text.toLowerCase()) && left.k === "num") {
           const h2 = left.dec.toNumber();
           if (!Number.isInteger(h2) || h2 < 1 || h2 > 12) throw new ParseError("syntax", `\u201C${t2.text}\u201D needs an hour between 1 and 12`);
@@ -32236,13 +32332,23 @@ function matchPercentPrototypes(tokens) {
   }
   {
     const n2 = tokens.length;
-    const opTok = tokens[n2 - 2];
-    const opSign = opTok?.kind === "op" && opTok.op === "+" ? 1 : opTok?.kind === "op" && opTok.op === "-" ? -1 : opTok?.kind === "word" && opTok.text.toLowerCase() === "more" ? 1 : opTok?.kind === "word" && opTok.text.toLowerCase() === "less" ? -1 : null;
-    if (n2 >= 7 && isWord(tokens[n2 - 1], WHAT_OBJECT_WORDS) && opSign !== null && tokens[n2 - 3]?.kind === "word" && PERCENT_PREPOSITIONS[tokens[n2 - 3].text.toLowerCase()] === "of" && tokens[n2 - 4]?.kind === "percent") {
-      const isIdx = tokens.findIndex((t2, idx) => idx >= 1 && idx < n2 - 4 && isWord(t2, IS_WORDS));
+    let opSign = null;
+    let pctIdx = -1;
+    const w2 = (i2) => tokens[i2]?.kind === "word" ? tokens[i2].text.toLowerCase() : null;
+    if (isWord(tokens[n2 - 1], WHAT_OBJECT_WORDS)) {
+      if (w2(n2 - 2) === "than" && (w2(n2 - 3) === "more" || w2(n2 - 3) === "less") && tokens[n2 - 4]?.kind === "percent") {
+        opSign = w2(n2 - 3) === "more" ? 1 : -1;
+        pctIdx = n2 - 4;
+      } else if (tokens[n2 - 2]?.kind === "op" && (tokens[n2 - 2].op === "+" || tokens[n2 - 2].op === "-") && w2(n2 - 3) !== null && PERCENT_PREPOSITIONS[w2(n2 - 3)] === "of" && tokens[n2 - 4]?.kind === "percent") {
+        opSign = tokens[n2 - 2].op === "+" ? 1 : -1;
+        pctIdx = n2 - 4;
+      }
+    }
+    if (opSign !== null && pctIdx >= 2) {
+      const isIdx = tokens.findIndex((t2, idx) => idx >= 1 && idx < pctIdx && isWord(t2, IS_WORDS));
       if (isIdx > 0) {
         const valueTokens = tokens.slice(0, isIdx);
-        const pctTokens = tokens.slice(isIdx + 1, n2 - 3);
+        const pctTokens = tokens.slice(isIdx + 1, pctIdx + 1);
         if (valueTokens.length > 0 && pctTokens.length > 0) {
           return { k: "pctMoreWhat", value: parse3(valueTokens), pct: parse3(pctTokens), sign: opSign };
         }
@@ -32269,11 +32375,11 @@ function isReservedWord(word) {
 }
 function isReservedCore(word) {
   const lower = word.toLowerCase();
-  return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || FROM_SUFFIX_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
+  return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || UHR_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || FROM_SUFFIX_WORDS.has(lower) || MORE_LESS_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
 }
 function isComputableWord(word) {
   const lower = word.toLowerCase();
-  return DATE_KEYWORDS[lower] !== void 0 || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower);
+  return FUNCTION_DEFS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower);
 }
 var isCityPartOnlyWord = (word) => CITY_WORD_PARTS.has(word.toLowerCase()) && !isReservedCore(word);
 var isTimeAnchorWord = (word) => TIME_WORDS.has(word.toLowerCase());
@@ -32384,6 +32490,17 @@ function parseExpression(tokens) {
 
 // ../textual-calculator/core/packages/engine/src/quarantine.ts
 var QUARANTINE_GROUPS = {
+  "negations are not supported \u2014 write the value you mean": [
+    "not",
+    "pas",
+    "non",
+    "sauf",
+    "except",
+    "sans",
+    "without",
+    "jamais",
+    "never"
+  ],
   "not implemented": [
     "arrondir",
     "gcd",
@@ -32559,7 +32676,7 @@ function extractReferences(tokens, rts, formatting) {
   }
   return refs;
 }
-function stripParentheticalComments(tokens, env) {
+function stripParentheticalComments(tokens, env, violations) {
   const out = [...tokens];
   for (let i2 = 0; i2 < out.length; i2++) {
     if (out[i2].kind !== "lparen") continue;
@@ -32576,7 +32693,14 @@ function stripParentheticalComments(tokens, env) {
     const isUnitExpr = meaningful.length >= 1 && meaningful.some((t2) => t2.kind === "word" && isUnitWord(t2.text)) && meaningful.every(
       (t2) => t2.kind === "word" && isUnitWord(t2.text) || t2.kind === "op" && (t2.op === "/" || t2.op === "*")
     );
+    if (inner.length === 0) continue;
     if (!isUnitExpr && !hasComputableContent(inner, env)) {
+      const before = out[i2 - 1];
+      const after = out[j2];
+      if ((before?.kind === "number" || before?.kind === "fraction") && after?.kind === "word" && inner.length > 0) {
+        violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
+        return out;
+      }
       out.splice(i2, j2 - i2);
       i2--;
     }
@@ -32585,7 +32709,7 @@ function stripParentheticalComments(tokens, env) {
 }
 function prepareTokens(tokens, env, lexicon, violations) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
-  tokens = stripParentheticalComments(tokens, env);
+  tokens = stripParentheticalComments(tokens, env, violations);
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens[colonIdx - 1].kind === "word") tokens = tokens.slice(colonIdx + 1);
   const out = [];
@@ -32605,6 +32729,14 @@ function prepareTokens(tokens, env, lexicon, violations) {
       continue;
     }
     if (isAggWord(t2.text) && startsValue(tokens[idx + 1])) {
+      continue;
+    }
+    const INCREASE_WORDS = /* @__PURE__ */ new Set(["increased", "augment\xE9", "augmente", "augment\xE9e"]);
+    const DECREASE_WORDS = /* @__PURE__ */ new Set(["decreased", "reduced", "diminu\xE9", "diminue", "diminu\xE9e", "r\xE9duit", "r\xE9duite"]);
+    if (INCREASE_WORDS.has(lower) || DECREASE_WORDS.has(lower)) {
+      const nxt = tokens[idx + 1];
+      if (nxt?.kind === "word" && ["by", "de", "of", "d'"].includes(nxt.text.toLowerCase())) idx++;
+      out.push({ ...t2, kind: "op", op: INCREASE_WORDS.has(lower) ? "+" : "-" });
       continue;
     }
     if (lexicon.divisionParticles.has(lower)) {
@@ -32635,6 +32767,10 @@ function prepareTokens(tokens, env, lexicon, violations) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
         } else if (looksLikeCode(t2.text) && (prev?.kind === "number" || tokens[idx + 1]?.kind === "number")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
+        } else if (prev?.kind === "number" && prev.end === t2.start && !["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower)) {
+          violations.push(`\u201C${prev.text}${t2.text}\u201D is not a number, unit or date`);
+        } else if ((prev?.kind === "number" || prev?.kind === "fraction") && /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text)) {
+          violations.push(`\u201C${t2.text}\u201D is not a valid unit`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction") && isUnitWord(t2.text.toLowerCase())) {
           violations.push(`\u201C${t2.text}\u201D is not a unit \u2014 did you mean \u201C${t2.text.toLowerCase()}\u201D?`);
         }
@@ -32676,7 +32812,7 @@ function toPublicValue(rt2) {
       return { kind: "clocktime", time: `${h2}:${m2}` };
     }
     case "q":
-      return { kind: "quantity", value: canonDec(rt2.v), unit: rt2.symbol };
+      return { kind: "quantity", value: exactOr(rt2), unit: rt2.symbol };
     case "e":
       return rt2.detail === void 0 ? { kind: "error", code: rt2.code } : { kind: "error", code: rt2.code, detail: rt2.detail };
   }
@@ -32723,7 +32859,7 @@ var serialize = (rt2) => {
       return `e:${rt2.code}:${rt2.detail ?? ""}`;
   }
 };
-function readsFingerprint(entry, env, rts, sectionStart, aggDerived) {
+function readsFingerprint(entry, env, rts, sectionStart, aggDerived, rates) {
   const parts = [];
   for (const name of [...entry.deps.variables].sort()) parts.push(`v:${name}=${serialize(env.get(name))}`);
   for (const idx of [...entry.deps.lineRefs].sort((a2, b2) => a2 - b2)) {
@@ -32734,6 +32870,10 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived) {
     parts.push(`t:${sectionStart}:${summed}`);
   }
   for (const w2 of entry.commentWords) parts.push(`w:${w2}=${serialize(env.get(w2))}`);
+  for (const u2 of entry.result.fx ?? []) {
+    const q2 = rates?.rate(u2.from, u2.to);
+    parts.push(`fx:${u2.from}/${u2.to}=${q2 ? `${q2.rate}@${q2.asOf}` : "\u2205"}`);
+  }
   return parts.join("|");
 }
 function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy) {
@@ -32765,7 +32905,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (isAssignment && eqIdx > MAX_VARIABLE_WORDS) {
       throw new ParseError("not-understood", `variable names are limited to ${MAX_VARIABLE_WORDS} words`);
     }
-    if (isAssignment && eqIdx === 1 && (isComputableWord(tokens[0].text) || isReservedWord(tokens[0].text))) {
+    if (isAssignment && eqIdx === 1 && (isComputableWord(tokens[0].text) || isReservedWord(tokens[0].text) && !isCityPartOnlyWord(tokens[0].text))) {
       throw new ParseError("not-understood", `\u201C${tokens[0].text}\u201D is a reserved word and cannot be a variable name`);
     }
     const rawExpr = isAssignment ? tokens.slice(eqIdx + 1) : tokens;
@@ -32838,7 +32978,7 @@ function runSheet(text, context, cache2) {
     language: context.formatting?.language ?? (context.languages ?? DEFAULT_LANGUAGES)[0]
   };
   const env = /* @__PURE__ */ new Map();
-  const lines = text.split("\n");
+  const lines = text.split("\n").map((l2) => l2.endsWith("\r") ? l2.slice(0, -1) : l2);
   const rts = [];
   const results = [];
   const graph = [];
@@ -32850,13 +32990,13 @@ function runSheet(text, context, cache2) {
   lines.forEach((line, i2) => {
     let entry;
     const cached2 = cache2?.[i2];
-    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived)) {
+    if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, context.rates ?? void 0)) {
       entry = cached2;
     } else {
       entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, context.policies?.misplacedGroupSeparator ?? "error");
       recomputed.push(i2);
     }
-    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived);
+    const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, context.rates ?? void 0);
     const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
     if (entry.defines) {
       if (derived) aggDerivedVars.add(entry.defines);
@@ -32944,7 +33084,8 @@ function createSnapshotProvider(snapshot) {
   return {
     rate(from, to) {
       if (from.toUpperCase() === snapshot.base.toUpperCase()) {
-        const raw = snapshot.rates[to.toUpperCase()] ?? (to.toUpperCase() === snapshot.base.toUpperCase() ? "1" : void 0);
+        const rawEntry = Object.entries(snapshot.rates).find(([c2]) => c2.toUpperCase() === to.toUpperCase());
+        const raw = rawEntry?.[1] ?? (to.toUpperCase() === snapshot.base.toUpperCase() ? "1" : void 0);
         if (raw !== void 0) return { rate: raw, asOf: snapshot.asOf, source: snapshot.source };
       }
       const f2 = perBase.get(from.toUpperCase());
