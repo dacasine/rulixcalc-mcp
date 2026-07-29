@@ -35409,7 +35409,17 @@ server.registerTool(
       region: external_exports.string().optional().describe("Public-holiday region for workday arithmetic: CH, CH-GE, CH-VD, CH-ZH (default CH)."),
       rateSource: external_exports.enum(RATE_SOURCES).optional().describe("FX rates: swiss-fiscal (OFDF/AFC daily, default), ecb (eurofxref), or none (conversions become typed errors)."),
       rateDate: external_exports.string().optional().describe("ISO date for historical rates (OFDF: any past day; ECB: ~90-day window)."),
-      monthlyAverage: external_exports.boolean().optional().describe("Use the OFDF MONTHLY AVERAGE rates (currently published month) instead of daily rates. swiss-fiscal only.")
+      monthlyAverage: external_exports.boolean().optional().describe("Use the OFDF MONTHLY AVERAGE rates (currently published month) instead of daily rates. swiss-fiscal only."),
+      policies: external_exports.object({
+        ambiguity: external_exports.enum(["annotate", "strict"]).optional().describe("annotate (default): answer + disclose every ambiguity; strict: REFUSE with a typed error when an ambiguity touches money, units, dates or references (certainty over answers)."),
+        monthToDays: external_exports.enum(["requireAnchor", "30"]).optional().describe("requireAnchor (default): months/years need a date to become days; '30': a month IS exactly 30 days everywhere \u2014 spans, dates, and rate conversions (30 CHF/month in day = 1 CHF/day)."),
+        dateOrder: external_exports.enum(["dmy", "mdy", "ymd"]).optional().describe("Force the date reading order instead of deriving it from the locale."),
+        preferFutureForAmbiguousDates: external_exports.boolean().optional().describe('Resolve bare dates like "25 d\xE9cembre" to the NEXT occurrence instead of the current year.'),
+        anchorTimeForBareDates: external_exports.enum(["noon", "midnight"]).optional().describe("Clock time assumed when a bare date enters time arithmetic."),
+        misplacedGroupSeparator: external_exports.enum(["error", "ignore", "decimalPoint"]).optional().describe(`How to read "1'23" style misplaced group separators.`),
+        preferSomethingToNothing: external_exports.boolean().optional().describe("Prefer a disclosed best-effort answer over a refusal where the contract allows it."),
+        ambiguousTimezoneCodesRequireUppercase: external_exports.boolean().optional().describe('Only read ambiguous timezone codes (e.g. "cet") when written in uppercase.')
+      }).optional().describe("Explicit ambiguity and calendar policies \u2014 mirrors the engine contract (EnginePolicies).")
     }
   },
   async (args) => {
@@ -35438,7 +35448,8 @@ server.registerTool(
       holidays,
       region: args.region ?? "CH",
       ...args.financial && { financial: { currency: args.currency ?? "CHF" } },
-      ...snapshot !== null && { rates: createSnapshotProvider(snapshot) }
+      ...snapshot !== null && { rates: createSnapshotProvider(snapshot) },
+      ...args.policies && { policies: args.policies }
     };
     const t0 = performance.now();
     const sheet = createEngine(context).evaluateSheet(args.text);
@@ -35449,6 +35460,7 @@ server.registerTool(
       `fx: ${ratesNote}`,
       `holidays: ${context.region}`,
       ...args.financial ? [`financial mode: ${args.currency ?? "CHF"}`] : [],
+      ...args.policies && Object.keys(args.policies).length > 0 ? [`policies: ${Object.entries(args.policies).map(([k2, v2]) => `${k2}=${v2}`).join(", ")}`] : [],
       `engine: ${engineMs.toFixed(1)} ms`
     ].join(" | ");
     return {
