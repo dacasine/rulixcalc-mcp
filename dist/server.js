@@ -30232,7 +30232,7 @@ var mergeTerms = (a2, b2, sign2, thirty) => {
 };
 var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
 var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
-  if (a2.length * b2.length > 4096) return null;
+  if (a2.length * b2.length > 65536) return null;
   const out = [];
   for (const ta of a2) {
     for (const tb of b2) {
@@ -30246,26 +30246,48 @@ var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
     }
   }
   const merged = mergeTerms(out, [], 1n, thirty);
-  return merged.length > 512 ? null : merged;
+  return merged.length > 4096 ? null : merged;
 };
 var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
-function fracReduce(q2) {
+var fracQuotient = (N2, D2, thirty) => {
+  if (N2.length !== D2.length || N2.length === 0) return null;
+  const d0 = D2[0];
+  if (rnorm(termCanon(d0, thirty).canonX).n === 0n) return null;
+  let verifies = 0;
+  for (const n2 of N2) {
+    const qc = canonComps([
+      ...n2.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+      ...d0.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
+    ]);
+    const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc }], [d0], thirty);
+    if (probe === null || probe.length !== 1) continue;
+    const pc = termCanon(probe[0], thirty);
+    const nc = termCanon(n2, thirty);
+    if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) continue;
+    if (verifies++ >= 4) return null;
+    const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc };
+    const full = distributeTerms(D2, [cand], thirty);
+    if (full !== null && mergeTerms(N2, full, -1n, thirty).length === 0) return cand;
+  }
+  return null;
+};
+function fracReduceTerm(q2, thirty) {
   if (q2.terms === void 0 && q2.termsDen === void 0) return null;
   const N2 = q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
-  const D2 = q2.termsDen ?? ONE_TERMS();
-  if (D2.length === 1 && D2[0].comps.length === 0) {
-    if (N2.length === 1 && N2[0].comps.length === 0) return rDiv(N2[0].x, D2[0].x);
-    return null;
-  }
-  const dCanon = D2.map((t2) => termCanon(t2));
-  const nCanon = N2.map((t2) => termCanon(t2));
-  const d0 = dCanon[0];
-  const n0 = nCanon.find((n2) => n2.key === d0.key);
-  if (n0 === void 0) return null;
-  if (rnorm(d0.canonX).n === 0n) return null;
-  const k2 = rDiv(n0.canonX, d0.canonX);
-  const scaledD = D2.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps }));
-  return mergeTerms(N2, scaledD, -1n).length === 0 ? k2 : null;
+  return fracQuotient(N2, q2.termsDen ?? ONE_TERMS(), thirty);
+}
+function fracReduceKey(q2, thirty) {
+  const t2 = fracReduceTerm(q2, thirty);
+  if (t2 === null) return null;
+  const c2 = termCanon(t2, thirty);
+  const x2 = rnorm(c2.canonX);
+  return `${c2.key}\xD7${x2.n}/${x2.d}`;
+}
+function fracReduce(q2, thirty) {
+  const t2 = fracReduceTerm(q2, thirty);
+  if (t2 === null) return null;
+  const c2 = termCanon(t2, thirty);
+  return c2.key === "|" ? c2.canonX : null;
 }
 var fracOf = (q2) => ({ num: termsOf(q2), den: q2.termsDen ?? ONE_TERMS() });
 var attachFrac = (base, num, den) => {
@@ -30639,6 +30661,15 @@ function combineQuantities(l2, r3, op, ctx) {
   if (comps.length === 1 && comps[0].exp === 1 && Object.keys(comps[0].def.dim).every((k2) => k2 === "calmonths" || k2 === "caldays")) {
     const inBase = rMul(x2, ratOfFactor(comps[0].def.factor));
     if (inBase.d !== 1n) {
+      if (ctx.monthToDays === "30" && comps[0].def.dim["calmonths"]) {
+        const inDays = rMul(inBase, { n: 30n, d: 1n });
+        if (inDays.d === 1n) {
+          if (inDays.n > 9007199254740991n || inDays.n < -9007199254740991n) {
+            return err("inexact", "timespan exceeds the safe range");
+          }
+          return { t: "ts", c: inDays.n === 0n ? {} : { days: Number(inDays.n) } };
+        }
+      }
       return err("anchor-required", `${ratToDec(x2).toString()} ${comps[0].def.symbol} has no fixed length \u2014 anchor to a date first`);
     }
     if (inBase.n > 9007199254740991n || inBase.n < -9007199254740991n) {
@@ -30769,6 +30800,8 @@ function addSummable(acc, v2, ctx) {
         if (nn9.length === 0) return { ...acc, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
         return attachFrac({ ...acc, ...qv(rAdd(qx(acc), qx(rhs))) }, nn9, dd9);
       }
+      ctx.capNotes?.push("aggregate");
+      return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))), terms: void 0, termsDen: void 0 };
     }
     if (irr9(acc) || irr9(v2) || rhs.terms !== void 0) {
       const merged9 = mergeTerms(termsOf(acc), termsOf(rhs.terms !== void 0 ? rhs : v2), 1n, ctx.monthToDays === "30");
@@ -30793,9 +30826,10 @@ function addSummable(acc, v2, ctx) {
   if (acc.t === "f" || v2.t === "f") return makeFrac(sum2.n, sum2.d, "derived");
   return { t: "d", ...qv(sum2) };
 }
-function foldIrrationalResidue(rt2) {
-  if (dimIsEmpty(rt2.dim) && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
-    const k0 = fracReduce(rt2);
+function foldIrrationalResidue(rt2, thirty) {
+  const dimZero9 = dimIsEmpty(rt2.dim) || thirty === true && Object.entries(rt2.dim).every(([k9, v9]) => v9 === 0 || k9 === "calmonths" || k9 === "caldays") && (rt2.dim["calmonths"] ?? 0) + (rt2.dim["caldays"] ?? 0) === 0;
+  if (dimZero9 && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
+    const k0 = fracReduce(rt2, thirty);
     if (k0 !== null) return { t: "d", ...qv(k0) };
   }
   const comps = compsOf(rt2);
@@ -30892,7 +30926,7 @@ function finalizeCurrencies(rt2, ctx) {
     return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
   }
   if (rt2.chosen) return rt2;
-  rt2 = foldIrrationalResidue(rt2);
+  rt2 = foldIrrationalResidue(rt2, ctx.monthToDays === "30");
   if (rt2.t !== "q") return rt2;
   const comps = compsOf(rt2);
   if (!comps) return rt2;
@@ -31365,7 +31399,7 @@ function evalAst(ast, env, ctx = {}) {
       let e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (e.t === "p") return err("unsupported-pair", "percentage of a percentage needs \u201Cde/of\u201D");
-      if (e.t === "q" && dimIsEmpty(e.dim)) e = foldIrrationalResidue(e);
+      if (e.t === "q") e = foldIrrationalResidue(e, ctx.monthToDays === "30");
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
       const px = numRat(e);
       return { t: "p", ...qv(px) };
@@ -31539,7 +31573,7 @@ function evalAst(ast, env, ctx = {}) {
       const rts = [];
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
         let v2 = evaluated9[ai9];
-        if (v2.t === "q" && dimIsEmpty(v2.dim)) v2 = foldIrrationalResidue(v2);
+        if (v2.t === "q") v2 = foldIrrationalResidue(v2, ctx.monthToDays === "30");
         if (v2.t !== "d" && v2.t !== "f") return err("unsupported-pair", `${ast.fn}() needs plain numbers`);
         rts.push(v2);
       }
@@ -31786,6 +31820,9 @@ function evalAst(ast, env, ctx = {}) {
                 const dec9 = ast.op === "+" ? rAdd(qx(l2), xr9) : rSub(qx(l2), xr9);
                 return attachFrac({ ...l2, ...qv(dec9) }, nn9, dd9);
               }
+              ctx.capNotes?.push("sum");
+              const xr8 = qx(rhs);
+              return { ...l2, ...qv(ast.op === "+" ? rAdd(qx(l2), xr8) : rSub(qx(l2), xr8)), terms: void 0, termsDen: void 0 };
             }
             if (irr(l2) || irr(r3) || rhs.terms !== void 0) {
               const merged = mergeTerms(termsOf(l2), termsOf(rhs.terms !== void 0 ? rhs : r3), ast.op === "+" ? 1n : -1n, ctx.monthToDays === "30");
@@ -31816,13 +31853,25 @@ function evalAst(ast, env, ctx = {}) {
               const sh9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               const lt9 = termsOf(l2);
               const rt9 = termsOf(r3);
-              if (prod9.t === "q" && (sh9(l2) || sh9(r3) || l2.termsDen !== void 0 || r3.termsDen !== void 0)) {
+              if ((prod9.t === "q" || prod9.t === "d") && (sh9(l2) || sh9(r3) || l2.termsDen !== void 0 || r3.termsDen !== void 0)) {
                 const t30 = ctx.monthToDays === "30";
                 const fl9 = fracOf(l2);
                 const fr9 = fracOf(r3);
                 const num9 = ast.op === "*" ? distributeTerms(fl9.num, fr9.num, t30) : distributeTerms(fl9.num, fr9.den, t30);
                 const den9 = ast.op === "*" ? distributeTerms(fl9.den, fr9.den, t30) : distributeTerms(fl9.den, fr9.num, t30);
-                prod9 = attachFrac(prod9, num9, den9);
+                if (num9 === null || den9 === null) {
+                  ctx.capNotes?.push("product");
+                  if (prod9.t === "q") prod9 = attachFrac(prod9, null, null);
+                } else {
+                  const quot9 = fracQuotient(num9, den9, t30);
+                  if (quot9 !== null && termCanon(quot9, t30).key === "|") {
+                    const kx9 = termCanon(quot9, t30).canonX;
+                    if (prod9.t === "d") prod9 = { t: "d", ...qv(kx9) };
+                    else prod9 = { ...prod9, terms: [quot9], termsDen: void 0 };
+                  } else if (prod9.t === "q") {
+                    prod9 = quot9 !== null ? { ...prod9, terms: [quot9], termsDen: void 0 } : attachFrac(prod9, num9, den9);
+                  }
+                }
               }
             }
             const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
@@ -31902,7 +31951,10 @@ function evalAst(ast, env, ctx = {}) {
                 const abs9 = Math.abs(e0);
                 const numSrc9 = e0 > 0 ? f9.num : f9.den;
                 const denSrc9 = e0 > 0 ? f9.den : f9.num;
-                pow9 = attachFrac(pow9, powList9(numSrc9, abs9), powList9(denSrc9, abs9));
+                const pn9 = powList9(numSrc9, abs9);
+                const pd9 = powList9(denSrc9, abs9);
+                if (pn9 === null || pd9 === null) ctx.capNotes?.push("power");
+                pow9 = attachFrac(pow9, pn9, pd9);
               }
             }
             return l2.chosen && pow9.t === "q" ? { ...pow9, chosen: true } : pow9;
@@ -32052,6 +32104,52 @@ function evalAst(ast, env, ctx = {}) {
           }
         } catch (cause) {
           return err("inexact", cause instanceof Error ? cause.message : String(cause));
+        }
+        {
+          const t309 = ctx.monthToDays === "30";
+          const scalarOf9 = (o9) => {
+            if (o9.t === "d" || o9.t === "f") return numRat(o9);
+            if (o9.t === "p") return rDiv(o9.vx ?? decToRat(o9.v), { n: 100n, d: 1n });
+            if (o9.t === "q") {
+              const f9 = foldIrrationalResidue(o9, t309);
+              if (f9.t === "d") return f9.vx ?? decToRat(f9.v);
+              if (f9.t === "q" && dimIsEmpty(f9.dim) && (compsOf(f9) ?? []).every((c9) => isPureLinear(c9.def))) {
+                let k9 = qx(f9);
+                for (const c9 of compsOf(f9) ?? []) k9 = rMul(k9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+                return k9;
+              }
+            }
+            return null;
+          };
+          const scaleTs9 = (span9, o9, invert9) => {
+            let k9 = scalarOf9(o9);
+            if (k9 === null) return null;
+            if (invert9) {
+              if (rnorm(k9).n === 0n) return err("division-by-zero");
+              k9 = rDiv({ n: 1n, d: 1n }, k9);
+            }
+            const a9 = spanCanon(span9.c);
+            const g9 = spanGroups(span9.c);
+            const mK9 = rMul({ n: a9.months, d: 1n }, k9);
+            const dK9 = rMul({ n: a9.days, d: 1n }, k9);
+            if (mK9.d === 1n && dK9.d === 1n) return spanEmit(mK9.n, dK9.n, g9, t309);
+            if (t309) {
+              const tot9 = rMul({ n: a9.months * 30n + a9.days, d: 1n }, k9);
+              if (tot9.d === 1n) {
+                if (g9.hasM && !g9.hasD && tot9.n % 30n === 0n) return spanEmit(tot9.n / 30n, 0n, g9, true);
+                return spanEmit(0n, tot9.n, { hasM: false, hasD: true }, true);
+              }
+            }
+            return err("anchor-required", "this result is a fractional timespan \u2014 anchor to a date first");
+          };
+          if (l2.t === "ts" && r3.t !== "ds" && r3.t !== "ts" && (ast.op === "*" || ast.op === "/")) {
+            const s9 = scaleTs9(l2, r3, ast.op === "/");
+            if (s9 !== null) return s9;
+          }
+          if (r3.t === "ts" && l2.t !== "ds" && l2.t !== "ts" && ast.op === "*") {
+            const s9 = scaleTs9(r3, l2, false);
+            if (s9 !== null) return s9;
+          }
         }
         return err("unsupported-pair", `this combination of date/timespan operands is undefined`);
       }
@@ -34425,7 +34523,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         if (!(bi9 >= 3 && w9?.kind === "word" && REF_WORDS.has(w9.text.toLowerCase()) && out[bi9 - 2]?.kind === "lparen" && out[bi9 - 1]?.kind === "number")) return false;
         const idx9 = Number(out[bi9 - 1].text);
         const target9 = Number.isInteger(idx9) && idx9 >= 1 && idx9 <= rts.length ? rts[idx9 - 1] : null;
-        if (target9 !== null && (["ds", "ct", "wd", "ts"].includes(target9.t) || target9.t === "q" && temporalContext())) return false;
+        if (target9 !== null && (["ds", "ct", "wd", "ts"].includes(target9.t) || temporalContext())) return false;
         return true;
       };
       const datePhraseNumber = (b2) => {
@@ -34590,10 +34688,12 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         k9 = j9;
       }
     }
+    let gluedOp9 = false;
     if (consumed9 > 0) {
       const nx9 = tokens[idx9 + consumed9 + 1];
       if (nx9?.kind === "word" && nx9.start === chainEnd9 && (nx9.text.includes("\u2215") || isUnitWord(nx9.text.split("\xB7")[0].replace(/⁣/gu, "")))) {
         tokens.splice(idx9 + consumed9 + 1, 0, { kind: "op", text: "\xB7", op: "*", start: chainEnd9, end: chainEnd9 });
+        gluedOp9 = true;
       }
     }
     const glue9 = null;
@@ -34615,8 +34715,15 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (glue9 !== null) segOut0.push(glue9);
     void glue9;
     if (segOut0.length === 0) {
-      if (tokens[idx9 - 1]?.kind === "number") tokens.splice(idx9, 1 + consumed9);
-      else tokens.splice(idx9, 1 + consumed9, { kind: "number", text: "1", start: t9.start, end: t9.end, dec: new DecC(1), plainInt: false });
+      void gluedOp9;
+      let drop9 = 1 + consumed9;
+      const nx8 = tokens[idx9 + drop9];
+      const nx8b = tokens[idx9 + drop9 + 1];
+      if (nx8?.kind === "op" && nx8.op === "*" && nx8b?.kind === "word" && (nx8b.text.includes("\u2215") || isUnitWord(nx8b.text.split("\xB7")[0].replace(/⁣/gu, "")))) {
+        drop9++;
+      }
+      if (tokens[idx9 - 1]?.kind === "number") tokens.splice(idx9, drop9);
+      else tokens.splice(idx9, drop9, { kind: "number", text: "1", start: t9.start, end: t9.end, dec: new DecC(1), plainInt: false });
       idx9--;
       continue;
     }
@@ -34750,7 +34857,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       const nxt9 = tokens[idx9];
       const prv9 = tokens[idx9 - 1];
       if (prv9?.kind === "lparen" && nxt9?.kind === "op" && nxt9.op === "*") tokens.splice(idx9, 1);
-      else if (prv9?.kind === "op" && prv9.op === "*") {
+      else if (prv9?.kind === "op" && prv9.op === "*" && nxt9?.kind !== "word") {
         tokens.splice(idx9 - 1, 1);
         idx9--;
       } else if (nxt9?.kind === "op" && nxt9.op === "*") tokens.splice(idx9, 1);
@@ -34926,6 +35033,8 @@ function assumptionMessage(a2, lang) {
       return fr ? `toutes les combinaisons d'interpr\xE9tations n'ont pas pu \xEAtre v\xE9rifi\xE9es` : `not every combination of interpretations could be verified`;
     case "ambiguous-reference":
       return fr ? `d\xE9pend d'une valeur ambigu\xEB` : `depends on an ambiguous value`;
+    case "exactness-capped":
+      return fr ? `ombre exacte abandonn\xE9e (borne de distribution) \u2014 la valeur est une approximation d\xE9cimale` : `the exact shadow was dropped at a distribution bound \u2014 the value is a decimal approximation`;
     case "two-digit-year":
       return fr ? `ann\xE9e \xAB ${a2.data["raw"]} \xBB lue ${a2.data["year"]} (pivot <50 \u2192 20xx)` : `year \u201C${a2.data["raw"]}\u201D read as ${a2.data["year"]} (<50 pivots to 20xx)`;
     case "date-order":
@@ -35020,7 +35129,7 @@ function toPublicValue(rt2) {
       return rt2.detail === void 0 ? { kind: "error", code: rt2.code } : { kind: "error", code: rt2.code, detail: rt2.detail.replace(/⁣/gu, "") };
   }
 }
-function exactSemantic(rt2) {
+function exactSemantic(rt2, thirty) {
   if (rt2 === null) return "\u2205";
   const v2 = toPublicValue(rt2);
   if (v2.kind === "datestamp") return `ds:${v2.date}:${v2.precision}`;
@@ -35031,8 +35140,8 @@ function exactSemantic(rt2) {
     exact = `|x:${x9.n}/${x9.d}`;
   }
   if (rt2.t === "q" && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
-    const k9 = fracReduce(rt2);
-    if (k9 !== null) return JSON.stringify(v2) + `|k:${k9.n}/${k9.d}`;
+    const k9 = fracReduceKey(rt2, thirty);
+    if (k9 !== null) return JSON.stringify(v2) + `|k:${k9}`;
   }
   if (rt2.t === "q" && rt2.termsDen !== void 0) {
     exact += `|d:${rt2.termsDen.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+")}`;
@@ -35206,11 +35315,15 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     }
     if (violations.length > 0) throw new ParseError("not-understood", violations[0]);
     if (exprTokens.length === 0) throw new ParseError("syntax", "empty expression");
-    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace, fxReads, holidayReads, assume: rawAssume };
+    const capNotes = [];
+    const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace, fxReads, holidayReads, assume: rawAssume, capNotes };
     let ast = parseExpression(exprTokens, rawAssume);
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     rt2 = finalizeCurrencies(rt2, ctx);
+    if (capNotes.length > 0 && rt2.t !== "e") {
+      rawAssume.push({ code: "exactness-capped", level: 2, impact: "value", data: {} });
+    }
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && !rt2.v.isZero() && Math.abs(rt2.v.e) > 9999) {
       rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
     }
@@ -35246,7 +35359,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (counterfactual) return void 0;
     const all = [...tokenAssumptions(tokens, dateOrder, formatting?.language ?? "fr"), ...rawAssume];
     if (all.length === 0) return void 0;
-    const semantic = (x2) => exactSemantic(x2);
+    const semantic = (x2) => exactSemantic(x2, baseCtx.monthToDays === "30");
     const displayOf = (x2) => formatRT(x2, formatting) ?? (x2.t === "e" ? "\u26A0" : JSON.stringify(toPublicValue(x2)));
     const kept = [];
     const pendingRewrites = [];
@@ -35823,7 +35936,8 @@ function runSheet(text, context, cache2, initialCfg) {
           return true;
         };
         const probeCap = (cfgSnap.policies?.ambiguity ?? "annotate") === "strict" ? 64 : 16;
-        const chosenKey9 = exactSemantic(entry.rt);
+        const t309 = cfgSnap.policies?.monthToDays === "30";
+        const chosenKey9 = exactSemantic(entry.rt, t309);
         const probedSigs = /* @__PURE__ */ new Set();
         let sensitive = false;
         let probes = 0;
@@ -35884,7 +35998,7 @@ function runSheet(text, context, cache2, initialCfg) {
               true
             );
             rtsP.push(re9.rt);
-            const moved9 = exactSemantic(re9.rt) !== exactSemantic(rts[k9] ?? null);
+            const moved9 = exactSemantic(re9.rt, t309) !== exactSemantic(rts[k9] ?? null, t309);
             if (moved9) changedL9.add(k9 + 1);
             if (dn9 !== null && dn9 !== void 0) {
               if (re9.rt !== null) envP.set(dn9, re9.rt);
@@ -35912,7 +36026,7 @@ function runSheet(text, context, cache2, initialCfg) {
             sensitive = true;
             return;
           }
-          if (exactSemantic(probe9.rt) !== chosenKey9) sensitive = true;
+          if (exactSemantic(probe9.rt, t309) !== chosenKey9) sensitive = true;
         };
         if (atoms.length > 20) exhausted = true;
         else {
