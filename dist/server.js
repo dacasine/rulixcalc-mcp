@@ -29081,6 +29081,10 @@ var DEFS = [
   { id: "kiloampere", symbol: "kA", dim: { current: 1 }, factor: r2(1e3, 1) },
   { id: "volt", symbol: "V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1) },
   { id: "kilovolt", symbol: "kV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1e3, 1) },
+  { id: "microvolt", symbol: "\xB5V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1e6) },
+  { id: "picowatt", symbol: "pW", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1, 1000000000000n) },
+  { id: "farad", symbol: "F", dim: { mass: -1, length: -2, time: 4, current: 2 }, factor: r2(1, 1) },
+  { id: "picofarad", symbol: "pF", dim: { mass: -1, length: -2, time: 4, current: 2 }, factor: r2(1, 1000000000000n) },
   { id: "millivolt", symbol: "mV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1e3) },
   { id: "picovolt", symbol: "pV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1000000000000n) },
   { id: "milliwatt", symbol: "mW", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1, 1e3) },
@@ -29311,6 +29315,11 @@ var ALIASES = [
   { alias: "kA", unit: "kiloampere" },
   { alias: "V", unit: "volt" },
   { alias: "kV", unit: "kilovolt" },
+  { alias: "\xB5V", unit: "microvolt" },
+  { alias: "\u03BCV", unit: "microvolt" },
+  { alias: "pW", unit: "picowatt" },
+  { alias: "F", unit: "farad" },
+  { alias: "pF", unit: "picofarad" },
   { alias: "mV", unit: "millivolt" },
   { alias: "pV", unit: "picovolt" },
   { alias: "mW", unit: "milliwatt" },
@@ -30243,6 +30252,7 @@ function alignForAdd(l2, r3, ctx) {
     const rRest = rc.map((c2) => ({ ...c2 })).filter((c2) => !c2.def.currency);
     const rCur = rc.filter((c2) => c2.def.currency).map((c2) => ({ ...c2 }));
     let rateBetween = () => null;
+    let pathRatOf = () => null;
     const nets = /* @__PURE__ */ new Map();
     const codes = [];
     const addNet = (c2, sign2) => {
@@ -30337,6 +30347,7 @@ function alignForAdd(l2, r3, ctx) {
         if (!pa9 || !pb9 || compOf.get(a9) !== compOf.get(b9)) return null;
         return rDiv(pa9.rat, pb9.rat);
       };
+      pathRatOf = (a9) => paths.get(a9)?.rat ?? null;
     }
     const lBase2 = basePartOf(lc.filter((c2) => !c2.def.currency), ctx);
     const rBase2 = basePartOf(rRest, ctx);
@@ -30348,11 +30359,12 @@ function alignForAdd(l2, r3, ctx) {
       const out9 = [];
       for (const t9 of termsOf(r3)) {
         const curs9 = t9.comps.filter((c9) => c9.def.currency !== void 0);
-        if (curs9.length === 0) {
+        if (curs9.length === 0 && lCur.length === 0) {
           out9.push({ x: t9.x, comps: t9.comps });
           continue;
         }
-        if (lCodes9.length === 1) {
+        if (curs9.length === 0 && lCur.reduce((s9, c9) => s9 + c9.exp, 0) !== 0) return termsOf(r3);
+        if (curs9.length > 0 && lCodes9.length === 1) {
           const lDef9 = lCur.find((c9) => c9.def.currency === lCodes9[0]).def;
           let x92 = t9.x;
           let bad92 = false;
@@ -30384,7 +30396,7 @@ function alignForAdd(l2, r3, ctx) {
         let x9 = t9.x;
         let bad9 = false;
         for (const c9 of curs9) {
-          const k9 = rateBetween(c9.def.currency, lCodes9[0]);
+          const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
             break;
@@ -30392,7 +30404,7 @@ function alignForAdd(l2, r3, ctx) {
           x9 = rMul(x9, rPowInt(k9, c9.exp));
         }
         for (const c9 of lCur) {
-          const k9 = rateBetween(c9.def.currency, lCodes9[0]);
+          const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
             break;
@@ -30521,6 +30533,7 @@ function combineQuantities(l2, r3, op, ctx) {
   if (dimZero(dim)) {
     const curLeft = comps.filter((c2) => c2.def.currency);
     if (curLeft.length > 0) {
+      const xPre9 = x2;
       let decScale2 = null;
       for (const c2 of comps) {
         if (c2.def.currency) continue;
@@ -30536,8 +30549,8 @@ function combineQuantities(l2, r3, op, ctx) {
       const ordered = [...pos2, ...curLeft.filter((c2) => c2.exp !== 1 && c2.exp !== -1), ...neg2];
       const base2 = { t: "q", dim: dimOfComps(ordered), symbol: compsSymbol(ordered), comps: ordered, ...rateMeta };
       if (decScale2 !== null) {
-        const sym9 = comps.filter((c9) => !c9.def.currency && c9.def.factorDec !== void 0).map((c9) => ({ ...c9 }));
-        const shadow9 = [{ x: x2, comps: [...ordered.map((c9) => ({ ...c9 })), ...sym9] }];
+        const sym9 = comps.filter((c9) => !c9.def.currency).map((c9) => ({ ...c9 }));
+        const shadow9 = [{ x: xPre9, comps: [...ordered.map((c9) => ({ ...c9 })), ...sym9] }];
         return { ...base2, v: ratToDec(x2).times(decScale2), terms: shadow9 };
       }
       return { ...base2, ...qv(x2) };
@@ -30946,7 +30959,9 @@ function evalAst(ast, env, ctx = {}) {
           const mid9 = scal9.length >> 1;
           if (scal9.length % 2 === 1) {
             const f0 = values[0];
-            const midK = mkQ(scal9[mid9].x, lookupUnit("K"));
+            const midSrc9 = scal9[mid9].rt;
+            const midTerms9 = midSrc9.def?.affine === void 0 ? termsOf(midSrc9) : void 0;
+            const midK = { ...mkQ(scal9[mid9].x, lookupUnit("K")), ...midTerms9 && { terms: midTerms9 } };
             return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
           }
           const halfTerms9 = mergeTerms(
@@ -31342,6 +31357,9 @@ function evalAst(ast, env, ctx = {}) {
       if (p2.t === "e") return p2;
       if (p2.t !== "p") return err("unsupported-pair", "P-7 needs a percentage");
       if (value.t !== "d" && value.t !== "f" && value.t !== "q") return err("unsupported-pair", "P-7 needs an amount");
+      if (value.t === "q" && isOffsetScale(value)) {
+        return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
+      }
       const cent = { n: 100n, d: 1n };
       const px = p2.vx ?? decToRat(p2.v);
       const denom = ast.sign === 1 ? rAdd(cent, px) : rSub(cent, px);
@@ -32316,21 +32334,33 @@ var UNIT_LIGATURES = {
   "\u3386": "MB",
   "\u3387": "GB",
   "\u33C4": "cm\xB3",
-  "\u33BA": "pV",
+  "\u33BA": "pW",
   "\u33BD": "mW",
   "\u33BF": "MW",
   "\u33B8": "kV",
-  "\u33B6": "mV",
+  "\u33B6": "\xB5V",
+  "\u33B7": "mV",
   "\u3383": "mA",
   "\u3382": "\xB5A",
-  "\u3384": "kA"
+  "\u3384": "kA",
+  "\u3395": "\xB5l",
+  "\u339B": "\xB5m",
+  "\u33A9": "Pa",
+  "\u33B4": "pV",
+  "\u33CA": "ha",
+  "\u33CE": "km",
+  "\u33D6": "mol",
+  "\u33C2": "am",
+  "\u33D8": "pm"
 };
 function nfkcWord(text) {
   let mapped = "";
   let prevLig = false;
+  let prevSingleLig = false;
   for (const ch of text) {
     const exp0 = UNIT_LIGATURES[ch];
     if (exp0 === void 0) {
+      prevSingleLig = false;
       const glue9 = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\u2063".includes(ch);
       if (prevLig && !glue9 && /[\p{L}\p{M}]/u.test(ch)) mapped += "\xB7";
       mapped += ch;
@@ -32338,6 +32368,8 @@ function nfkcWord(text) {
       continue;
     }
     const atom0 = exp0.length > 1;
+    if (!atom0 && prevSingleLig) mapped += "\xB7";
+    prevSingleLig = !atom0;
     if (atom0 && (prevLig || /[\p{L}\p{M}⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁣]$/u.test(mapped))) mapped += "\xB7";
     mapped += /[∕⁰¹²³⁴⁵⁶⁷⁸⁹²³¹]/u.test(exp0) ? `${exp0}\u2063` : exp0;
     prevLig = atom0;
@@ -32708,7 +32740,11 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    tokens.push({ kind: "unknown", text: c2, start, end: i2 + 1 });
+    {
+      const w9 = String.fromCodePoint(line.codePointAt(i2));
+      tokens.push({ kind: "unknown", text: w9, start, end: i2 + w9.length });
+      i2 += w9.length - 1;
+    }
     i2++;
   }
   if (srcMap !== null) {
@@ -33588,6 +33624,13 @@ function isReservedCore(word) {
   const lower = word.toLowerCase();
   return SCALAR_WORDS[word] !== void 0 || TIMESPAN_UNITS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || CONVERT_WORDS.has(lower) || WHAT_WORDS.has(lower) || IS_WORDS.has(lower) || WHAT_OBJECT_WORDS.has(lower) || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || FUNCTION_DEFS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || MOD_WORDS.has(lower) || ROUND_WORDS.has(lower) || DP_WORDS.has(lower) || WORD_FRACTIONS[lower] !== void 0 || WORKDAY_WORDS.has(lower) || BASE_WORDS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || AMPM_WORDS.has(lower) || UHR_WORDS.has(lower) || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower) || INTEREST_WORDS.has(lower) || PAYMENT_WORDS.has(lower) || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || NEXT_QUALIFIERS.has(lower) || LAST_QUALIFIERS.has(lower) || FROM_NOW_WORDS.has(lower) || AGO_WORDS.has(lower) || AGO_PREFIX_WORDS.has(lower) || FROM_SUFFIX_WORDS.has(lower) || MORE_LESS_WORDS.has(lower) || lower === "il" || lower === "y" || lower === "a" || isUnitWord(word);
 }
+function isHolidayDateWord(word) {
+  return HOLIDAY_DATE_WORDS[word.toLowerCase()] !== void 0;
+}
+function isPostfixModifierWord(word) {
+  const lower = word.toLowerCase();
+  return WORKDAY_WORDS.has(lower) || AMPM_WORDS.has(lower) || AGO_WORDS.has(lower) || UHR_WORDS.has(lower) || BASE_WORDS[lower] !== void 0;
+}
 function isComputableWord(word) {
   const lower = word.toLowerCase();
   return FUNCTION_DEFS[lower] !== void 0 || DATE_KEYWORDS[lower] !== void 0 || WEEKDAY_WORDS[lower] !== void 0 || MONTH_WORDS[lower] !== void 0 || LINE_REF_WORDS.has(lower) || AGG_WORDS[lower] !== void 0 || CONSTANTS[lower] !== void 0 || CLOCK_CONSTANTS[lower] !== void 0 || HOLIDAY_DATE_WORDS[lower] !== void 0 || TIME_WORDS.has(lower);
@@ -34046,6 +34089,12 @@ var CONFUSABLES = {
   "\u13D2": "R",
   "\u13AA": "A",
   "\u13AC": "E",
+  "\u13D9": "V",
+  "\u13E4": "V",
+  "\u13DA": "S",
+  "\u2D38": "V",
+  "\u051C": "W",
+  "\u051D": "w",
   // Coptic capitals (UTS #39): °Ⲥ, Ⲕ, ⲘHz must refuse as homoglyphs
   "\u2C80": "A",
   "\u2C82": "B",
@@ -34126,6 +34175,16 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
     if (inner.length === 0) continue;
     if (meaningful.some((t2) => t2.kind === "op" || t2.kind === "percent" || t2.kind === "equals")) continue;
     if (meaningful.some((t2) => t2.kind === "word" && (lexicon.operatorWords.has(t2.text.toLowerCase()) || lexicon.divisionParticles.has(t2.text.toLowerCase()) || CORE_OP_WORDS.has(t2.text.toLowerCase())))) continue;
+    const PREP9 = /* @__PURE__ */ new Set(["in", "en", "im", "de", "a", "\xE0"]);
+    const modifierish9 = meaningful.length >= 1 && meaningful.every((t9) => t9.kind === "word") && meaningful.some((t9) => isPostfixModifierWord(t9.text) || SCALAR_WORDS[t9.text.toLowerCase()] !== void 0) && meaningful.every((t9) => isPostfixModifierWord(t9.text) || SCALAR_WORDS[t9.text.toLowerCase()] !== void 0 || PREP9.has(t9.text.toLowerCase()));
+    if (modifierish9) {
+      violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D is recognised calculator vocabulary \u2014 remove the parentheses to apply it`);
+      return out;
+    }
+    if (meaningful.length === 1 && meaningful[0].kind === "word" && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(meaningful[0].text) && out.slice(0, i2).some((t9) => t9.kind === "date" || t9.kind === "clocktime")) {
+      violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
+      return out;
+    }
     if (!isUnitExpr && !hasComputableContent(inner, env)) {
       const before = out[i2 - 1];
       const after = out[j2];
@@ -34151,6 +34210,12 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
+      const temporalContext = () => out.slice(0, i2).some((t9, k9) => t9.kind === "date" || t9.kind === "clocktime" || t9.kind === "word" && env.has(t9.text) && ["ds", "ct", "wd", "ts"].includes(env.get(t9.text)?.t ?? "") || t9.kind === "word" && (isDateKeywordWord(t9.text) || isHolidayDateWord(t9.text)) || // a line(N) reference to a temporal line anchors the phrase too
+      t9.kind === "word" && REF_WORDS.has(t9.text.toLowerCase()) && out[k9 + 1]?.kind === "lparen" && out[k9 + 2]?.kind === "number" && out[k9 + 3]?.kind === "rparen" && (() => {
+        const n9 = Number(out[k9 + 2].text);
+        const tg9 = Number.isInteger(n9) && n9 >= 1 && n9 <= rts.length ? rts[n9 - 1] : null;
+        return tg9 !== null && ["ds", "ct", "wd", "ts", "q"].includes(tg9.t);
+      })());
       const isRefRparen = (b2) => {
         if (b2?.kind !== "rparen") return false;
         const bi9 = out.indexOf(b2);
@@ -34158,7 +34223,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         if (!(bi9 >= 3 && w9?.kind === "word" && REF_WORDS.has(w9.text.toLowerCase()) && out[bi9 - 2]?.kind === "lparen" && out[bi9 - 1]?.kind === "number")) return false;
         const idx9 = Number(out[bi9 - 1].text);
         const target9 = Number.isInteger(idx9) && idx9 >= 1 && idx9 <= rts.length ? rts[idx9 - 1] : null;
-        if (target9 !== null && (target9.t === "ds" || target9.t === "ct" || target9.t === "wd")) return false;
+        if (target9 !== null && (["ds", "ct", "wd", "ts"].includes(target9.t) || target9.t === "q" && temporalContext())) return false;
         return true;
       };
       const datePhraseNumber = (b2) => {
@@ -34186,7 +34251,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         return bi9 >= 1 && (w9b?.kind === "word" && isComputableWord(w9b.text) && !env.has(w9b.text) && !isAggWord(w9b.text) && !isUnitWord(w9b.text) || w9b?.kind === "number" && w9c?.kind === "word" && isComputableWord(w9c.text) && !isUnitWord(w9c.text));
       };
       const innerHasCode = meaningful.some((t9) => t9.kind === "word" && (looksLikeCode(t9.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t9.text)));
-      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
+      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && (isTimespanUnitWord(b2.text) || env.has(b2.text)) && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
       if (qualifies(before) || qualifies(beforeEff)) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
         return out;
@@ -34361,28 +34426,6 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     const u9 = tokens[idx9];
     const c9 = tokens[idx9 + 1];
     if (!(u9.kind === "word" && isUnitWord(u9.text) && c9.kind === "op" && c9.op === "^")) continue;
-    let k9 = idx9 + 2;
-    let paren9 = false;
-    if (tokens[k9]?.kind === "lparen") {
-      paren9 = true;
-      k9++;
-    }
-    let sign9 = 1;
-    const s9 = tokens[k9];
-    if (s9?.kind === "op" && (s9.op === "-" || s9.op === "+")) {
-      sign9 = s9.op === "-" ? -1 : 1;
-      k9++;
-    }
-    const n9 = tokens[k9];
-    if (!(n9?.kind === "number" && n9.plainInt === true)) continue;
-    let end9 = n9.end;
-    if (paren9) {
-      if (tokens[k9 + 1]?.kind !== "rparen") continue;
-      end9 = tokens[k9 + 1].end;
-      k9++;
-    }
-    const e9raw = sign9 * n9.dec.toNumber();
-    if (!Number.isInteger(e9raw) || Math.abs(e9raw) > 999) continue;
     const segs9 = u9.text.split("\xB7");
     let last9 = segs9.pop();
     const supm9 = /^(.*?)([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)$/u.exec(last9);
@@ -34397,25 +34440,47 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       base9 = dm9[1];
       prev9 = Number(dm9[2]);
     }
-    const e9 = prev9 * e9raw;
-    if (!Number.isInteger(e9) || Math.abs(e9) > 999) continue;
-    if (e9 === 0) {
-      let kk9 = k9 + 1;
-      while (tokens[kk9]?.kind === "op" && tokens[kk9].op === "^") {
-        let jj9 = kk9 + 1;
-        if (tokens[jj9]?.kind === "lparen") jj9++;
-        const sTok9 = tokens[jj9];
-        if (sTok9?.kind === "op" && (sTok9.op === "-" || sTok9.op === "+")) jj9++;
-        if (tokens[jj9]?.kind !== "number") break;
-        jj9++;
-        if (tokens[jj9 - 2]?.kind === "lparen" || tokens[kk9 + 1]?.kind === "lparen") {
-          if (tokens[jj9]?.kind !== "rparen") break;
-          jj9++;
-        }
-        kk9 = jj9;
+    let pos9 = idx9 + 1;
+    let prod9 = BigInt(prev9);
+    let any9 = false;
+    let end9 = u9.end;
+    for (; ; ) {
+      const op9 = tokens[pos9];
+      if (!(op9?.kind === "op" && op9.op === "^")) break;
+      let j9 = pos9 + 1;
+      let paren9 = false;
+      if (tokens[j9]?.kind === "lparen") {
+        paren9 = true;
+        j9++;
       }
-      k9 = kk9 - 1;
+      let sign9 = 1n;
+      const sg9 = tokens[j9];
+      if (sg9?.kind === "op" && (sg9.op === "-" || sg9.op === "+")) {
+        sign9 = sg9.op === "-" ? -1n : 1n;
+        j9++;
+      }
+      const num9 = tokens[j9];
+      if (!(num9?.kind === "number" && num9.plainInt === true)) break;
+      j9++;
+      if (paren9) {
+        if (tokens[j9]?.kind !== "rparen") break;
+        j9++;
+      }
+      let step9;
+      try {
+        step9 = sign9 * BigInt(num9.dec.toFixed());
+      } catch {
+        break;
+      }
+      prod9 *= step9;
+      any9 = true;
+      end9 = tokens[j9 - 1].end;
+      pos9 = j9;
     }
+    if (!any9) continue;
+    if (prod9 !== 0n && (prod9 > 999n || prod9 < -999n)) continue;
+    const e9 = Number(prod9);
+    const k9 = pos9 - 1;
     last9 = e9 === 0 ? "" : `${base9}${e9 === 1 ? "" : supOf(e9)}`;
     const parts9 = [...segs9, ...last9 === "" ? [] : [last9]];
     if (parts9.length === 0 && tokens[idx9 - 1]?.kind === "lparen" && tokens[k9 + 1]?.kind === "rparen") {
