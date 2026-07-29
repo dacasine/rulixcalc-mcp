@@ -31242,10 +31242,11 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "q" && e.rate && (e.rate.den.dim["calmonths"] === 1 || e.rate.den.dim["caldays"] === 1)) {
         const target = CAL_RATE_DEFS[ast.unit];
         const den = e.rate.den;
-        if (!dimEquals(target.dim, den.dim)) {
+        if (!dimsCompatible(target.dim, den.dim, ctx)) {
           return err("anchor-required", `converting a rate from ${den.symbol} to ${target.symbol} needs a date anchor`);
         }
-        const ratio = rDiv(ratOfFactor(target.factor), ratOfFactor(den.factor));
+        const bridged = (d9) => rMul(ratOfFactor(d9.factor), rPowInt({ n: 30n, d: 1n }, d9.dim["calmonths"] ?? 0));
+        const ratio = rDiv(bridged(target), bridged(den));
         const num = e.rate.num;
         const dim = dimAdd(num.dim, target.dim, -1);
         const def = {
