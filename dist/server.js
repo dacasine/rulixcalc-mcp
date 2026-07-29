@@ -30506,7 +30506,7 @@ function combineQuantities(l2, r3, op, ctx) {
     merged.push({ def: c2.def, exp: e });
   }
   let comps = merged.filter((m2) => m2.exp !== 0);
-  if (comps.some((m2) => Math.abs(m2.exp) > 999)) {
+  if (comps.some((m2) => Math.abs(m2.exp) > 1e6)) {
     return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
   }
   const dimZero = (d2) => dimIsEmpty(ctx.monthToDays === "30" ? calDim(d2) : d2);
@@ -30804,6 +30804,9 @@ function foldIrrationalResidue(rt2) {
 }
 function finalizeCurrencies(rt2, ctx) {
   if (rt2.t !== "q") return rt2;
+  if (compsOf(rt2)?.some((c9) => Math.abs(c9.exp) > 999)) {
+    return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
+  }
   if (rt2.chosen) return rt2;
   rt2 = foldIrrationalResidue(rt2);
   if (rt2.t !== "q") return rt2;
@@ -30891,8 +30894,8 @@ function evalAst(ast, env, ctx = {}) {
               if (g9.hasM) anyM = true;
               if (g9.hasD && !g9.hasM) anyD = true;
             }
-            const x9 = ctx.monthToDays === "30" ? m9 * 30n + d9 : m9;
-            scal.push({ x: x9, rt: val });
+            if (ctx.monthToDays === "30") scal.push({ m: m9 * 30n + d9, d: 0n, rt: val });
+            else scal.push({ m: m9, d: d9, rt: val });
           }
           if ((anyM && anyD || scal.some((s9) => spanCanon(s9.rt.c).months !== 0n && spanCanon(s9.rt.c).days !== 0n)) && ctx.monthToDays !== "30") {
             const cmp9 = (u9, v9) => {
@@ -30929,7 +30932,7 @@ function evalAst(ast, env, ctx = {}) {
           if (anyM && anyD && ctx.monthToDays !== "30") {
             return err("anchor-required", "months/years and days/weeks only compare around a date");
           }
-          scal.sort((a9, b9) => a9.x < b9.x ? -1 : a9.x > b9.x ? 1 : 0);
+          scal.sort((a9, b9) => a9.m < b9.m ? -1 : a9.m > b9.m ? 1 : a9.d < b9.d ? -1 : a9.d > b9.d ? 1 : 0);
           const mid9 = scal.length >> 1;
           if (scal.length % 2 === 1) return scal[mid9].rt;
           const lo9 = spanCanon(scal[mid9 - 1].rt.c);
@@ -31694,7 +31697,21 @@ function evalAst(ast, env, ctx = {}) {
             if (isOffsetScale(l2) || isOffsetScale(r3)) {
               return err("unit-mismatch", "multiplying or dividing offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
             }
-            const prod9 = combineQuantities(l2, r3, ast.op, ctx);
+            let prod9 = combineQuantities(l2, r3, ast.op, ctx);
+            {
+              const sh9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+              const lt9 = termsOf(l2);
+              const rt9 = termsOf(r3);
+              if (prod9.t === "q" && (sh9(l2) || sh9(r3)) && lt9.length === 1 && rt9.length === 1) {
+                const sign9 = ast.op === "*" ? 1 : -1;
+                const comps9 = canonComps([
+                  ...lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp })),
+                  ...rt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * sign9 }))
+                ]);
+                const x9 = ast.op === "*" ? rMul(lt9[0].x, rt9[0].x) : rDiv(lt9[0].x, rt9[0].x);
+                prod9 = { ...prod9, terms: [{ x: x9, comps: comps9 }] };
+              }
+            }
             const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
             const overlap9 = (a9, b9) => Object.keys(a9.dim).some((k9) => (b9.dim[k9] ?? 0) !== 0);
             if (prod9.t === "q" && (l2.chosen && !hasCur9(r3) && !overlap9(l2, r3) || r3.chosen && !hasCur9(l2) && !overlap9(r3, l2))) {
@@ -31726,6 +31743,8 @@ function evalAst(ast, env, ctx = {}) {
             if (e0 === -1 && l2.rate) {
               const invComps = (compsOf(l2) ?? []).map((c2) => ({ def: c2.def, exp: -c2.exp }));
               const inv = { num: l2.rate.den, den: l2.rate.num };
+              const lt92 = termsOf(l2);
+              const sh9 = l2.terms !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               return {
                 t: "q",
                 ...qv(rDiv({ n: 1n, d: 1n }, qx(l2))),
@@ -31733,6 +31752,7 @@ function evalAst(ast, env, ctx = {}) {
                 symbol: compsSymbol(invComps),
                 rate: inv,
                 comps: invComps,
+                ...sh9 && lt92.length === 1 && { terms: [{ x: rDiv({ n: 1n, d: 1n }, lt92[0].x), comps: lt92[0].comps.map((c9) => ({ def: c9.def, exp: -c9.exp })) }] },
                 ...l2.chosen && { chosen: true }
               };
             }
@@ -31748,7 +31768,12 @@ function evalAst(ast, env, ctx = {}) {
               comps: scaled
             };
             const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
-            const pow9 = combineQuantities(one9, raw9, "*", ctx);
+            let pow9 = combineQuantities(one9, raw9, "*", ctx);
+            const lt9 = termsOf(l2);
+            const shadowed9 = l2.terms !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+            if (pow9.t === "q" && shadowed9 && lt9.length === 1) {
+              pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))) }] };
+            }
             return l2.chosen && pow9.t === "q" ? { ...pow9, chosen: true } : pow9;
           }
           return err("unit-mismatch", `\u201C${l2.symbol} ${ast.op} ${toDec(r3).toString()}\u201D mixes a quantity with a bare number`);
@@ -32360,15 +32385,17 @@ function nfkcWord(text) {
   for (const ch of text) {
     const exp0 = UNIT_LIGATURES[ch];
     if (exp0 === void 0) {
-      prevSingleLig = false;
       const glue9 = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\u2063".includes(ch);
       if (prevLig && !glue9 && /[\p{L}\p{M}]/u.test(ch)) mapped += "\xB7";
       mapped += ch;
-      if (!glue9) prevLig = false;
+      if (!glue9) {
+        prevLig = false;
+        prevSingleLig = false;
+      }
       continue;
     }
     const atom0 = exp0.length > 1;
-    if (!atom0 && prevSingleLig) mapped += "\xB7";
+    if (!atom0 && (prevSingleLig || prevLig)) mapped += "\xB7";
     prevSingleLig = !atom0;
     if (atom0 && (prevLig || /[\p{L}\p{M}⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁣]$/u.test(mapped))) mapped += "\xB7";
     mapped += /[∕⁰¹²³⁴⁵⁶⁷⁸⁹²³¹]/u.test(exp0) ? `${exp0}\u2063` : exp0;
@@ -32643,11 +32670,11 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         continue;
       }
       const cp = line.codePointAt(i2);
-      if (/[\p{L}\p{M}\u3380-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(cp))) {
+      if (/[\p{L}\p{M}\u3371-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(cp))) {
         i2 += String.fromCodePoint(cp).length;
         continue;
       }
-      if (c2 === "\xB7" && (isLetter(line[i2 + 1] ?? "") || line[i2 + 1] === "\xB0" || /[\u3380-\u33FF\u2103\u2109\u2113]/u.test(line[i2 + 1] ?? ""))) {
+      if (c2 === "\xB7" && (isLetter(line[i2 + 1] ?? "") || line[i2 + 1] === "\xB0" || /[\u3371-\u33FF\u2103\u2109\u2113]/u.test(line[i2 + 1] ?? ""))) {
         i2++;
         continue;
       }
@@ -32676,7 +32703,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (/[\p{L}\u3380-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
+    if (/[\p{L}\u3371-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
       scanWord();
       continue;
     }
@@ -34095,6 +34122,28 @@ var CONFUSABLES = {
   "\u2D38": "V",
   "\u051C": "W",
   "\u051D": "w",
+  // Carian/Lycian astral lookalikes + Greek letters (audit AI)
+  "\u{10296}": "S",
+  "\u{102A2}": "C",
+  "\u{102A0}": "A",
+  "\u{102A4}": "E",
+  "\u{10299}": "O",
+  "\u{10290}": "M",
+  "\u03B1": "a",
+  "\u0391": "A",
+  "\u0392": "B",
+  "\u0395": "E",
+  "\u0396": "Z",
+  "\u0397": "H",
+  "\u0399": "I",
+  "\u039A": "K",
+  "\u039C": "M",
+  "\u039D": "N",
+  "\u039F": "O",
+  "\u03A1": "P",
+  "\u03A4": "T",
+  "\u03A5": "Y",
+  "\u03A7": "X",
   // Coptic capitals (UTS #39): °Ⲥ, Ⲕ, ⲘHz must refuse as homoglyphs
   "\u2C80": "A",
   "\u2C82": "B",
@@ -34210,11 +34259,15 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
+      const timeUnit9 = (w9) => {
+        const d9 = lookupUnit(w9);
+        return d9 !== void 0 && d9.dim["time"] === 1 && Object.keys(d9.dim).filter((k9) => d9.dim[k9] !== 0).length === 1;
+      };
       const temporalContext = () => out.slice(0, i2).some((t9, k9) => t9.kind === "date" || t9.kind === "clocktime" || t9.kind === "word" && env.has(t9.text) && ["ds", "ct", "wd", "ts"].includes(env.get(t9.text)?.t ?? "") || t9.kind === "word" && (isDateKeywordWord(t9.text) || isHolidayDateWord(t9.text)) || // a line(N) reference to a temporal line anchors the phrase too
       t9.kind === "word" && REF_WORDS.has(t9.text.toLowerCase()) && out[k9 + 1]?.kind === "lparen" && out[k9 + 2]?.kind === "number" && out[k9 + 3]?.kind === "rparen" && (() => {
         const n9 = Number(out[k9 + 2].text);
         const tg9 = Number.isInteger(n9) && n9 >= 1 && n9 <= rts.length ? rts[n9 - 1] : null;
-        return tg9 !== null && ["ds", "ct", "wd", "ts", "q"].includes(tg9.t);
+        return tg9 !== null && (["ds", "ct", "wd", "ts"].includes(tg9.t) || tg9.t === "q" && tg9.dim["time"] === 1 && Object.keys(tg9.dim).filter((kk9) => tg9.dim[kk9] !== 0).length === 1);
       })());
       const isRefRparen = (b2) => {
         if (b2?.kind !== "rparen") return false;
@@ -34251,7 +34304,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         return bi9 >= 1 && (w9b?.kind === "word" && isComputableWord(w9b.text) && !env.has(w9b.text) && !isAggWord(w9b.text) && !isUnitWord(w9b.text) || w9b?.kind === "number" && w9c?.kind === "word" && isComputableWord(w9c.text) && !isUnitWord(w9c.text));
       };
       const innerHasCode = meaningful.some((t9) => t9.kind === "word" && (looksLikeCode(t9.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t9.text)));
-      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && (isTimespanUnitWord(b2.text) || env.has(b2.text)) && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
+      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && (isTimespanUnitWord(b2.text) || env.has(b2.text) || isAggWord(b2.text) || timeUnit9(b2.text)) && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
       if (qualifies(before) || qualifies(beforeEff)) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
         return out;
@@ -34321,7 +34374,11 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         const nxt9 = parts9[p9 + 1];
         if (nxt9 !== void 0 && /^⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u.test(nxt9)) {
           const [, outer9] = parseSeg0(`x${nxt9}`);
-          if (lastPair9) for (const k9 of lastPair9) segs0[k9].exp *= outer9;
+          if (lastPair9 !== null && lastPair9[1] === segs0.length - 1) {
+            for (const k9 of lastPair9) segs0[k9].exp *= outer9;
+          } else if (segs0.length > 0) {
+            segs0[segs0.length - 1].exp *= outer9;
+          }
           p9++;
         }
         continue;
@@ -34425,7 +34482,13 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   for (let idx9 = 0; idx9 + 2 < tokens.length; idx9++) {
     const u9 = tokens[idx9];
     const c9 = tokens[idx9 + 1];
-    if (!(u9.kind === "word" && isUnitWord(u9.text) && c9.kind === "op" && c9.op === "^")) continue;
+    const foldBase9 = (w9) => {
+      if (isUnitWord(w9)) return true;
+      const lastSeg9 = w9.split("\xB7").pop();
+      const sm9 = /^(.*?)([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)$/u.exec(lastSeg9);
+      return sm9 !== null && isUnitWord(sm9[1]);
+    };
+    if (!(u9.kind === "word" && foldBase9(u9.text) && c9.kind === "op" && c9.op === "^")) continue;
     const segs9 = u9.text.split("\xB7");
     let last9 = segs9.pop();
     const supm9 = /^(.*?)([⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)$/u.exec(last9);
@@ -34460,7 +34523,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         j9++;
       }
       const num9 = tokens[j9];
-      if (!(num9?.kind === "number" && num9.plainInt === true)) break;
+      if (num9?.kind !== "number") break;
       j9++;
       if (paren9) {
         if (tokens[j9]?.kind !== "rparen") break;
@@ -34494,9 +34557,16 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       idx9 -= 2;
       continue;
     }
+    let absorb9 = 0;
+    const nextW9 = tokens[k9 + 1];
+    if (parts9.length > 0 && nextW9?.kind === "word" && nextW9.start === end9 && isUnitWord(nextW9.text.split("\xB7")[0])) {
+      parts9.push(nextW9.text);
+      end9 = nextW9.end;
+      absorb9 = 1;
+    }
     tokens.splice(
       idx9,
-      k9 - idx9 + 1,
+      k9 - idx9 + 1 + absorb9,
       ...parts9.length === 0 ? [] : [{ ...u9, text: parts9.join("\xB7"), end: end9 }]
     );
     if (parts9.length === 0) {
@@ -34595,7 +34665,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || // cross-script HOMOGLYPHS (UЅD, СHF, ΕUR, USᎠ, °С, К) are never
         // counting prose — mixed scripts refuse, and so does any word
         // whose Latin SKELETON is a known unit or code (audit W)
-        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || // ANY confusable character in unit position is never prose —
+        /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || // ANY confusable character in unit position is never prose —
         // lowercase and diacritic forms included (audit AE: 20 ⲕ, °ⲥ)
         skeleton(t2.text) !== t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "") || // a CASE TWIN of a registered unit (ph/Ph vs pH) refuses loudly
         !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || // unit prefix (≥2) + letters-only tail after a NUMBER too —
@@ -34605,7 +34675,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // two units GLUED (Nms = N + ms) are never prose (audit AF)
         !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (isUnitWord(t2.text.slice(k9)) || isTimespanUnitWord(t2.text.slice(k9))))) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
-        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text) || isUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))))) {
+        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text) || isUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "rparen" || prev?.kind === "percent" || prev?.kind === "date" || prev?.kind === "clocktime" || prev?.kind === "bang") && prev.end === t2.start && !(prev.kind === "number" && prev.plainInt === true && ["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower))) {
           violations.push(prev.kind === "number" || prev.kind === "fraction" ? `\u201C${prev.text}${t2.text}\u201D is not a number, unit or date` : `\u201C${t2.text}\u201D is not a number, unit or date`);
