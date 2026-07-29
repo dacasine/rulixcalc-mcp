@@ -29081,6 +29081,8 @@ var DEFS = [
   { id: "kilohm", symbol: "k\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1e3, 1) },
   { id: "megohm", symbol: "M\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1e6, 1) },
   { id: "mole", symbol: "mol", dim: { amount: 1 }, factor: r2(1, 1) },
+  // pH — the ㏗ ligature maps here; a registered atom, never silent prose
+  { id: "pH", symbol: "pH", dim: { acidity: 1 }, factor: r2(1, 1) },
   { id: "ml", symbol: "ml", dim: { length: 3 }, factor: r2(1, 1e6) },
   { id: "cl", symbol: "cl", dim: { length: 3 }, factor: r2(1, 1e5) },
   { id: "dl", symbol: "dl", dim: { length: 3 }, factor: r2(1, 1e4) },
@@ -29302,6 +29304,7 @@ var ALIASES = [
   { alias: "k\u03A9", unit: "kilohm" },
   { alias: "M\u03A9", unit: "megohm" },
   { alias: "mol", unit: "mole" },
+  { alias: "pH", unit: "pH" },
   { alias: "litre", unit: "litre", caseSensitive: false },
   { alias: "litres", unit: "litre", caseSensitive: false },
   { alias: "liter", unit: "litre", caseSensitive: false },
@@ -30083,7 +30086,11 @@ function convertQuantity(rt2, to, ctx) {
     }
     const fx = fxRat(provider, from.currency, to.currency, ctx);
     if ("t" in fx) return fx;
-    return mkQ(rMul(qx(rt2), fx), to);
+    const conv9 = rt2.terms?.map((t9) => ({
+      x: rMul(t9.x, fx),
+      comps: t9.comps.map((c9) => c9.def.id === from.id ? { def: to, exp: c9.exp } : c9)
+    }));
+    return { ...mkQ(rMul(qx(rt2), fx), to), ...conv9 && { terms: conv9 } };
   }
   const convertible = (u2) => u2.factor !== void 0 || u2.factorDec !== void 0 || u2.affine !== void 0;
   if (!convertible(from) || !convertible(to)) {
@@ -30091,9 +30098,9 @@ function convertQuantity(rt2, to, ctx) {
   }
   const x2 = convertRat(qx(rt2), from, to);
   if (x2 === null) {
-    return { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0 };
+    return { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, ...rt2.terms && { terms: rt2.terms } };
   }
-  return mkQ(x2, to);
+  return { ...mkQ(x2, to), ...rt2.terms && { terms: rt2.terms } };
 }
 var calDim = (d2) => {
   if (d2["calmonths"] === void 0) return d2;
@@ -30120,41 +30127,84 @@ function basePartOf(comps, ctx) {
   }
   return { rat, dec: dec2 };
 }
-var termSig = (d2) => {
-  const dim9 = JSON.stringify(Object.entries(d2.dim).filter(([, v9]) => v9 !== 0).map(([k9, v9]) => [k9 === "tempdelta" ? "temperature" : k9, v9]).sort());
-  if (d2.currency !== void 0) return `C:${d2.currency}`;
-  if (d2.factorDec !== void 0) return `D:${dim9}:${d2.factorDec}`;
-  if (d2.affine !== void 0) return `A:${d2.id}`;
-  const f9 = rnorm(ratOfFactor(d2.factor ?? { n: 1n, d: 1n }));
-  return `R:${dim9}:${f9.n}/${f9.d}`;
+var termCanon = (t2) => {
+  const dims = /* @__PURE__ */ new Map();
+  const sym = [];
+  let fold = { n: 1n, d: 1n };
+  for (const c2 of t2.comps) {
+    const d2 = c2.def;
+    if (d2.currency !== void 0) {
+      sym.push(`C:${d2.currency}^${c2.exp}`);
+      continue;
+    }
+    if (d2.factorDec !== void 0) {
+      sym.push(`D:${d2.factorDec}^${c2.exp}`);
+      continue;
+    }
+    if (d2.affine !== void 0) {
+      sym.push(`A:${d2.id}^${c2.exp}`);
+      continue;
+    }
+    fold = rMul(fold, rPowInt(ratOfFactor(d2.factor ?? { n: 1n, d: 1n }), c2.exp));
+    for (const [k2, v2] of Object.entries(d2.dim)) {
+      const kk = k2 === "tempdelta" ? "temperature" : k2;
+      dims.set(kk, (dims.get(kk) ?? 0) + v2 * c2.exp);
+    }
+  }
+  const dimKey = [...dims].filter(([, v2]) => v2 !== 0).sort((a2, b2) => a2[0] < b2[0] ? -1 : 1).map(([k2, v2]) => `${k2}^${v2}`).join("\xB7");
+  return { key: `${dimKey}|${sym.sort().join("\xB7")}`, canonX: rMul(t2.x, fold), fold };
 };
-var termKey = (comps) => comps.map((c2) => `${termSig(c2.def)}^${c2.exp}`).sort().join("\xB7");
-var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
 var mergeTerms = (a2, b2, sign2) => {
   const out = /* @__PURE__ */ new Map();
-  for (const t2 of a2) out.set(termKey(t2.comps), { x: t2.x, comps: t2.comps });
-  for (const t2 of b2) {
-    const k2 = termKey(t2.comps);
-    const prev = out.get(k2);
-    const xs = sign2 === 1n ? t2.x : { n: -t2.x.n, d: t2.x.d };
-    if (prev) prev.x = rAdd(prev.x, xs);
-    else out.set(k2, { x: xs, comps: t2.comps });
-  }
-  return [...out.values()].filter((t2) => rnorm(t2.x).n !== 0n);
+  const addAll = (list, s2) => {
+    for (const t2 of list) {
+      const { key, canonX, fold } = termCanon(t2);
+      const xs = s2 === 1n ? canonX : { n: -canonX.n, d: canonX.d };
+      const prev = out.get(key);
+      if (prev) prev.canonX = rAdd(prev.canonX, xs);
+      else out.set(key, { canonX: xs, comps: t2.comps, fold });
+    }
+  };
+  addAll(a2, 1n);
+  addAll(b2, sign2);
+  return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps }));
 };
+var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
   const lc = compsOf(l2);
   const rc = compsOf(r3);
   if (lc && rc && (lc.length !== 1 || rc.length !== 1 || lc[0].exp !== 1 || rc[0].exp !== 1 || lc[0].def.currency !== void 0 && rc[0].def.currency !== void 0 && lc[0].def.currency !== rc[0].def.currency)) {
+    const shadowed = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+    const alignTerms = (ratio9) => {
+      if (!shadowed(r3)) return void 0;
+      const out9 = [];
+      for (const t9 of termsOf(r3)) {
+        const rem9 = /* @__PURE__ */ new Map();
+        for (const c9 of t9.comps) {
+          const p9 = rem9.get(c9.def.id);
+          if (p9) p9.exp += c9.exp;
+          else rem9.set(c9.def.id, { def: c9.def, exp: c9.exp });
+        }
+        for (const c9 of rc) {
+          const p9 = rem9.get(c9.def.id);
+          if (!p9) return r3.terms;
+          p9.exp -= c9.exp;
+        }
+        const deco9 = [...rem9.values()].filter((c9) => c9.exp !== 0).map((c9) => ({ def: c9.def, exp: c9.exp }));
+        out9.push({ x: rMul(t9.x, ratio9), comps: [...lc.map((c9) => ({ ...c9 })), ...deco9] });
+      }
+      return out9;
+    };
+    const keepShadow = () => shadowed(r3) ? termsOf(r3) : void 0;
     const lBase = basePartOf(lc, ctx);
     const rBase = basePartOf(rc, ctx);
     if (lBase && rBase) {
       const ratio2 = rDiv(rBase.rat, lBase.rat);
-      if (lBase.dec === null && rBase.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio2)) };
+      if (lBase.dec === null && rBase.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio2)), terms: alignTerms(ratio2) };
       const dec2 = (rBase.dec ?? new DecC(1)).div(lBase.dec ?? new DecC(1));
-      return { ...l2, v: ratToDec(rMul(qx(r3), ratio2)).times(dec2), vx: void 0 };
+      return { ...l2, v: ratToDec(rMul(qx(r3), ratio2)).times(dec2), vx: void 0, terms: keepShadow() };
     }
     const lCur = lc.filter((c2) => c2.def.currency);
     const rRest = rc.map((c2) => ({ ...c2 })).filter((c2) => !c2.def.currency);
@@ -30251,14 +30301,14 @@ function alignForAdd(l2, r3, ctx) {
     const rBase2 = basePartOf(rRest, ctx);
     if (lBase2 === null || rBase2 === null) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
     ratio = rMul(ratio, rDiv(rBase2.rat, lBase2.rat));
-    if (lBase2.dec === null && rBase2.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio)) };
+    if (lBase2.dec === null && rBase2.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio)), terms: alignTerms(ratio) };
     const decR = (rBase2.dec ?? new DecC(1)).div(lBase2.dec ?? new DecC(1));
-    return { ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0 };
+    return { ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0, terms: keepShadow() };
   }
   if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
   const conv = convertQuantity(r3, l2.def, ctx);
   if (conv.t === "e") return conv;
-  return { ...l2, ...qv(qx(conv)) };
+  return { ...l2, ...qv(qx(conv)), terms: conv.terms };
 }
 var isOffsetScale = (q2) => q2.def?.affine !== void 0 && q2.def.affine.b !== 0n;
 var isPureLinear = (u2) => u2.factor !== void 0 && !u2.affine && !u2.currency && !u2.factorDec;
@@ -30514,8 +30564,8 @@ function addSummable(acc, v2, ctx) {
     const rhs = alignForAdd(acc, v2, ctx);
     if (rhs.t === "e") return rhs;
     const irr9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-    if (irr9(acc) || irr9(v2)) {
-      const merged9 = mergeTerms(termsOf(acc), termsOf(v2), 1n);
+    if (irr9(acc) || irr9(v2) || rhs.terms !== void 0) {
+      const merged9 = mergeTerms(termsOf(acc), termsOf(rhs.terms !== void 0 ? rhs : v2), 1n);
       if (merged9.length === 1) {
         const t9 = merged9[0];
         const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
@@ -31380,7 +31430,7 @@ function evalAst(ast, env, ctx = {}) {
         ...rate && { rate },
         comps: tComps
       };
-      if (e.symbol === symbol) return { ...template, ...qv(qx(e)), chosen: true };
+      if (e.symbol === symbol) return { ...template, ...qv(qx(e)), ...e.terms && { terms: e.terms }, chosen: true };
       const aligned = alignForAdd(template, e, ctx);
       if (aligned.t === "e") return aligned;
       return { ...aligned, chosen: true };
@@ -31432,7 +31482,7 @@ function evalAst(ast, env, ctx = {}) {
             const rT = canonTemp(r3);
             const irrT = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
             const kelvinTerms = (q9) => {
-              if (q9.def?.affine === void 0) return termsOf(q9);
+              if (q9.terms !== void 0 || q9.def?.affine === void 0) return termsOf(q9);
               const cv9 = convertQuantity(q9, lookupUnit("K"), ctx);
               return cv9.t === "q" ? [{ x: qx(cv9), comps: [{ def: lookupUnit("K"), exp: 1 }] }] : termsOf(q9);
             };
@@ -31480,8 +31530,8 @@ function evalAst(ast, env, ctx = {}) {
             if (rhs.t === "e") return rhs;
             const xr = qx(rhs);
             const irr = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-            if (irr(l2) || irr(r3)) {
-              const merged = mergeTerms(termsOf(l2), termsOf(r3), ast.op === "+" ? 1n : -1n);
+            if (irr(l2) || irr(r3) || rhs.terms !== void 0) {
+              const merged = mergeTerms(termsOf(l2), termsOf(rhs.terms !== void 0 ? rhs : r3), ast.op === "+" ? 1n : -1n);
               if (merged.length === 0) return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0 };
               if (merged.length === 1) {
                 const t9 = merged[0];
@@ -32140,7 +32190,7 @@ function nfkcWord(text) {
   let mapped = "";
   for (const ch of text) {
     const exp0 = UNIT_LIGATURES[ch];
-    mapped += exp0 === void 0 ? ch : `${exp0}\u2063`;
+    mapped += exp0 === void 0 ? ch : /[∕⁰¹²³⁴⁵⁶⁷⁸⁹²³¹]/u.test(exp0) ? `${exp0}\u2063` : exp0;
   }
   text = mapped;
   const nfc = text.normalize("NFC");
@@ -33735,6 +33785,37 @@ var CONFUSABLES = {
   // ꓧꓗꓓ (HKD)… must refuse as currency homoglyphs, never read as prose
   "\uA4E7": "H",
   "\uA4DC": "Z",
+  // Coptic capitals (UTS #39): °Ⲥ, Ⲕ, ⲘHz must refuse as homoglyphs
+  "\u2C80": "A",
+  "\u2C82": "B",
+  "\u2C84": "G",
+  "\u2C86": "D",
+  "\u2C88": "E",
+  "\u2C8C": "Z",
+  "\u2C8E": "H",
+  "\u2C92": "I",
+  "\u2C94": "K",
+  "\u2C96": "L",
+  "\u2C98": "M",
+  "\u2C9A": "N",
+  "\u2C9E": "O",
+  "\u2CA2": "P",
+  "\u2CA4": "C",
+  "\u2CA6": "T",
+  "\u2CA8": "Y",
+  "\u2CAC": "X",
+  "\u2C81": "a",
+  "\u2C83": "b",
+  "\u2C89": "e",
+  "\u2C93": "i",
+  "\u2C95": "k",
+  "\u2C99": "m",
+  "\u2C9B": "n",
+  "\u2C9F": "o",
+  "\u2CA3": "p",
+  "\u2CA5": "c",
+  "\u2CA7": "t",
+  "\u2CA9": "y",
   "\u13E6": "K",
   "\u13DF": "C",
   "\u13AC": "E",
@@ -34009,11 +34090,6 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     }
     tokens.splice(idx9, 1, { ...t9, text: segs9.join("\xB7") });
   }
-  tokens = stripParentheticalComments(tokens, env, lexicon, violations, ignored, rts);
-  const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
-  if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
-    tokens = tokens.slice(colonIdx + 1);
-  }
   const SUPS = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
   const supOf = (n9) => {
     const body9 = String(Math.abs(n9)).split("").map((d9) => SUPS[Number(d9)]).join("");
@@ -34113,6 +34189,11 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       tokens.splice(idx9, 3, { ...w1, text: `${w1.text}\xB7${w2.text}`, end: w2.end });
       idx9--;
     }
+  }
+  tokens = stripParentheticalComments(tokens, env, lexicon, violations, ignored, rts);
+  const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
+  if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
+    tokens = tokens.slice(colonIdx + 1);
   }
   const out = [];
   for (let idx = 0; idx < tokens.length; idx++) {
@@ -34469,6 +34550,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     altTexts: [],
     altCands: [],
     altWorlds: [],
+    hasErrAltWorld: false,
     preStrictSummable: false,
     preStrictRt: null
   });
@@ -34630,12 +34712,11 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         true
       );
       mergeReads(alt);
-      if (alt.rt === null || alt.rt.t === "e") {
-        if (alt.rt !== null) {
-          dissolved.push(a2);
-          altTexts.push(altLine);
-          altWorlds.push({ rt: alt.rt, cands: [candIdx(a2)] });
-        }
+      if (alt.rt === null) continue;
+      if (alt.rt.t === "e") {
+        dissolved.push(a2);
+        altTexts.push(altLine);
+        altWorlds.push({ rt: alt.rt, cands: [candIdx(a2)] });
         continue;
       }
       if (semantic(alt.rt) === semanticChosen) {
@@ -34787,11 +34868,71 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     altTexts,
     altCands,
     altWorlds,
+    hasErrAltWorld: rt2.t !== "e" && altWorlds.some((w9) => w9.rt.t === "e" && w9.rt.code !== "not-understood" && w9.rt.code !== "syntax" && w9.rt.code !== "forward-reference"),
     preStrictSummable,
     preStrictRt
   };
 }
-function runSheet(text, context, cache2) {
+function captureConfig(context) {
+  const one = (read) => {
+    try {
+      return read();
+    } catch {
+      return void 0;
+    }
+  };
+  const polSrc = one(() => context.policies);
+  const finSrc = one(() => context.financial);
+  const fmtSrc = one(() => context.formatting);
+  const policies = polSrc == null ? void 0 : (() => {
+    const o9 = {};
+    const put = (k2) => {
+      const v9 = one(() => polSrc[k2]);
+      if (v9 !== void 0) o9[k2] = v9;
+    };
+    put("misplacedGroupSeparator");
+    put("dateOrder");
+    put("preferFutureForAmbiguousDates");
+    put("anchorTimeForBareDates");
+    put("monthToDays");
+    put("ambiguity");
+    put("preferSomethingToNothing");
+    put("ambiguousTimezoneCodesRequireUppercase");
+    return o9;
+  })();
+  const financial = typeof finSrc === "object" && finSrc !== null ? (() => {
+    const c9 = one(() => finSrc.currency);
+    return c9 !== void 0 ? { currency: c9 } : {};
+  })() : finSrc;
+  const formatting = fmtSrc == null ? void 0 : (() => {
+    const o9 = {};
+    const put = (k2) => {
+      const v9 = one(() => fmtSrc[k2]);
+      if (v9 !== void 0) o9[k2] = v9;
+    };
+    put("decimalPlaces");
+    put("thousandsSeparator");
+    put("decimalSeparator");
+    put("dateOrder");
+    put("language");
+    return o9;
+  })();
+  const langsSrc = one(() => context.languages);
+  return {
+    cfg: {
+      locale: one(() => context.locale),
+      numberGrammar: one(() => context.numberGrammar),
+      dateOrder: one(() => context.dateOrder),
+      region: one(() => context.region),
+      languages: langsSrc ? [...langsSrc] : void 0,
+      ...policies !== void 0 && { policies },
+      ...financial !== void 0 && { financial },
+      ...formatting !== void 0 && { formatting }
+    },
+    tz: one(() => context.timezone)
+  };
+}
+function runSheet(text, context, cache2, initialCfg) {
   const safeGet = (read, fallback) => {
     try {
       return read();
@@ -34799,59 +34940,22 @@ function runSheet(text, context, cache2) {
       return fallback;
     }
   };
-  const captureConfig = () => {
-    const polSrc = safeGet(() => context.policies, void 0);
-    const finSrc = safeGet(() => context.financial, void 0);
-    const fmtSrc = safeGet(() => context.formatting, void 0);
-    const polField = (k2) => polSrc == null ? void 0 : safeGet(() => polSrc[k2], void 0);
-    const policies = polSrc == null ? void 0 : {
-      ...polField("misplacedGroupSeparator") !== void 0 && { misplacedGroupSeparator: polField("misplacedGroupSeparator") },
-      ...polField("dateOrder") !== void 0 && { dateOrder: polField("dateOrder") },
-      ...polField("preferFutureForAmbiguousDates") !== void 0 && { preferFutureForAmbiguousDates: polField("preferFutureForAmbiguousDates") },
-      ...polField("anchorTimeForBareDates") !== void 0 && { anchorTimeForBareDates: polField("anchorTimeForBareDates") },
-      ...polField("monthToDays") !== void 0 && { monthToDays: polField("monthToDays") },
-      ...polField("ambiguity") !== void 0 && { ambiguity: polField("ambiguity") },
-      ...polField("preferSomethingToNothing") !== void 0 && { preferSomethingToNothing: polField("preferSomethingToNothing") },
-      ...polField("ambiguousTimezoneCodesRequireUppercase") !== void 0 && { ambiguousTimezoneCodesRequireUppercase: polField("ambiguousTimezoneCodesRequireUppercase") }
-    };
-    const financial = typeof finSrc === "object" && finSrc !== null ? (() => {
-      const c9 = safeGet(() => finSrc.currency, void 0);
-      return c9 !== void 0 ? { currency: c9 } : {};
-    })() : finSrc;
-    const fmtField = (k2) => fmtSrc == null ? void 0 : safeGet(() => fmtSrc[k2], void 0);
-    const formatting = fmtSrc == null ? void 0 : {
-      ...fmtField("decimalPlaces") !== void 0 && { decimalPlaces: fmtField("decimalPlaces") },
-      ...fmtField("thousandsSeparator") !== void 0 && { thousandsSeparator: fmtField("thousandsSeparator") },
-      ...fmtField("decimalSeparator") !== void 0 && { decimalSeparator: fmtField("decimalSeparator") },
-      ...fmtField("dateOrder") !== void 0 && { dateOrder: fmtField("dateOrder") },
-      ...fmtField("language") !== void 0 && { language: fmtField("language") }
-    };
-    return {
-      cfg: {
-        locale: safeGet(() => context.locale, void 0),
-        numberGrammar: safeGet(() => context.numberGrammar, void 0),
-        dateOrder: safeGet(() => context.dateOrder, void 0),
-        region: safeGet(() => context.region, void 0),
-        languages: safeGet(() => context.languages ? [...context.languages] : void 0, void 0),
-        ...policies !== void 0 && { policies },
-        ...financial !== void 0 && { financial },
-        ...formatting !== void 0 && { formatting }
-      },
-      tz: safeGet(() => context.timezone, void 0)
-    };
-  };
   const cfgKeyOf = (c9) => JSON.stringify(c9);
   const attempt = (seeds) => {
-    const cfgCap = seeds !== void 0 ? seeds.cfg : captureConfig();
+    const cfgCap = seeds !== void 0 ? seeds.cfg : initialCfg !== void 0 && initialCfg.cap !== null ? (() => {
+      const c9 = initialCfg.cap;
+      initialCfg.cap = null;
+      return c9;
+    })() : captureConfig(context);
     const cfgSnap = cfgCap.cfg;
     const tzSnap = cfgCap.tz;
     const grammar = resolveGrammar(cfgSnap);
     const dateOrder = resolveDateOrder(cfgSnap);
     validateFormatting(cfgSnap);
-    const ratesRef2 = safeGet(() => context.rates, { rate: () => {
+    const ratesRef2 = seeds !== void 0 ? seeds.refs.rates : safeGet(() => context.rates, { rate: () => {
       throw new Error("context.rates getter failed");
     } });
-    const holidaysRef2 = safeGet(() => context.holidays, { holidays: () => {
+    const holidaysRef2 = seeds !== void 0 ? seeds.refs.holidays : safeGet(() => context.holidays, { holidays: () => {
       throw new Error("context.holidays getter failed");
     } });
     const nowSnap = seeds !== void 0 ? seeds.now : safeGet(() => context.now ?? null, null);
@@ -34937,6 +35041,7 @@ function runSheet(text, context, cache2) {
     const lineRootParts = [];
     const lineCands = [];
     const lineSectionStarts = [];
+    const lineErrAlt = [];
     const lineTexts = [];
     const lineDefines = [];
     const varAlts = /* @__PURE__ */ new Map();
@@ -34994,13 +35099,25 @@ function runSheet(text, context, cache2) {
       }
       if (entry.deps.usesTotal) {
         for (let j9 = sectionStart; j9 < doubtSigs.length; j9++) {
-          if (!doubtSigs[j9] || aggDerived[j9]) continue;
+          if (aggDerived[j9]) continue;
+          if (!doubtSigs[j9]) {
+            if (lineErrAlt[j9] && isSummable(rts[j9] ?? null)) {
+              srcLabels.push(`line(${j9 + 1})`);
+              srcLineIdxs.push(j9 + 1);
+              srcLevel = Math.max(srcLevel, 2);
+            }
+            continue;
+          }
           if (isAmbErr(rts[j9])) {
             if (!preSummable[j9]) continue;
             srcLabels.push(`line(${j9 + 1})`);
             srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
             droppedAmbiguous = true;
           } else if (isSummable(rts[j9] ?? null)) {
+            srcLabels.push(`line(${j9 + 1})`);
+            srcLineIdxs.push(j9 + 1);
+            srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
+          } else if (rts[j9] !== null && rts[j9].t === "e") {
             srcLabels.push(`line(${j9 + 1})`);
             srcLineIdxs.push(j9 + 1);
             srcLevel = Math.max(srcLevel, sigLevel(doubtSigs[j9]));
@@ -35012,7 +35129,8 @@ function runSheet(text, context, cache2) {
       const runParts = /* @__PURE__ */ new Set();
       entry.altCands.forEach((_9, c9) => runParts.add(`${i2 + 1}:c${c9}`));
       let comboUnverified = false;
-      if (srcLabels.length > 0 && !droppedAmbiguous && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
+      const openToWorlds = rtOut !== null && (rtOut.t !== "e" || rtOut.code !== "ambiguous");
+      if (srcLabels.length > 0 && !droppedAmbiguous && openToWorlds && publicResult.value !== null) {
         const srcByLine = /* @__PURE__ */ new Map();
         const addSource = (line9) => {
           if (line9 < 1 || srcByLine.has(line9)) return;
@@ -35168,7 +35286,7 @@ function runSheet(text, context, cache2) {
         if (exhausted) comboUnverified = true;
         if (!sensitive) srcLabels.length = 0;
       }
-      if (srcLabels.length > 0 && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null) {
+      if (srcLabels.length > 0 && openToWorlds && rtOut !== null && publicResult.value !== null) {
         const lang9 = formatting.language ?? "fr";
         const uniq = [...new Set(srcLabels)];
         const msg = lang9 === "fr" ? `d\xE9pend de ${uniq.join(", ")}, qui comporte une ambigu\xEFt\xE9` : lang9 === "de" ? `h\xE4ngt von ${uniq.join(", ")} ab, das eine Mehrdeutigkeit enth\xE4lt` : `depends on ${uniq.join(", ")}, which carries an ambiguity`;
@@ -35183,7 +35301,7 @@ function runSheet(text, context, cache2) {
           ];
         }
       }
-      if (comboUnverified && rtOut !== null && rtOut.t !== "e" && publicResult.value !== null && !(publicResult.assumptions ?? []).some((a9) => a9.code === "combination-unverified")) {
+      if (comboUnverified && openToWorlds && rtOut !== null && publicResult.value !== null && !(publicResult.assumptions ?? []).some((a9) => a9.code === "combination-unverified")) {
         const lang9 = formatting.language ?? "fr";
         const msg9 = lang9 === "fr" ? `toutes les combinaisons d'interpr\xE9tations n'ont pas pu \xEAtre v\xE9rifi\xE9es` : `not every combination of interpretations could be verified`;
         if ((cfgSnap.policies?.ambiguity ?? "annotate") === "strict") {
@@ -35213,6 +35331,7 @@ function runSheet(text, context, cache2) {
       }
       lineRootParts.push(runParts);
       lineCands.push(entry.altCands);
+      lineErrAlt.push(entry.hasErrAltWorld);
       lineTexts.push(line);
       lineDefines.push(entry.defines);
       preSummable.push(entry.preStrictSummable);
@@ -35238,7 +35357,7 @@ function runSheet(text, context, cache2) {
   const holidaysRef = safeGet(() => context.holidays, { holidays: () => {
     throw new Error("context.holidays getter failed");
   } });
-  const cfgVerify = captureConfig();
+  const cfgVerify = captureConfig(context);
   let cfgTorn = cfgKeyOf(cfgVerify) !== cfgKeyOf(out.cfgCap);
   const seedFx = /* @__PURE__ */ new Map();
   const seedHol = /* @__PURE__ */ new Map();
@@ -35281,17 +35400,17 @@ function runSheet(text, context, cache2) {
     }
     cfgTorn = cfgTorn || torn;
   }
-  if (cfgTorn) out = attempt({ fx: seedFx, hol: seedHol, now: seedNow2, cfg: cfgVerify });
+  if (cfgTorn) out = attempt({ fx: seedFx, hol: seedHol, now: seedNow2, cfg: cfgVerify, refs: { rates: ratesRef, holidays: holidaysRef } });
   return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed };
 }
-function evaluateSheet(text, context) {
-  return runSheet(text, context, null).result;
+function evaluateSheet(text, context, initialCfg) {
+  return runSheet(text, context, null, initialCfg).result;
 }
-function createSheetSession(context) {
+function createSheetSession(context, initialCfg) {
   let cache2 = null;
   return {
     update(text) {
-      const { result, cacheOut, recomputed } = runSheet(text, context, cache2);
+      const { result, cacheOut, recomputed } = runSheet(text, context, cache2, initialCfg);
       cache2 = cacheOut;
       return { ...result, recomputedLines: recomputed };
     }
@@ -35333,17 +35452,17 @@ function validateFormatting(context) {
   }
 }
 function createEngine(context = {}) {
-  validateFormatting(context);
+  const initial = captureConfig(context);
+  validateFormatting(initial.cfg);
+  const box = { cap: initial };
   return {
     evaluateSheet(text) {
-      validateFormatting(context);
-      return evaluateSheet(text, context);
+      return evaluateSheet(text, context, box);
     },
     createSession() {
-      const session = createSheetSession(context);
+      const session = createSheetSession(context, box);
       return {
         update(text) {
-          validateFormatting(context);
           return session.update(text);
         }
       };
