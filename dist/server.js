@@ -29459,7 +29459,7 @@ function parsePowerWord(word) {
   if (!base || base.affine) return void 0;
   if (isDigit2 && !(Object.keys(base.dim).length === 1 && base.dim["length"] === 1)) return void 0;
   const n2 = isDigit2 ? Number(m2[2]) : parseSupInt(m2[2]);
-  if (!Number.isFinite(n2) || n2 === 0 || n2 === 1 || Math.abs(n2) > 999) return void 0;
+  if (!Number.isFinite(n2) || n2 === 0 || n2 === 1 || Math.abs(n2) > 1e6) return void 0;
   return { base, n: n2 };
 }
 function lookupPowerUnit(word) {
@@ -29468,7 +29468,7 @@ function lookupPowerUnit(word) {
   const parsed = parsePowerWord(word);
   if (!parsed) return void 0;
   const { base, n: n2 } = parsed;
-  if (Math.abs(n2) > 999 && !base.factor && !base.factorDec) return void 0;
+  if (Math.abs(n2) > 1e6 && !base.factor && !base.factorDec) return void 0;
   const dim = {};
   for (const [k2, v2] of Object.entries(base.dim)) dim[k2] = v2 * n2;
   const def = {
@@ -30231,6 +30231,52 @@ var mergeTerms = (a2, b2, sign2, thirty) => {
   return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps }));
 };
 var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
+var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
+  if (a2.length * b2.length > 16) return null;
+  const out = [];
+  for (const ta of a2) {
+    for (const tb of b2) {
+      out.push({
+        x: sign2 === 1 ? rMul(ta.x, tb.x) : rDiv(ta.x, tb.x),
+        comps: canonComps([
+          ...ta.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+          ...tb.comps.map((c2) => ({ def: c2.def, exp: c2.exp * sign2 }))
+        ])
+      });
+    }
+  }
+  return mergeTerms(out, [], 1n, thirty);
+};
+var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
+var fracOf = (q2) => ({ num: termsOf(q2), den: q2.termsDen ?? ONE_TERMS() });
+var attachFrac = (base, num, den) => {
+  if (num === null || den === null) return { ...base, terms: void 0, termsDen: void 0 };
+  if (den.length === 1 && den[0].comps.length === 0 && rnorm(den[0].x).n !== 0n) {
+    const k2 = den[0].x;
+    return { ...base, terms: num.map((t2) => ({ x: rDiv(t2.x, k2), comps: t2.comps })), termsDen: void 0 };
+  }
+  return { ...base, terms: num, termsDen: den };
+};
+var termsCmp = (a2, b2, thirty) => {
+  const d2 = mergeTerms(a2, b2, -1n, thirty);
+  if (d2.length === 0) return 0;
+  if (d2.length === 1) {
+    const x2 = rnorm(d2[0].x);
+    return x2.n === 0n ? 0 : x2.n > 0n ? 1 : -1;
+  }
+  let sum2 = { n: 0n, d: 1n };
+  let dimKey = null;
+  for (const t2 of d2) {
+    const { key, canonX } = termCanon(t2, thirty);
+    const [dk, sym] = key.split("|");
+    if (sym !== "") return null;
+    if (dimKey === null) dimKey = dk;
+    else if (dimKey !== dk) return null;
+    sum2 = rAdd(sum2, canonX);
+  }
+  const s2 = rnorm(sum2);
+  return s2.n === 0n ? 0 : s2.n > 0n ? 1 : -1;
+};
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
@@ -30629,10 +30675,11 @@ var spanEmit = (months, days, groups, thirty) => {
   }
   let weeks = 0n;
   let outDays = days;
-  if (days > MAXI || days < -MAXI) {
-    if (thirty === true && months === 0n) {
-      years = clamp2(days / 360n);
-      let rem9 = days - years * 360n;
+  if (days > MAXI || days < -MAXI || thirty === true && (restM > MAXI || restM < -MAXI || (restM === MAXI || restM === -MAXI) && days !== 0n)) {
+    if (thirty === true) {
+      const all9 = months * 30n + days;
+      years = clamp2(all9 / 360n);
+      let rem9 = all9 - years * 360n;
       restM = clamp2(rem9 / 30n);
       rem9 -= restM * 30n;
       weeks = clamp2(rem9 / 7n);
@@ -30676,7 +30723,7 @@ function addSummable(acc, v2, ctx) {
     const b9 = spanCanon(v2.c);
     const g9 = spanGroups(acc.c);
     const h9 = spanGroups(v2.c);
-    const out9 = spanEmit(a9.months + b9.months, a9.days + b9.days, { hasM: g9.hasM || h9.hasM, hasD: g9.hasD || h9.hasD });
+    const out9 = spanEmit(a9.months + b9.months, a9.days + b9.days, { hasM: g9.hasM || h9.hasM, hasD: g9.hasD || h9.hasD }, ctx.monthToDays === "30");
     return out9;
   }
   if (acc.t === "q" || v2.t === "q") {
@@ -30958,7 +31005,11 @@ function evalAst(ast, env, ctx = {}) {
             if (cK.t !== "q") return cK;
             scal9.push({ x: qx(cK), rt: val });
           }
-          scal9.sort((a9, b9) => rCmp(a9.x, b9.x));
+          scal9.sort((a9, b9) => {
+            const e9 = termsCmp(termsOf(a9.rt), termsOf(b9.rt), ctx.monthToDays === "30");
+            if (e9 !== null) return e9;
+            return rCmp(a9.x, b9.x);
+          });
           const mid9 = scal9.length >> 1;
           if (scal9.length % 2 === 1) {
             const f0 = values[0];
@@ -30993,7 +31044,13 @@ function evalAst(ast, env, ctx = {}) {
             items.push({ x: numRat(val), rt: val });
           }
         }
-        items.sort((a2, b2) => rCmp(a2.x, b2.x));
+        items.sort((a2, b2) => {
+          if (a2.rt.t === "q" && b2.rt.t === "q") {
+            const e9 = termsCmp(termsOf(a2.rt), termsOf(b2.rt), ctx.monthToDays === "30");
+            if (e9 !== null) return e9;
+          }
+          return rCmp(a2.x, b2.x);
+        });
         const mid = items.length >> 1;
         if (items.length % 2 === 1) return items[mid].rt;
         const meanX = rDiv(rAdd(items[mid - 1].x, items[mid].x), { n: 2n, d: 1n });
@@ -31673,6 +31730,22 @@ function evalAst(ast, env, ctx = {}) {
             if (rhs.t === "e") return rhs;
             const xr = qx(rhs);
             const irr = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+            if (l2.termsDen !== void 0 || r3.termsDen !== void 0 || rhs.termsDen !== void 0) {
+              const t30 = ctx.monthToDays === "30";
+              const rr9 = rhs.terms !== void 0 || rhs.termsDen !== void 0 ? rhs : r3;
+              const fl9 = fracOf(l2);
+              const fr9 = fracOf(rr9);
+              const a9 = distributeTerms(fl9.num, fr9.den, t30);
+              const b9 = distributeTerms(fr9.num, fl9.den, t30);
+              const dd9 = distributeTerms(fl9.den, fr9.den, t30);
+              if (a9 !== null && b9 !== null && dd9 !== null) {
+                const nn9 = mergeTerms(a9, b9, ast.op === "+" ? 1n : -1n, t30);
+                if (nn9.length === 0) return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+                const xr9 = qx(rhs);
+                const dec9 = ast.op === "+" ? rAdd(qx(l2), xr9) : rSub(qx(l2), xr9);
+                return attachFrac({ ...l2, ...qv(dec9) }, nn9, dd9);
+              }
+            }
             if (irr(l2) || irr(r3) || rhs.terms !== void 0) {
               const merged = mergeTerms(termsOf(l2), termsOf(rhs.terms !== void 0 ? rhs : r3), ast.op === "+" ? 1n : -1n, ctx.monthToDays === "30");
               if (merged.length === 0) return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0 };
@@ -31702,14 +31775,13 @@ function evalAst(ast, env, ctx = {}) {
               const sh9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               const lt9 = termsOf(l2);
               const rt9 = termsOf(r3);
-              if (prod9.t === "q" && (sh9(l2) || sh9(r3)) && lt9.length === 1 && rt9.length === 1) {
-                const sign9 = ast.op === "*" ? 1 : -1;
-                const comps9 = canonComps([
-                  ...lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp })),
-                  ...rt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * sign9 }))
-                ]);
-                const x9 = ast.op === "*" ? rMul(lt9[0].x, rt9[0].x) : rDiv(lt9[0].x, rt9[0].x);
-                prod9 = { ...prod9, terms: [{ x: x9, comps: comps9 }] };
+              if (prod9.t === "q" && (sh9(l2) || sh9(r3) || l2.termsDen !== void 0 || r3.termsDen !== void 0)) {
+                const t30 = ctx.monthToDays === "30";
+                const fl9 = fracOf(l2);
+                const fr9 = fracOf(r3);
+                const num9 = ast.op === "*" ? distributeTerms(fl9.num, fr9.num, t30) : distributeTerms(fl9.num, fr9.den, t30);
+                const den9 = ast.op === "*" ? distributeTerms(fl9.den, fr9.den, t30) : distributeTerms(fl9.den, fr9.num, t30);
+                prod9 = attachFrac(prod9, num9, den9);
               }
             }
             const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
@@ -31736,7 +31808,7 @@ function evalAst(ast, env, ctx = {}) {
             if (n2.d !== 1n) return err("unsupported-pair", "quantities support whole-number exponents only");
             if (isOffsetScale(l2)) return err("unit-mismatch", "raising offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
             const e0 = Number(n2.n);
-            if (Math.abs(e0) > 999) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
+            if (Math.abs(e0) > 1e6) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
             if (e0 === 0) return { t: "d", v: new DecC(1) };
             if (e0 === 1) return l2;
             if (e0 < 0 && qx(l2).n === 0n) return err("division-by-zero");
@@ -31759,7 +31831,7 @@ function evalAst(ast, env, ctx = {}) {
             const lc9 = compsOf(l2);
             if (!lc9) return err("unsupported-pair", `cannot raise ${l2.symbol}`);
             const scaled = lc9.map((c2) => ({ def: c2.def, exp: c2.exp * e0 }));
-            if (scaled.some((c2) => Math.abs(c2.exp) > 999)) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
+            if (scaled.some((c2) => Math.abs(c2.exp) > 1e6)) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
             const raw9 = {
               t: "q",
               ...qv(rPowInt(qx(l2), e0)),
@@ -31771,8 +31843,22 @@ function evalAst(ast, env, ctx = {}) {
             let pow9 = combineQuantities(one9, raw9, "*", ctx);
             const lt9 = termsOf(l2);
             const shadowed9 = l2.terms !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-            if (pow9.t === "q" && shadowed9 && lt9.length === 1) {
-              pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))) }] };
+            if (pow9.t === "q" && (shadowed9 || l2.termsDen !== void 0)) {
+              if (lt9.length === 1 && l2.termsDen === void 0) {
+                pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))) }] };
+              } else {
+                const t30 = ctx.monthToDays === "30";
+                const f9 = fracOf(l2);
+                const powList9 = (list9, n9) => {
+                  let acc9 = ONE_TERMS();
+                  for (let p9 = 1; p9 <= n9 && acc9 !== null; p9++) acc9 = distributeTerms(acc9, list9, t30);
+                  return acc9;
+                };
+                const abs9 = Math.abs(e0);
+                const numSrc9 = e0 > 0 ? f9.num : f9.den;
+                const denSrc9 = e0 > 0 ? f9.den : f9.num;
+                pow9 = attachFrac(pow9, powList9(numSrc9, abs9), powList9(denSrc9, abs9));
+              }
             }
             return l2.chosen && pow9.t === "q" ? { ...pow9, chosen: true } : pow9;
           }
@@ -31881,7 +31967,21 @@ function evalAst(ast, env, ctx = {}) {
           if (l2.t === "ts" && r3.t === "ts") {
             if (ast.op === "+" || ast.op === "-") {
               const sum2 = addSpans(l2.c, r3.c, ast.op === "+" ? 1 : -1);
-              if (!spanIsSafe(sum2)) {
+              const satur30 = (() => {
+                if (ctx.monthToDays !== "30" || !spanIsSafe(sum2)) return false;
+                const MAXI9 = 9007199254740991n;
+                const a0 = spanCanon(l2.c);
+                const b0 = spanCanon(r3.c);
+                const s0 = ast.op === "+" ? 1n : -1n;
+                const cm0 = a0.months + s0 * b0.months;
+                const cd0 = a0.days + s0 * b0.days;
+                let yy0 = cm0 / 12n;
+                if (yy0 > MAXI9) yy0 = MAXI9;
+                if (yy0 < -MAXI9) yy0 = -MAXI9;
+                const rm0 = cm0 - yy0 * 12n;
+                return (rm0 === MAXI9 || rm0 === -MAXI9) && cd0 !== 0n;
+              })();
+              if (!spanIsSafe(sum2) || satur30) {
                 const a9 = spanCanon(l2.c);
                 const b9 = spanCanon(r3.c);
                 const s9 = ast.op === "+" ? 1n : -1n;
@@ -31890,7 +31990,8 @@ function evalAst(ast, env, ctx = {}) {
                 return spanEmit(
                   a9.months + s9 * b9.months,
                   a9.days + s9 * b9.days,
-                  { hasM: ga.hasM || gb.hasM, hasD: ga.hasD || gb.hasD }
+                  { hasM: ga.hasM || gb.hasM, hasD: ga.hasD || gb.hasD },
+                  ctx.monthToDays === "30"
                 );
               }
               return { t: "ts", c: sum2 };
@@ -32376,7 +32477,10 @@ var UNIT_LIGATURES = {
   "\u33CE": "km",
   "\u33D6": "mol",
   "\u33C2": "am",
-  "\u33D8": "pm"
+  "\u33D8": "pm",
+  "\u3374": "bar",
+  "\u338A": "pF",
+  "\u33FF": "gal"
 };
 function nfkcWord(text) {
   let mapped = "";
@@ -34304,7 +34408,9 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         return bi9 >= 1 && (w9b?.kind === "word" && isComputableWord(w9b.text) && !env.has(w9b.text) && !isAggWord(w9b.text) && !isUnitWord(w9b.text) || w9b?.kind === "number" && w9c?.kind === "word" && isComputableWord(w9c.text) && !isUnitWord(w9c.text));
       };
       const innerHasCode = meaningful.some((t9) => t9.kind === "word" && (looksLikeCode(t9.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t9.text)));
-      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && (isTimespanUnitWord(b2.text) || env.has(b2.text) || isAggWord(b2.text) || timeUnit9(b2.text)) && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
+      const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && (isTimespanUnitWord(b2.text) || env.has(b2.text) || isAggWord(b2.text) || timeUnit9(b2.text)) && temporalContext() || // a bare NUMBER closing a temporal expression carries the same
+      // qualifier discipline: 14:30 + 1 h * 1 (approx) refuses (AJ)
+      (b2.kind === "number" || b2.kind === "fraction") && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
       if (qualifies(before) || qualifies(beforeEff)) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
         return out;
@@ -34399,7 +34505,9 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       continue;
     }
     let consumed9 = 0;
-    if (lastPair9 && /[⁣⁰¹²³⁴⁵⁶⁷⁸⁹]$/u.test(t9.text)) {
+    let chainEnd9 = t9.end;
+    const chainTargets9 = /[⁣⁰¹²³⁴⁵⁶⁷⁸⁹]$/u.test(t9.text) ? lastPair9 !== null && lastPair9[1] === segs0.length - 1 ? lastPair9 : segs0.length > 0 ? [segs0.length - 1] : null : null;
+    if (chainTargets9 !== null) {
       let k9 = idx9 + 1;
       for (; ; ) {
         const op9 = tokens[k9];
@@ -34417,26 +34525,49 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           j9++;
         }
         const num9 = tokens[j9];
-        if (!(num9?.kind === "number" && num9.plainInt)) break;
+        if (num9?.kind !== "number") break;
+        let outerAbs9;
+        try {
+          outerAbs9 = Number(BigInt(num9.dec.toFixed()));
+        } catch {
+          break;
+        }
         j9++;
         if (paren9) {
           if (tokens[j9]?.kind !== "rparen") break;
           j9++;
         }
-        const outer9 = sign9 * Number(num9.dec.toFixed());
-        for (const q9 of lastPair9) segs0[q9].exp *= outer9;
+        const outer9 = sign9 * outerAbs9;
+        for (const q9 of chainTargets9) segs0[q9].exp *= outer9;
         consumed9 = j9 - idx9 - 1;
+        chainEnd9 = tokens[j9 - 1].end;
         k9 = j9;
       }
     }
+    let glue9 = null;
+    if (consumed9 > 0) {
+      const nx9 = tokens[idx9 + consumed9 + 1];
+      if (nx9?.kind === "word" && nx9.start === chainEnd9 && isUnitWord(nx9.text.split("\xB7")[0])) {
+        glue9 = nx9.text;
+        consumed9 += 1;
+      }
+    }
+    const deferLast9 = chainTargets9 === null && tokens[idx9 + 1]?.kind === "op" && tokens[idx9 + 1].op === "^" && segs0.length > 1;
+    const mergeList9 = deferLast9 ? segs0.slice(0, -1) : segs0;
     const expMap0 = /* @__PURE__ */ new Map();
-    for (const s9 of segs0) expMap0.set(s9.base, (expMap0.get(s9.base) ?? 0) + s9.exp);
+    for (const s9 of mergeList9) expMap0.set(s9.base, (expMap0.get(s9.base) ?? 0) + s9.exp);
     const segOut0 = [];
     for (const [b9, e0] of expMap0) {
       if (e0 === 0) continue;
       const body9 = String(Math.abs(e0)).split("").map((d9) => SUPS0[Number(d9)]).join("");
       segOut0.push(e0 === 1 ? b9 : `${b9}${e0 < 0 ? "\u207B" : ""}${body9}`);
     }
+    if (deferLast9) {
+      const l9 = segs0[segs0.length - 1];
+      const body9 = String(Math.abs(l9.exp)).split("").map((d9) => SUPS0[Number(d9)]).join("");
+      if (l9.exp !== 0) segOut0.push(l9.exp === 1 ? l9.base : `${l9.base}${l9.exp < 0 ? "\u207B" : ""}${body9}`);
+    }
+    if (glue9 !== null) segOut0.push(glue9);
     if (segOut0.length === 0) {
       if (tokens[idx9 - 1]?.kind === "number") tokens.splice(idx9, 1 + consumed9);
       else tokens.splice(idx9, 1 + consumed9, { kind: "number", text: "1", start: t9.start, end: t9.end, dec: new DecC(1), plainInt: false });
@@ -34541,7 +34672,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       pos9 = j9;
     }
     if (!any9) continue;
-    if (prod9 !== 0n && (prod9 > 999n || prod9 < -999n)) continue;
+    if (prod9 !== 0n && (prod9 > 1000000n || prod9 < -1000000n)) continue;
     const e9 = Number(prod9);
     const k9 = pos9 - 1;
     last9 = e9 === 0 ? "" : `${base9}${e9 === 1 ? "" : supOf(e9)}`;
@@ -34576,7 +34707,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       else if (prv9?.kind === "op" && prv9.op === "*") {
         tokens.splice(idx9 - 1, 1);
         idx9--;
-      }
+      } else if (nxt9?.kind === "op" && nxt9.op === "*") tokens.splice(idx9, 1);
     }
     idx9--;
   }
@@ -34591,6 +34722,37 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
     tokens = tokens.slice(colonIdx + 1);
+  }
+  for (let ix9 = 0; ix9 < tokens.length; ix9++) {
+    const t9 = tokens[ix9];
+    if (t9.kind !== "word" || !t9.text.includes("\xB7")) continue;
+    const segs9 = t9.text.split("\xB7");
+    const SUPMAP1 = { "\u2070": 0, "\xB9": 1, "\xB2": 2, "\xB3": 3, "\u2074": 4, "\u2075": 5, "\u2076": 6, "\u2077": 7, "\u2078": 8, "\u2079": 9 };
+    const SUPD1 = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
+    const parsed9 = segs9.map((s9) => {
+      const m9 = /^(.*?)(⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+)?$/u.exec(s9);
+      if (!m9[2]) return { base: s9, exp: 1 };
+      const neg9 = m9[2].startsWith("\u207B");
+      return { base: m9[1], exp: (neg9 ? -1 : 1) * Number([...neg9 ? m9[2].slice(1) : m9[2]].map((c1) => SUPMAP1[c1]).join("")) };
+    });
+    const bases9 = parsed9.map((p9) => p9.base);
+    if (new Set(bases9).size === bases9.length) continue;
+    if (!bases9.every((b9) => isUnitWord(b9))) continue;
+    const merged9 = /* @__PURE__ */ new Map();
+    for (const p9 of parsed9) merged9.set(p9.base, (merged9.get(p9.base) ?? 0) + p9.exp);
+    const outSegs9 = [];
+    for (const [b9, e1] of merged9) {
+      if (e1 === 0) continue;
+      const body9 = String(Math.abs(e1)).split("").map((d9) => SUPD1[Number(d9)]).join("");
+      outSegs9.push(e1 === 1 ? b9 : `${b9}${e1 < 0 ? "\u207B" : ""}${body9}`);
+    }
+    if (outSegs9.length === 0) {
+      if (tokens[ix9 - 1]?.kind === "number") tokens.splice(ix9, 1);
+      else tokens.splice(ix9, 1, { kind: "number", text: "1", start: t9.start, end: t9.end, dec: new DecC(1), plainInt: false });
+      ix9--;
+      continue;
+    }
+    t9.text = outSegs9.join("\xB7");
   }
   const out = [];
   for (let idx = 0; idx < tokens.length; idx++) {
