@@ -30825,7 +30825,9 @@ var tsRatio = (a2, b2, ctx) => {
   const cb = spanCanon(b2.c);
   if (cb.months === 0n && cb.days === 0n) return err("division-by-zero");
   if (ctx.monthToDays === "30") {
-    return { t: "d", ...qv(rnorm({ n: ca.months * 30n + ca.days, d: cb.months * 30n + cb.days })) };
+    const den30 = cb.months * 30n + cb.days;
+    if (den30 === 0n) return err("division-by-zero");
+    return { t: "d", ...qv(rnorm({ n: ca.months * 30n + ca.days, d: den30 })) };
   }
   if (ca.days === 0n && cb.days === 0n) return { t: "d", ...qv(rnorm({ n: ca.months, d: cb.months })) };
   if (ca.months === 0n && cb.months === 0n) return { t: "d", ...qv(rnorm({ n: ca.days, d: cb.days })) };
