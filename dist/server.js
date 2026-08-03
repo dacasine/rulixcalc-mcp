@@ -32474,7 +32474,33 @@ var fr_default = {
     divis\u00E9: "/",
     et: "+"
   },
-  divisionParticles: ["par"]
+  divisionParticles: [
+    "par"
+  ],
+  blockers: {
+    environ: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    approximativement: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    presque: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    entre: "ranges are not supported \u2014 write one value per line (F8_BLOCKERS_V1)",
+    chacun: "per-item distribution is not supported (F8_BLOCKERS_V1)",
+    chacune: "per-item distribution is not supported (F8_BLOCKERS_V1)"
+  },
+  blockerGroups: [
+    {
+      words: [
+        "au",
+        "moins"
+      ],
+      reason: "bounds are not supported \u2014 write the exact value (F8_BLOCKERS_V1)"
+    },
+    {
+      words: [
+        "au",
+        "plus"
+      ],
+      reason: "bounds are not supported \u2014 write the exact value (F8_BLOCKERS_V1)"
+    }
+  ]
 };
 
 // ../textual-calculator/core/packages/engine/src/lexicon/en.json
@@ -32487,7 +32513,33 @@ var en_default3 = {
     divided: "/",
     and: "+"
   },
-  divisionParticles: ["by"]
+  divisionParticles: [
+    "by"
+  ],
+  blockers: {
+    about: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    approximately: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    nearly: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    between: "ranges are not supported \u2014 write one value per line (F8_BLOCKERS_V1)",
+    each: "per-item distribution is not supported (F8_BLOCKERS_V1)",
+    apiece: "per-item distribution is not supported (F8_BLOCKERS_V1)"
+  },
+  blockerGroups: [
+    {
+      words: [
+        "at",
+        "least"
+      ],
+      reason: "bounds are not supported \u2014 write the exact value (F8_BLOCKERS_V1)"
+    },
+    {
+      words: [
+        "at",
+        "most"
+      ],
+      reason: "bounds are not supported \u2014 write the exact value (F8_BLOCKERS_V1)"
+    }
+  ]
 };
 
 // ../textual-calculator/core/packages/engine/src/lexicon/de.json
@@ -32499,7 +32551,39 @@ var de_default = {
     geteilt: "/",
     und: "+"
   },
-  divisionParticles: ["durch"]
+  divisionParticles: [
+    "durch"
+  ],
+  blockers: {
+    ungef\u00E4hr: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    etwa: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    fast: "approximations are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    zwischen: "ranges are not supported \u2014 write one value per line (F8_BLOCKERS_V1)",
+    mindestens: "bounds are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    h\u00F6chstens: "bounds are not supported \u2014 write the exact value (F8_BLOCKERS_V1)",
+    nicht: "negations are not supported \u2014 write the value you mean (F8_BLOCKERS_V1)",
+    nie: "negations are not supported \u2014 write the value you mean (F8_BLOCKERS_V1)",
+    ohne: "negations are not supported \u2014 write the value you mean (F8_BLOCKERS_V1)",
+    kein: "negations are not supported \u2014 write the value you mean (F8_BLOCKERS_V1)",
+    keine: "negations are not supported \u2014 write the value you mean (F8_BLOCKERS_V1)",
+    keinen: "negations are not supported \u2014 write the value you mean (F8_BLOCKERS_V1)"
+  },
+  blockerGroups: [
+    {
+      words: [
+        "je",
+        "st\xFCck"
+      ],
+      reason: "per-item distribution is not supported (F8_BLOCKERS_V1)"
+    },
+    {
+      words: [
+        "je",
+        "person"
+      ],
+      reason: "per-item distribution is not supported (F8_BLOCKERS_V1)"
+    }
+  ]
 };
 
 // ../textual-calculator/core/packages/engine/src/lexicon.ts
@@ -32512,6 +32596,8 @@ function loadLexicon(languages) {
   if (hit) return hit;
   const operatorWords = /* @__PURE__ */ new Map();
   const divisionParticles = /* @__PURE__ */ new Set();
+  const blockers = /* @__PURE__ */ new Map();
+  const blockerGroups = [];
   for (const lang of clean) {
     const pack = PACKS[lang];
     if (!pack) continue;
@@ -32521,8 +32607,14 @@ function loadLexicon(languages) {
     for (const particle of pack.divisionParticles ?? []) {
       divisionParticles.add(particle.toLowerCase());
     }
+    for (const [word, reason] of Object.entries(pack.blockers ?? {})) {
+      blockers.set(word.toLowerCase(), reason);
+    }
+    for (const group of pack.blockerGroups ?? []) {
+      blockerGroups.push({ words: group.words.map((w2) => w2.toLowerCase()), reason: group.reason });
+    }
   }
-  const lexicon = { operatorWords, divisionParticles };
+  const lexicon = { operatorWords, divisionParticles, blockers, blockerGroups };
   cache.set(key, lexicon);
   return lexicon;
 }
@@ -34966,6 +35058,24 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   const colonIdx = tokens.findIndex((t2) => t2.kind === "colon");
   if (colonIdx > 0 && tokens.slice(0, colonIdx).every((t2) => t2.kind === "word")) {
     tokens = tokens.slice(colonIdx + 1);
+  }
+  for (let ib9 = 0; ib9 < tokens.length; ib9++) {
+    const tb9 = tokens[ib9];
+    if (tb9.kind !== "word" || env.has(tb9.text)) continue;
+    const lower9 = tb9.text.toLowerCase();
+    const grp9 = lexicon.blockerGroups.find((g9) => g9.words[0] === lower9 && g9.words.every((w9, k9) => {
+      const tk9 = tokens[ib9 + k9];
+      return tk9?.kind === "word" && tk9.text.toLowerCase() === w9;
+    }));
+    if (grp9 !== void 0) {
+      violations.push(`\u201C${tokens.slice(ib9, ib9 + grp9.words.length).map((t9) => t9.text).join(" ")}\u201D is a numeric modifier \u2014 ${grp9.reason}`);
+      ib9 += grp9.words.length - 1;
+      continue;
+    }
+    const reason9 = lexicon.blockers.get(lower9);
+    if (reason9 !== void 0) {
+      violations.push(`\u201C${tb9.text}\u201D is a numeric modifier \u2014 ${reason9}`);
+    }
   }
   for (let ix9 = 0; ix9 < tokens.length; ix9++) {
     const t9 = tokens[ix9];
