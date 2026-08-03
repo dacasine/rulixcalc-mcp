@@ -29462,7 +29462,7 @@ function siCaseAmbiguous(word) {
   return false;
 }
 var SI_HOMOGRAPHS = /* @__PURE__ */ new Set(["at", "as", "am", "us"]);
-var BINARY_RE = /^(Ki|Mi|Gi|Ti|Pi|Ei|Zi|Yi)(B|bit|bits|o|octet|octets)$/u;
+var BINARY_RE = /^(Ki|Mi|Gi|Ti|Pi|Ei|Zi|Yi|Ri|Qi)(B|bit|bits|o|octet|octets)$/u;
 function plausibleUnitReason(word) {
   if (word.length < 2 || SI_HOMOGRAPHS.has(word)) return null;
   if (lookupUnit(word) !== void 0) return null;
@@ -29471,20 +29471,26 @@ function plausibleUnitReason(word) {
   if (/^[YZEPTGMRQkhdcmuµμnpfazyrq][\p{L}°µμ]/u.test(word)) tails.push(word.slice(1));
   if (/^da[\p{L}°µμ]/u.test(word) && word.length > 2) tails.push(word.slice(2));
   for (const tail of tails) {
-    if (lookupUnit(tail) !== void 0) {
+    if (tail.length <= 4 && !NONPREFIXABLE_TAILS.has(tail.length === 1 ? tail : tail.toLowerCase()) && lookupUnit(tail) !== void 0) {
       return "an SI prefix glued to a registered unit is not supported";
     }
   }
-  for (const k2 of [1, 2, 3, 4]) {
-    if (k2 >= word.length) break;
-    const head = word.slice(0, k2);
-    if (lookupUnit(head) === void 0) continue;
-    const rest = word.slice(k2);
-    if (lookupUnit(rest) !== void 0) return "two units glued together are never prose";
-    if (new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(rest)) return "a unit glued to a code is never prose";
+  if (word.length <= 24) {
+    const symbolic = new RegExp("\\p{Lu}", "u").test(word.slice(1));
+    const okPart = (part, other) => symbolic || part.length > 1 || new RegExp("^\\p{Lu}$", "u").test(part) || part === other.slice(-1);
+    for (let k2 = 1; k2 < word.length; k2++) {
+      const head = word.slice(0, k2);
+      if (lookupUnit(head) === void 0) continue;
+      const rest = word.slice(k2);
+      if (lookupUnit(rest) !== void 0 && okPart(head, rest) && okPart(rest, head)) {
+        return "two units glued together are never prose";
+      }
+      if (new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(rest)) return "a unit glued to a code is never prose";
+    }
   }
   return null;
 }
+var NONPREFIXABLE_TAILS = /* @__PURE__ */ new Set(["in", "ft", "mi", "yd", "oz", "lb", "am", "pm", "ha", "an", "a", "h", "j", "d"]);
 function parsePowerWord(word) {
   const m2 = /^(.+?)(⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+|2|3)$/.exec(word);
   if (!m2) return void 0;
@@ -32676,6 +32682,18 @@ function isAnyPackWord(word) {
   }
   return anyPackWords.has(word);
 }
+var anyPackGroups = null;
+function allPackBlockerGroups() {
+  if (anyPackGroups === null) {
+    anyPackGroups = [];
+    for (const pack of Object.values(PACKS)) {
+      for (const g2 of pack.blockerGroups ?? []) {
+        anyPackGroups.push({ words: g2.words.map((w2) => w2.toLowerCase()), reason: g2.reason });
+      }
+    }
+  }
+  return anyPackGroups;
+}
 var DEFAULT_LANGUAGES = ["fr", "en"];
 
 // ../textual-calculator/core/packages/engine/src/lexer.ts
@@ -34682,6 +34700,10 @@ var skeleton = (w2) => {
   return out;
 };
 var CORE_OP_WORDS = /* @__PURE__ */ new Set(["mod", "modulo"]);
+function plausibleFragment(text) {
+  return plausibleUnitReason(text) !== null || looksLikeCode(text) && !isUnitWord(text) || skeleton(text) !== text && (isUnitWord(skeleton(text)) || looksLikeCode(skeleton(text))) || skeleton(text) !== text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "") || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(text) && /[\p{Script=Latin}\u00B0]/u.test(text) || !isUnitWord(text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), ""));
+}
+var INVISIBLES_RE = /[\ufe00-\ufe0f\u034f\u200b-\u200d\u2060-\u2062\u180b-\u180f\u{e0100}-\u{e01ef}]/gu;
 function stripParentheticalComments(tokens, env, lexicon, violations, ignored, rts) {
   const out = [...tokens];
   for (let i2 = 0; i2 < out.length; i2++) {
@@ -34733,9 +34755,15 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         violations.push(`\u201C(${inner.map((t2) => t2.text).join(" ")})\u201D is not supported \u2014 ${quarantineReason(quar0.text)}`);
         return out;
       }
-      const plaus0 = meaningful.find((t2) => t2.kind === "word" && (plausibleUnitReason(t2.text) !== null || // a RECOGNIZED unit or currency named in a note stays prose
-      // ("montant (en CHF)"); only unknown code-shapes refuse
-      looksLikeCode(t2.text) && !isUnitWord(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || skeleton(t2.text) !== t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "") || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (isUnitWord(t2.text.slice(k9)) || isTimespanUnitWord(t2.text.slice(k9))))));
+      const plaus0 = meaningful.find((t2) => t2.kind === "word" && // a RECOGNIZED unit or currency named in a note stays prose
+      // ("montant (en CHF)"); only plausible-unknown fragments refuse
+      (plausibleFragment(t2.text) || !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => {
+        if (k9 >= t2.text.length || !isUnitWord(t2.text.slice(0, k9))) return false;
+        const rest9 = t2.text.slice(k9);
+        if (!isUnitWord(rest9) && !isTimespanUnitWord(rest9)) return false;
+        const okPart9 = (part9, other9) => new RegExp("\\p{Lu}", "u").test(t2.text.slice(1)) || part9.length > 1 || new RegExp("^\\p{Lu}$", "u").test(part9) || part9 === other9.slice(-1);
+        return okPart9(t2.text.slice(0, k9), rest9) && okPart9(rest9, t2.text.slice(0, k9));
+      })));
       if (plaus0 !== void 0) {
         violations.push(`\u201C(${inner.map((t2) => t2.text).join(" ")})\u201D is not supported \u2014 \u201C${plaus0.text}\u201D looks like a unit or code`);
         return out;
@@ -34814,6 +34842,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
 }
 function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
+  tokens = tokens.map((t2) => t2.kind === "word" && INVISIBLES_RE.test(t2.text) ? { ...t2, text: t2.text.replace(INVISIBLES_RE, "") } : t2);
   for (let idx9 = 0; idx9 < tokens.length; idx9++) {
     const t9 = tokens[idx9];
     if (t9.kind !== "word" || !t9.text.includes("\u2063") || t9.text.includes("\u2215")) continue;
@@ -35153,6 +35182,15 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       ib9 += grp9.words.length - 1;
       continue;
     }
+    const anyGrp9 = allPackBlockerGroups().find((g9) => g9.words[0] === lower9 && g9.words.every((w9, k9) => {
+      const tk9 = tokens[ib9 + k9];
+      return tk9?.kind === "word" && declitic9(bkey9(tk9.text)) === w9;
+    }));
+    if (anyGrp9 !== void 0) {
+      violations.push(`\u201C${tokens.slice(ib9, ib9 + anyGrp9.words.length).map((t9) => t9.text).join(" ")}\u201D is a numeric modifier \u2014 ${anyGrp9.reason}`);
+      ib9 += anyGrp9.words.length - 1;
+      continue;
+    }
     if (env.has(tb9.text)) continue;
     const reason9 = lexicon.blockers.get(lower9);
     if (reason9 !== void 0) {
@@ -35161,6 +35199,17 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     }
     if (!lexicon.operatorWords.has(lower9) && !lexicon.divisionParticles.has(lower9) && !CORE_OP_WORDS.has(lower9) && isAnyPackWord(lower9)) {
       violations.push(`\u201C${tb9.text}\u201D is an operator word from an inactive language pack \u2014 activate it or spell the operation with symbols`);
+      continue;
+    }
+    if (lower9.includes("\xB7") && !isUnitWord(tb9.text)) {
+      const segs9 = lower9.split("\xB7");
+      if (segs9.some((s9) => lexicon.operatorWords.has(s9) || lexicon.divisionParticles.has(s9) || isAnyPackWord(s9))) {
+        violations.push(`\u201C${tb9.text}\u201D fuses an operator word \u2014 write it with spaces or symbols`);
+        continue;
+      }
+    }
+    if (!isReservedWord(tb9.text) && !isUnitWord(tb9.text) && plausibleFragment(tb9.text)) {
+      violations.push(`\u201C${tb9.text}\u201D is not a number, unit or date`);
     }
   }
   for (let ix9 = 0; ix9 < tokens.length; ix9++) {
@@ -35250,17 +35299,6 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       out.push(t2);
       continue;
     }
-    const SI_HOMOGRAPHS9 = /* @__PURE__ */ new Set(["at", "as", "am", "us"]);
-    const siPrefixedUnit9 = (w9) => {
-      if (SI_HOMOGRAPHS9.has(w9)) return false;
-      if (isUnitWord(w9)) return false;
-      const m9 = new RegExp("^(da|[YZEPTGMkhdcmu\xB5npfazy])(\\p{L}.+|\\p{L})$", "u").exec(w9);
-      if (!m9) return false;
-      const tail9 = m9[2];
-      if (!isUnitWord(tail9)) return false;
-      if (new RegExp("^\\p{Lu}", "u").test(tail9)) return true;
-      return !isTimespanUnitWord(tail9);
-    };
     if (violations.length === 0) {
       if (tokens[idx + 1]?.kind === "lparen") {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
@@ -35270,7 +35308,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
         } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text) || !isUnitWord(t2.text) && unitWordCaseTwin(t2.text) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // unit prefix (≥2 chars) + a letters-only tail — MHzmonth is
         // a fused pseudo-suffix, never prose (audit AF)
-        [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || siPrefixedUnit9(t2.text) || plausibleUnitReason(t2.text) !== null) || // after a PERCENT, only code-like or composite suffixes refuse —
+        [2, 3, 4].some((k9) => k9 + 1 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || plausibleUnitReason(t2.text) !== null) || // after a PERCENT, only code-like or composite suffixes refuse —
         // "5% for 10 years" is phrase glue, not a suffix (audit X)
         prev?.kind === "percent" && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -35283,12 +35321,18 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         skeleton(t2.text) !== t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "") || // a CASE TWIN of a registered unit (ph/Ph vs pH) refuses loudly
         !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || // unit prefix (≥2) + letters-only tail after a NUMBER too —
         // 20 kg MHzmonth is a fused pseudo-suffix (audit AG)
-        !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || // unit + glued code (kgCHFF): a unit PREFIX followed by an
+        !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 + 1 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (t2.text.length - k9 > 1 || t2.text.slice(k9) === t2.text.slice(k9 - 1, k9))) || // unit + glued code (kgCHFF): a unit PREFIX followed by an
         // uppercase-led remainder is never prose (audit X)
         [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // two units GLUED (Nms = N + ms) are never prose (audit AF)
-        !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (isUnitWord(t2.text.slice(k9)) || isTimespanUnitWord(t2.text.slice(k9)))) || siPrefixedUnit9(t2.text) || plausibleUnitReason(t2.text) !== null) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
+        !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => {
+          if (k9 >= t2.text.length || !isUnitWord(t2.text.slice(0, k9))) return false;
+          const rest9 = t2.text.slice(k9);
+          if (!isUnitWord(rest9) && !isTimespanUnitWord(rest9)) return false;
+          const okPart9 = (part9, other9) => new RegExp("\\p{Lu}", "u").test(t2.text.slice(1)) || part9.length > 1 || new RegExp("^\\p{Lu}$", "u").test(part9) || part9 === other9.slice(-1);
+          return okPart9(t2.text.slice(0, k9), rest9) && okPart9(rest9, t2.text.slice(0, k9));
+        }) || plausibleUnitReason(t2.text) !== null) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
-        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text) || isUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || siPrefixedUnit9(t2.text) || plausibleUnitReason(t2.text) !== null)) {
+        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text) || isUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 + 1 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (t2.text.length - k9 > 1 || t2.text.slice(k9) === t2.text.slice(k9 - 1, k9))) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || plausibleUnitReason(t2.text) !== null)) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "rparen" || prev?.kind === "percent" || prev?.kind === "date" || prev?.kind === "clocktime" || prev?.kind === "bang") && prev.end === t2.start && !(prev.kind === "number" && prev.plainInt === true && ["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower))) {
           violations.push(prev.kind === "number" || prev.kind === "fraction" ? `\u201C${prev.text}${t2.text}\u201D is not a number, unit or date` : `\u201C${t2.text}\u201D is not a number, unit or date`);
