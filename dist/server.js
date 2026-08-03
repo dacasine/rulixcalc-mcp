@@ -29451,10 +29451,20 @@ var parseSupInt = (s2) => {
   const digits = (neg ? s2.slice(1) : s2).split("").map((c2) => SUP_DIGITS.indexOf(c2)).join("");
   return (neg ? -1 : 1) * Number(digits);
 };
+var SI_PREFIX_RE = new RegExp("^(da|[YZEPTGMkhdcmu\xB5npfazy])(\\p{L}.*)$", "u");
+function siCaseAmbiguous(word) {
+  if (word === "Pm") return false;
+  if (word === word.toLowerCase()) return false;
+  const asWritten = (w2) => exactAliases.has(w2) || w2 === w2.toLowerCase() && ciAliases.has(w2);
+  if (asWritten(word)) return false;
+  const m2 = SI_PREFIX_RE.exec(word);
+  if (!m2) return false;
+  return asWritten(m2[2]);
+}
 function parsePowerWord(word) {
   const m2 = /^(.+?)(⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+|2|3)$/.exec(word);
   if (!m2) return void 0;
-  const base = exactAliases.get(m2[1]) ?? ciAliases.get(m2[1].toLowerCase()) ?? CAL_BY_SYMBOL[m2[1].toLowerCase()];
+  const base = exactAliases.get(m2[1]) ?? (siCaseAmbiguous(m2[1]) ? void 0 : ciAliases.get(m2[1].toLowerCase()) ?? CAL_BY_SYMBOL[m2[1].toLowerCase()]);
   const isDigit2 = m2[2] === "2" || m2[2] === "3";
   if (!base || base.affine) return void 0;
   if (isDigit2 && !(Object.keys(base.dim).length === 1 && base.dim["length"] === 1)) return void 0;
@@ -29485,7 +29495,7 @@ function lookupPowerUnit(word) {
 }
 function unitComps(word) {
   const one = (w2) => {
-    const direct = exactAliases.get(w2) ?? ciAliases.get(w2.toLowerCase()) ?? CAL_BY_SYMBOL[w2.toLowerCase()];
+    const direct = exactAliases.get(w2) ?? (siCaseAmbiguous(w2) ? void 0 : ciAliases.get(w2.toLowerCase()) ?? CAL_BY_SYMBOL[w2.toLowerCase()]);
     if (direct) return direct.affine ? void 0 : { def: direct, exp: 1 };
     const p2 = parsePowerWord(w2);
     return p2 ? { def: p2.base, exp: p2.n } : void 0;
@@ -29509,7 +29519,7 @@ function compoundUnitParts(word) {
   const parts = word.split("\xB7");
   const defs = [];
   for (const p2 of parts) {
-    const d2 = exactAliases.get(p2) ?? ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2) ?? CAL_BY_SYMBOL[p2.toLowerCase()];
+    const d2 = exactAliases.get(p2) ?? (siCaseAmbiguous(p2) ? void 0 : ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2) ?? CAL_BY_SYMBOL[p2.toLowerCase()]);
     if (!d2 || d2.affine) return void 0;
     defs.push(d2);
   }
@@ -29547,7 +29557,13 @@ var CAL_BY_SYMBOL = {
   an: CAL_UNIT_DEFS.year
 };
 function lookupUnit(word) {
-  return exactAliases.get(word) ?? ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word) ?? lookupCompoundUnit(word);
+  const exact = lookupExact(word);
+  if (exact) return exact;
+  if (siCaseAmbiguous(word)) return void 0;
+  return ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word) ?? lookupCompoundUnit(word);
+}
+function lookupExact(word) {
+  return exactAliases.get(word);
 }
 var exactLower = /* @__PURE__ */ new Set();
 function unitWordCaseTwin(word) {
@@ -31078,7 +31094,14 @@ function evalAst(ast, env, ctx = {}) {
         const v2 = lines[i2];
         if (isSummable(v2 ?? null)) values.push(v2);
       }
-      if (values.some((v9) => v9.capped === true)) ctx.capNotes?.push("aggregate");
+      for (let i9 = ctx.sectionStart ?? 0; i9 < lines.length; i9++) {
+        if (ctx.aggDerived?.[i9]) continue;
+        const v9 = lines[i9];
+        if (v9 !== null && v9 !== void 0 && v9.capped === true) {
+          ctx.capNotes?.push("aggregate");
+          break;
+        }
+      }
       if (ast.fn === "count") return { t: "d", v: new DecC(values.length) };
       if (ast.fn === "median") {
         if (values.length === 0) return err("not-understood", "nothing to take a median of in this section");
@@ -33397,6 +33420,7 @@ var DATE_KEYWORDS = {
   now: "now",
   jetzt: "now"
 };
+var spanUnitOf = (word) => siCaseAmbiguous(word) ? void 0 : TIMESPAN_UNITS[word.toLowerCase()];
 var TIMESPAN_UNITS = {
   jour: "day",
   jours: "day",
@@ -33502,7 +33526,7 @@ var ParseError = class extends Error {
 function parse3(tokens) {
   let pos = 0;
   const peek = () => tokens[pos];
-  const isConversionTarget = (tok) => tok?.kind === "word" && (isUnitWord(tok.text) || TIMESPAN_UNITS[tok.text.toLowerCase()] !== void 0 || BASE_WORDS[tok.text.toLowerCase()] !== void 0);
+  const isConversionTarget = (tok) => tok?.kind === "word" && (isUnitWord(tok.text) || spanUnitOf(tok.text) !== void 0 || BASE_WORDS[tok.text.toLowerCase()] !== void 0);
   const conversionBindsAt = (i2) => {
     const nxt = tokens[i2 + 1];
     if (!isConversionTarget(nxt)) return false;
@@ -33524,7 +33548,7 @@ function parse3(tokens) {
         return 8;
       }
       if (SCALAR_WORDS[t2.text] !== void 0) return 45;
-      if (TIMESPAN_UNITS[t2.text.toLowerCase()] !== void 0) return 45;
+      if (spanUnitOf(t2.text) !== void 0) return 45;
       if (isUnitWord(t2.text)) return 45;
       if (MOD_WORDS.has(t2.text.toLowerCase())) return 20;
       if (WORKDAY_WORDS.has(t2.text.toLowerCase())) return 45;
@@ -33547,7 +33571,7 @@ function parse3(tokens) {
     const denTok = tokens[pos + 1];
     const after = tokens[pos + 2];
     if (denTok?.kind !== "word") return unitNode;
-    const denSpan = TIMESPAN_UNITS[denTok.text.toLowerCase()];
+    const denSpan = spanUnitOf(denTok.text);
     if (!isUnitWord(denTok.text) && denSpan === void 0) return unitNode;
     if (after?.kind === "number" || after?.kind === "lparen") return unitNode;
     pos += 2;
@@ -33850,19 +33874,19 @@ function parse3(tokens) {
           left = { k: "fromNow", span: left, sign: 1 };
           continue;
         }
-        const spanUnit = TIMESPAN_UNITS[t2.text.toLowerCase()];
+        const spanUnit = spanUnitOf(t2.text);
         if (spanUnit) {
           const slash0 = tokens[pos];
           const den0 = tokens[pos + 1];
           const parenDen = tokens[pos + 1]?.kind === "lparen" && tokens[pos + 2]?.kind === "word" && tokens[pos + 3]?.kind === "rparen" && isUnitWord(tokens[pos + 2].text);
-          if (slash0?.kind === "op" && slash0.op === "/" && (den0?.kind === "word" && (isUnitWord(den0.text) || TIMESPAN_UNITS[den0.text.toLowerCase()] !== void 0) && tokens[pos + 2]?.kind !== "number" && tokens[pos + 2]?.kind !== "lparen" || parenDen)) {
+          if (slash0?.kind === "op" && slash0.op === "/" && (den0?.kind === "word" && (isUnitWord(den0.text) || spanUnitOf(den0.text) !== void 0) && tokens[pos + 2]?.kind !== "number" && tokens[pos + 2]?.kind !== "lparen" || parenDen)) {
             if (parenDen) {
               const den = tokens[pos + 2].text;
               pos += 4;
               left = { k: "unitCompound", e: left, num: "", numSpan: spanUnit, den };
               continue;
             }
-            const denSpan0 = TIMESPAN_UNITS[den0.text.toLowerCase()];
+            const denSpan0 = spanUnitOf(den0.text);
             pos += 2;
             left = {
               k: "unitCompound",
@@ -33875,9 +33899,9 @@ function parse3(tokens) {
             continue;
           }
           left = { k: "span", e: left, unit: spanUnit };
-          while (tokens[pos]?.kind === "number" && tokens[pos + 1]?.kind === "word" && TIMESPAN_UNITS[tokens[pos + 1].text.toLowerCase()] !== void 0) {
+          while (tokens[pos]?.kind === "number" && tokens[pos + 1]?.kind === "word" && spanUnitOf(tokens[pos + 1].text) !== void 0) {
             const n2 = tokens[pos];
-            const u2 = TIMESPAN_UNITS[tokens[pos + 1].text.toLowerCase()];
+            const u2 = spanUnitOf(tokens[pos + 1].text);
             pos += 2;
             left = { k: "bin", op: "+", l: left, r: { k: "span", e: { k: "num", dec: n2.dec }, unit: u2 } };
           }
@@ -33914,7 +33938,7 @@ function parse3(tokens) {
             }
             const denTok = tokens[pos + 1];
             if (slash?.kind === "op" && slash.op === "/" && denTok?.kind === "word") {
-              const denSpan = TIMESPAN_UNITS[denTok.text.toLowerCase()];
+              const denSpan = spanUnitOf(denTok.text);
               if (isUnitWord(denTok.text)) {
                 pos += 2;
                 left = { k: "convert", e: left, word: target.text, denWord: denTok.text };
@@ -33929,7 +33953,7 @@ function parse3(tokens) {
             left = { k: "convert", e: left, word: target.text };
             continue;
           }
-          const spanUnit2 = target?.kind === "word" ? TIMESPAN_UNITS[target.text.toLowerCase()] : void 0;
+          const spanUnit2 = target?.kind === "word" ? spanUnitOf(target.text) : void 0;
           if (spanUnit2) {
             left = { k: "convertSpan", e: left, unit: spanUnit2 };
             continue;
@@ -33981,7 +34005,7 @@ function parse3(tokens) {
           const after = tokens[pos + 1];
           const operandFollows = after?.kind === "number" || after?.kind === "fraction" || after?.kind === "lparen";
           if (denTok?.kind === "word" && !operandFollows) {
-            const denSpan = TIMESPAN_UNITS[denTok.text.toLowerCase()];
+            const denSpan = spanUnitOf(denTok.text);
             if (denSpan !== void 0 && !isUnitWord(denTok.text)) {
               pos++;
               left = { k: "bin", op: "/", l: left, r: { k: "span", e: { k: "num", dec: new DecC(1) }, unit: denSpan } };
@@ -34061,7 +34085,7 @@ function matchPercentPrototypes(tokens) {
   return null;
 }
 var isPercentPreposition = (word) => PERCENT_PREPOSITIONS[word.toLowerCase()] !== void 0;
-var isTimespanUnitWord = (word) => TIMESPAN_UNITS[word.toLowerCase()] !== void 0;
+var isTimespanUnitWord = (word) => spanUnitOf(word) !== void 0;
 var isDateKeywordWord = (word) => DATE_KEYWORDS[word.toLowerCase()] !== void 0;
 function isReservedWord(word) {
   return isReservedCore(word) || CITY_WORD_PARTS.has(word.toLowerCase());
@@ -34091,7 +34115,7 @@ function parseSpanTokens(tokens) {
   while (i2 < tokens.length) {
     const n2 = tokens[i2];
     const u2 = tokens[i2 + 1];
-    const unit = u2?.kind === "word" ? TIMESPAN_UNITS[u2.text.toLowerCase()] : void 0;
+    const unit = u2?.kind === "word" ? spanUnitOf(u2.text) : void 0;
     if (n2?.kind === "number" && unit) {
       parts.push({ k: "span", e: { k: "num", dec: n2.dec }, unit });
       i2 += 2;
@@ -34158,7 +34182,7 @@ function matchFinancePrototypes(tokens) {
   const yearsTok = tokens[n2 - 2];
   const yearWord = tokens[n2 - 1];
   if (pctIdx < 2 || // needs an amount before the rate
-  tokens[pctIdx - 1]?.kind !== "number" || yearsTok?.kind !== "number" || yearWord?.kind !== "word" || TIMESPAN_UNITS[yearWord.text.toLowerCase()] !== "year") {
+  tokens[pctIdx - 1]?.kind !== "number" || yearsTok?.kind !== "number" || yearWord?.kind !== "word" || spanUnitOf(yearWord.text) !== "year") {
     return null;
   }
   const amountTokens = tokens.slice(1, pctIdx - 1);
@@ -35164,14 +35188,16 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       out.push(t2);
       continue;
     }
+    const SI_HOMOGRAPHS9 = /* @__PURE__ */ new Set(["at", "as", "am", "us"]);
     const siPrefixedUnit9 = (w9) => {
+      if (SI_HOMOGRAPHS9.has(w9)) return false;
       if (isUnitWord(w9)) return false;
       const m9 = new RegExp("^(da|[YZEPTGMkhdcmu\xB5npfazy])(\\p{L}.+|\\p{L})$", "u").exec(w9);
       if (!m9) return false;
       const tail9 = m9[2];
       if (!isUnitWord(tail9)) return false;
       if (new RegExp("^\\p{Lu}", "u").test(tail9)) return true;
-      return tail9.length >= 2 && !isTimespanUnitWord(tail9);
+      return !isTimespanUnitWord(tail9);
     };
     if (violations.length === 0) {
       if (tokens[idx + 1]?.kind === "lparen") {
@@ -35379,28 +35405,30 @@ var isEnvSensitiveWord = (t2, lexicon) => {
 };
 var serialize = (rt2) => {
   if (rt2 === null || rt2 === void 0) return "\u2205";
+  const cap = rt2.capped === true ? ":C" : "";
   switch (rt2.t) {
     case "d":
-      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}`;
+      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}${cap}`;
     case "f":
-      return `f:${rt2.n}/${rt2.d}:${rt2.origin}`;
+      return `f:${rt2.n}/${rt2.d}:${rt2.origin}${cap}`;
     case "p":
-      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}`;
+      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}${cap}`;
     case "ds":
-      return `ds:${rt2.pd.toString()}:${rt2.precision}`;
+      return `ds:${rt2.pd.toString()}:${rt2.precision}${cap}`;
     case "ts":
-      return `ts:${JSON.stringify(rt2.c)}`;
+      return `ts:${JSON.stringify(rt2.c)}${cap}`;
     case "wd":
-      return `wd:${rt2.n}`;
+      return `wd:${rt2.n}${cap}`;
     case "ct":
-      return `ct:${rt2.mins}:${JSON.stringify(rt2.label ?? "")}`;
+      return `ct:${rt2.mins}:${JSON.stringify(rt2.label ?? "")}${cap}`;
     case "q": {
       const comps = (rt2.comps ?? []).map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7");
       const rate = rt2.rate ? `${rt2.rate.num.id}/${rt2.rate.den.id}` : "";
-      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}`;
+      const serT = (list) => list === void 0 ? "" : list.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+");
+      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${serT(rt2.terms)}:${serT(rt2.termsDen)}${cap}`;
     }
     case "e":
-      return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}`;
+      return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}${cap}`;
   }
 };
 function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cfgStamp, probe, snap, doubtSigs, varDoubt, stored) {
@@ -35414,7 +35442,7 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
     parts.push(`la:${idx}=${doubtSigs[idx - 1] ?? ""}`);
   }
   if (entry.deps.usesTotal) {
-    const summed = rts.map((v2, j2) => j2 >= sectionStart && !aggDerived[j2] && isSummable(v2) ? serialize(v2) : null).filter((s2) => s2 !== null).join(",");
+    const summed = rts.map((v2, j2) => j2 >= sectionStart && !aggDerived[j2] ? serialize(v2 ?? null) : null).filter((s2) => s2 !== null).join(",");
     parts.push(`t:${sectionStart}:${summed}`);
   }
   for (const w2 of entry.commentWords) parts.push(`w:${w2}=${serialize(env.get(w2))}`);
@@ -35531,10 +35559,6 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     rt2 = finalizeCurrencies(rt2, ctx);
-    if (capNotes.length > 0) {
-      rawAssume.push({ code: "exactness-capped", level: 2, impact: "value", data: {} });
-      rt2 = { ...rt2, capped: true };
-    }
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && !rt2.v.isZero() && Math.abs(rt2.v.e) > 9999) {
       rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
     }
@@ -35543,6 +35567,10 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       if (digits9(rt2.n) > 1e4 || digits9(rt2.d) > 1e4) {
         rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
       }
+    }
+    if (capNotes.length > 0) {
+      rawAssume.push({ code: "exactness-capped", level: 2, impact: "value", data: {} });
+      rt2 = { ...rt2, capped: true };
     }
     if (isAssignment) defines = tokens.slice(0, eqIdx).map((t2) => t2.text).join(" ");
   } catch (cause) {
