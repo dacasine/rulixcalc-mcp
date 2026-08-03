@@ -30545,6 +30545,7 @@ var termsCmp = (a2, b2, thirty) => {
   const s2 = rnorm(sum2);
   return s2.n === 0n ? 0 : s2.n > 0n ? 1 : -1;
 };
+var carrierDec = (rt2) => rt2.t === "q" && rt2.symbol === "" && (rt2.comps === void 0 || rt2.comps.length === 0) ? { t: "d", v: rt2.v, ...rt2.vx && { vx: rt2.vx } } : rt2;
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
@@ -31374,18 +31375,22 @@ function evalAst(ast, env, ctx = {}) {
             const f0 = values[0];
             const midSrc9 = scal9[mid9].rt;
             const midTerms9 = midSrc9.def?.affine === void 0 ? termsOf(midSrc9) : void 0;
-            const midK = { ...mkQ(scal9[mid9].x, lookupUnit("K")), ...midTerms9 && { terms: midTerms9 } };
+            const midK = { ...mkQ(scal9[mid9].x, lookupUnit("K")), ...midTerms9 && { terms: midTerms9 }, ...midTerms9 && midSrc9.termsDen && { termsDen: midSrc9.termsDen } };
             return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
           }
-          const halfTerms9 = mergeTerms(
-            termsOf(scal9[mid9 - 1].rt.def?.affine !== void 0 ? mkQ(scal9[mid9 - 1].x, K9) : scal9[mid9 - 1].rt),
-            termsOf(scal9[mid9].rt.def?.affine !== void 0 ? mkQ(scal9[mid9].x, K9) : scal9[mid9].rt),
-            1n
-          ).map((t9) => ({ x: rMul(t9.x, { n: 1n, d: 2n }), comps: t9.comps }));
-          const meanK9 = {
-            ...mkQ(rDiv(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), { n: 2n, d: 1n }), K9),
-            terms: halfTerms9
-          };
+          const lo8 = scal9[mid9 - 1].rt.def?.affine !== void 0 ? mkQ(scal9[mid9 - 1].x, K9) : scal9[mid9 - 1].rt;
+          const hi8 = scal9[mid9].rt.def?.affine !== void 0 ? mkQ(scal9[mid9].x, K9) : scal9[mid9].rt;
+          const t30m = ctx.monthToDays === "30";
+          const meanBase8 = mkQ(rDiv(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), { n: 2n, d: 1n }), K9);
+          let meanK9 = meanBase8;
+          const a8 = distributeTerms(termsOf(lo8), hi8.termsDen ?? ONE_TERMS(), t30m);
+          const b8 = distributeTerms(termsOf(hi8), lo8.termsDen ?? ONE_TERMS(), t30m);
+          const d8 = distributeTerms(lo8.termsDen ?? ONE_TERMS(), hi8.termsDen ?? ONE_TERMS(), t30m);
+          if (a8 === null || b8 === null || d8 === null) ctx.capNotes?.push("sum");
+          else {
+            const n8 = mergeTerms(a8, b8, 1n, t30m).map((t9) => ({ x: rMul(t9.x, { n: 1n, d: 2n }), comps: t9.comps }));
+            meanK9 = attachFrac(meanBase8, n8, d8);
+          }
           const f9 = values[0];
           return f9.def !== void 0 && f9.def.id !== "kelvin" && (f9.def.affine !== void 0 || f9.def.factor !== void 0) ? convertQuantity(meanK9, f9.def, ctx) : meanK9;
         }
@@ -31470,20 +31475,34 @@ function evalAst(ast, env, ctx = {}) {
       if (acc === null) return err("not-understood", "nothing to average in this section");
       if (tempAvg) {
         const K9 = lookupUnit("K");
+        const t30a = ctx.monthToDays === "30";
         let sumK = { n: 0n, d: 1n };
-        let termsK = [];
+        let fnum9 = [];
+        let fden9 = ONE_TERMS();
+        let fdrop9 = false;
         for (const val of values) {
           const q9 = val;
           const cK = q9.def && (q9.def.affine || q9.def.factor) ? convertQuantity(q9, K9, ctx) : alignForAdd(mkQ({ n: 1n, d: 1n }, K9), q9, ctx);
           if (cK.t !== "q") return cK;
           sumK = rAdd(sumK, qx(cK));
-          termsK = mergeTerms(termsK, q9.def?.affine !== void 0 ? termsOf(cK) : termsOf(q9), 1n);
+          const src9 = q9.def?.affine !== void 0 ? cK : q9;
+          if (!fdrop9) {
+            const fd9 = src9.termsDen ?? ONE_TERMS();
+            const a9 = distributeTerms(fnum9, fd9, t30a);
+            const b9 = distributeTerms(termsOf(src9), fden9, t30a);
+            const dd9 = distributeTerms(fden9, fd9, t30a);
+            if (a9 === null || b9 === null || dd9 === null) {
+              fdrop9 = true;
+              ctx.capNotes?.push("sum");
+            } else {
+              fnum9 = mergeTerms(a9, b9, 1n, t30a);
+              fden9 = dd9;
+            }
+          }
         }
         const nK9 = { n: 1n, d: BigInt(values.length) };
-        const meanK = {
-          ...mkQ(rDiv(sumK, { n: BigInt(values.length), d: 1n }), K9),
-          terms: termsK.map((t9) => ({ x: rMul(t9.x, nK9), comps: t9.comps }))
-        };
+        const meanBase9 = mkQ(rDiv(sumK, { n: BigInt(values.length), d: 1n }), K9);
+        const meanK = fdrop9 ? meanBase9 : attachFrac(meanBase9, fnum9.map((t9) => ({ x: rMul(t9.x, nK9), comps: t9.comps })), fden9);
         const firstQ = values[0];
         return firstQ.def !== void 0 && firstQ.def.id !== "kelvin" && (firstQ.def.affine !== void 0 || firstQ.def.factor !== void 0) ? convertQuantity(meanK, firstQ.def, ctx) : meanK;
       }
@@ -31685,7 +31704,7 @@ function evalAst(ast, env, ctx = {}) {
       let e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (e.t === "p") return err("unsupported-pair", "percentage of a percentage needs \u201Cde/of\u201D");
-      if (e.t === "q") e = foldIrrationalResidue(e, ctx.monthToDays === "30");
+      if (e.t === "q") e = carrierDec(foldIrrationalResidue(e, ctx.monthToDays === "30"));
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
       const px = numRat(e);
       return { t: "p", ...qv(px) };
@@ -31868,7 +31887,7 @@ function evalAst(ast, env, ctx = {}) {
       const rts = [];
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
         let v2 = evaluated9[ai9];
-        if (v2.t === "q") v2 = foldIrrationalResidue(v2, ctx.monthToDays === "30");
+        if (v2.t === "q") v2 = carrierDec(foldIrrationalResidue(v2, ctx.monthToDays === "30"));
         if (v2.t !== "d" && v2.t !== "f") return err("unsupported-pair", `${ast.fn}() needs plain numbers`);
         rts.push(v2);
       }
@@ -31877,8 +31896,9 @@ function evalAst(ast, env, ctx = {}) {
       return applyFunction(ast.fn, rts.map(toDec));
     }
     case "fact": {
-      const e = evalAst(ast.e, env, ctx);
+      let e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
+      if (e.t === "q") e = carrierDec(foldIrrationalResidue(e, ctx.monthToDays === "30"));
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair", "factorial needs a plain number");
       if (numRat(e).d !== 1n) return err("inexact", "factorial needs a whole number \u2265 0");
       return factorial(toDec(e));
@@ -31921,7 +31941,10 @@ function evalAst(ast, env, ctx = {}) {
           def,
           rate: { num, den: target },
           comps: [{ def: num, exp: 1 }, { def: target, exp: -1 }],
-          ...termsConv && { terms: termsConv }
+          ...termsConv && { terms: termsConv },
+          // the DENOMINATOR polynomial rides through the period change
+          // untouched (audit AX)
+          ...e.termsDen && { termsDen: e.termsDen }
         };
       }
       if (e.t === "q") {
@@ -32297,6 +32320,9 @@ function evalAst(ast, env, ctx = {}) {
             let pow9 = combineQuantities(one9, raw9, "*", ctx);
             const lt9 = termsOf(l2);
             const shadowed9 = l2.terms !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+            if (pow9.t === "d" && (shadowed9 || l2.termsDen !== void 0)) {
+              pow9 = { t: "q", ...qv(numRat(pow9)), dim: {}, symbol: "", comps: [] };
+            }
             if (pow9.t === "q" && (shadowed9 || l2.termsDen !== void 0)) {
               if (lt9.length === 1 && l2.termsDen === void 0) {
                 pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))) }] };
@@ -32319,7 +32345,34 @@ function evalAst(ast, env, ctx = {}) {
             }
             return l2.chosen && pow9.t === "q" ? { ...pow9, chosen: true } : pow9;
           }
+          if ((ast.op === "+" || ast.op === "-") && l2.symbol === "" && (compsOf(l2)?.length ?? 0) === 0) {
+            const t30c = ctx.monthToDays === "30";
+            const fc9 = fracOf(l2);
+            const decC9 = ast.op === "+" ? rAdd(qx(l2), b3) : rSub(qx(l2), b3);
+            const bd9 = distributeTerms(fc9.den, [{ x: b3, comps: [] }], t30c);
+            if (bd9 === null) {
+              ctx.capNotes?.push("sum");
+              return { t: "d", ...qv(decC9) };
+            }
+            const nn9 = mergeTerms(fc9.num, bd9, ast.op === "+" ? 1n : -1n, t30c);
+            if (nn9.length === 0) return { t: "d", ...qv({ n: 0n, d: 1n }) };
+            return attachFrac({ t: "q", ...qv(decC9), dim: {}, symbol: "", comps: [] }, nn9, fc9.den);
+          }
           return err("unit-mismatch", `\u201C${l2.symbol} ${ast.op} ${toDec(r3).toString()}\u201D mixes a quantity with a bare number`);
+        }
+        if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && (ast.op === "+" || ast.op === "-") && r3.symbol === "" && (compsOf(r3)?.length ?? 0) === 0) {
+          const b8 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : l2.vx ?? decToRat(l2.v);
+          const t30c = ctx.monthToDays === "30";
+          const fc9 = fracOf(r3);
+          const decC9 = ast.op === "+" ? rAdd(b8, qx(r3)) : rSub(b8, qx(r3));
+          const bd9 = distributeTerms(fc9.den, [{ x: b8, comps: [] }], t30c);
+          if (bd9 === null) {
+            ctx.capNotes?.push("sum");
+            return { t: "d", ...qv(decC9) };
+          }
+          const nn9 = mergeTerms(bd9, fc9.num, ast.op === "+" ? 1n : -1n, t30c);
+          if (nn9.length === 0) return { t: "d", ...qv({ n: 0n, d: 1n }) };
+          return attachFrac({ t: "q", ...qv(decC9), dim: {}, symbol: "", comps: [] }, nn9, fc9.den);
         }
         if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && (ast.op === "*" || ast.op === "/")) {
           if (isOffsetScale(r3)) {
@@ -32343,6 +32396,13 @@ function evalAst(ast, env, ctx = {}) {
           const tsSide = l2.t === "ts" ? l2 : r3.t === "ts" ? r3 : null;
           const qSide = l2.t === "q" ? l2 : r3.t === "q" ? r3 : null;
           if (tsSide && qSide && (ast.op === "*" || ast.op === "/")) {
+            if (qSide.symbol === "" && (compsOf(qSide)?.length ?? 0) === 0 && dimIsEmpty(qSide.dim) && (ast.op === "*" || l2.t === "ts")) {
+              const zero8 = qx(qSide).n === 0n && (qSide.terms === void 0 || qSide.terms.every((t9) => t9.x.n === 0n));
+              const k8 = (zero8 ? { n: 0n, d: 1n } : null) ?? fracReduce(qSide, ctx.monthToDays === "30") ?? (qSide.terms === void 0 && qSide.termsDen === void 0 && (compsOf(qSide) ?? []).every((c9) => c9.def.factorDec === void 0) ? qx(qSide) : null);
+              if (k8 === null) return err("inexact", "scaling a timespan by this factor is not exact \u2014 the factor is irrational");
+              if (ast.op === "/" && k8.n === 0n) return err("division-by-zero");
+              return tsScale(tsSide, ast.op === "*" ? k8 : rDiv({ n: 1n, d: 1n }, k8), ctx);
+            }
             const tsIsZero = !tsSide.c.years && !tsSide.c.months && !tsSide.c.weeks && !tsSide.c.days;
             if (tsIsZero && ast.op === "*") {
               const qc = compsOf(qSide) ?? [];
@@ -34833,6 +34893,23 @@ var CONFUSABLES = {
   "\u{118A0}": "V",
   "\u{10518}": "K",
   "\u{102B6}": "\u03A9",
+  // audit AX batch: Armenian and Cyrillic role/unit lookalikes — ւո (in),
+  // үԁ (yd), օք (of) and friends must refuse, never read as prose
+  "\u0578": "n",
+  "\u057D": "u",
+  "\u0585": "o",
+  "\u0584": "f",
+  "\u0582": "i",
+  "\u0570": "h",
+  "\u0575": "j",
+  "\u0566": "q",
+  "\u0581": "g",
+  "\u0555": "O",
+  "\u053C": "L",
+  "\u04AF": "y",
+  "\u04AE": "Y",
+  "\u0501": "d",
+  "\u0461": "w",
   "\u0410": "A",
   "\u0412": "B",
   "\u0415": "E",
@@ -35945,11 +36022,37 @@ function exactSemantic(rt2, thirty) {
     const k9 = fracReduceKey(rt2, thirty);
     if (k9 !== null) return JSON.stringify(v2) + `|k:${k9}`;
   }
-  if (rt2.t === "q" && rt2.termsDen !== void 0) {
-    exact += `|d:${rt2.termsDen.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+")}`;
-  }
-  if (rt2.t === "q" && rt2.terms !== void 0) {
-    exact += `|t:${rt2.terms.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+")}`;
+  if (rt2.t === "q" && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
+    const gcd9 = (a9, b9) => {
+      a9 = a9 < 0n ? -a9 : a9;
+      b9 = b9 < 0n ? -b9 : b9;
+      while (b9) {
+        const t9 = a9 % b9;
+        a9 = b9;
+        b9 = t9;
+      }
+      return a9;
+    };
+    const div9 = (a9, k9) => {
+      let n9 = a9.n * k9.d;
+      let d9 = a9.d * k9.n;
+      if (d9 < 0n) {
+        n9 = -n9;
+        d9 = -d9;
+      }
+      const g9 = gcd9(n9, d9) || 1n;
+      return { n: n9 / g9, d: d9 / g9 };
+    };
+    const compsSig9 = (t9) => t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7");
+    const den9 = rt2.termsDen;
+    const first9 = den9 === void 0 ? void 0 : [...den9].sort((a9, b9) => compsSig9(a9) < compsSig9(b9) ? -1 : 1)[0];
+    const lead9 = first9 === void 0 || first9.x.n === 0n ? { n: 1n, d: 1n } : first9.x;
+    const ser9 = (list9) => list9.map((t9) => {
+      const x9 = div9(t9.x, lead9);
+      return `${x9.n}/${x9.d}\xB7${compsSig9(t9)}`;
+    }).sort().join("+");
+    if (den9 !== void 0) exact += `|d:${ser9(den9)}`;
+    if (rt2.terms !== void 0) exact += `|t:${ser9(rt2.terms)}`;
   }
   return JSON.stringify(v2) + exact;
 }
@@ -36112,7 +36215,13 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       const canon9 = nameWords9.map(declit9);
       const phrase0 = canon9.join(" ");
       const fused0 = canon9.join("");
-      const roled9 = canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
+      const skelRoled9 = (w9) => {
+        if (![...w9].some((ch9) => new RegExp("\\p{L}", "u").test(ch9) && !/[\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(ch9))) return false;
+        const s9 = skeleton(w9);
+        if (s9 === w9) return false;
+        return isUnitWord(s9) || isTimespanUnitWord(s9) || isReservedWord(s9) || isComputableWord(s9) || isAnyPackWord(s9) || allPackBridges().words.has(s9) || CORE_OP_WORDS.has(s9) || isPercentPreposition(s9) || /^(of|off|increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(s9) || looksLikeCode(s9);
+      };
+      const roled9 = canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
       void phrase9;
       if (roled9) {
         throw new ParseError("not-understood", `\u201C${tokens.slice(0, eqIdx).map((t9) => t9.text).join(" ")}\u201D is operator vocabulary and cannot be a variable name`);
