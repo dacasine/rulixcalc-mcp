@@ -35085,7 +35085,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   }
   for (let ib9 = 0; ib9 < tokens.length; ib9++) {
     const tb9 = tokens[ib9];
-    if (tb9.kind !== "word" || env.has(tb9.text)) continue;
+    if (tb9.kind !== "word") continue;
     const lower9 = tb9.text.toLowerCase();
     const grp9 = lexicon.blockerGroups.find((g9) => g9.words[0] === lower9 && g9.words.every((w9, k9) => {
       const tk9 = tokens[ib9 + k9];
@@ -35096,6 +35096,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       ib9 += grp9.words.length - 1;
       continue;
     }
+    if (env.has(tb9.text)) continue;
     const reason9 = lexicon.blockers.get(lower9);
     if (reason9 !== void 0) {
       violations.push(`\u201C${tb9.text}\u201D is a numeric modifier \u2014 ${reason9}`);
@@ -35826,7 +35827,12 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         }, /* @__PURE__ */ new Map()).values()]
       },
       ...assumptions && { assumptions },
-      ...ignoredTokens.length > 0 && { ignored: ignoredTokens },
+      ...ignoredTokens.length > 0 && {
+        // the PUBLIC channel is faithful to the SOURCE (audit AP): texts
+        // re-slice the raw line (NFKC folds and reconstructed spacing never
+        // leak) and entries sort by range
+        ignored: [...ignoredTokens].sort((a9, b9) => a9.range.start - b9.range.start).map((t9) => ({ text: line.slice(t9.range.start, t9.range.end), range: t9.range }))
+      },
       diagnostics: diagnosticsFor(rt2, line)
     },
     rt: rt2,
