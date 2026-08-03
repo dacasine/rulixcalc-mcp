@@ -30249,50 +30249,62 @@ var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
   return merged.length > 4096 ? null : merged;
 };
 var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
-var fracQuotient = (N2, D2, thirty) => {
-  if (N2.length !== D2.length || N2.length === 0) return null;
-  const quotOf = (n2, d2) => {
-    const qc = canonComps([
-      ...n2.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
-      ...d2.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
-    ]);
-    const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc }], [d2], thirty);
-    if (probe === null || probe.length !== 1) return null;
-    const pc = termCanon(probe[0], thirty);
-    const nc = termCanon(n2, thirty);
-    if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
-    const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc };
-    const cc = termCanon(cand, thirty);
-    const cx = rnorm(cc.canonX);
-    return { sig: `${cc.key}#${cx.n}/${cx.d}`, cand };
+var termVec = (t2, thirty) => {
+  const v2 = /* @__PURE__ */ new Map();
+  const bump = (k2, e) => {
+    v2.set(k2, (v2.get(k2) ?? 0) + e);
   };
-  const d0 = D2[0];
-  if (rnorm(termCanon(d0, thirty).canonX).n === 0n) return null;
-  const set0 = /* @__PURE__ */ new Map();
-  for (const n2 of N2) {
-    const q0 = quotOf(n2, d0);
-    if (q0 !== null && !set0.has(q0.sig)) set0.set(q0.sig, q0.cand);
-  }
-  const cands = [];
-  if (D2.length === 1) {
-    for (const [sig, cand] of set0) cands.push({ sig, cand });
-  } else {
-    const d1 = D2[1];
-    const seen = /* @__PURE__ */ new Set();
-    for (const n2 of N2) {
-      const q1 = quotOf(n2, d1);
-      if (q1 !== null && set0.has(q1.sig) && !seen.has(q1.sig)) {
-        seen.add(q1.sig);
-        cands.push({ sig: q1.sig, cand: set0.get(q1.sig) });
-      }
+  for (const c2 of t2.comps) {
+    const d2 = c2.def;
+    if (d2.currency !== void 0) {
+      bump(`C:${d2.currency}`, c2.exp);
+      continue;
+    }
+    if (d2.factorDec !== void 0) {
+      bump(`D:${d2.factorDec}`, c2.exp);
+      continue;
+    }
+    if (d2.affine !== void 0) {
+      bump(`A:${d2.id}`, c2.exp);
+      continue;
+    }
+    for (const [k2, e] of Object.entries(d2.dim)) {
+      let kk = k2 === "tempdelta" ? "temperature" : k2;
+      if (thirty === true && kk === "calmonths") kk = "caldays";
+      bump(`d:${kk}`, e * c2.exp);
     }
   }
-  cands.sort((a2, b2) => a2.sig < b2.sig ? -1 : 1);
-  for (const { cand } of cands.slice(0, 8)) {
-    const full = distributeTerms(D2, [cand], thirty);
-    if (full !== null && mergeTerms(N2, full, -1n, thirty).length === 0) return cand;
+  return v2;
+};
+var termVecCmp = (a2, b2, thirty) => {
+  const va = termVec(a2, thirty);
+  const vb = termVec(b2, thirty);
+  const axes = [.../* @__PURE__ */ new Set([...va.keys(), ...vb.keys()])].sort();
+  for (const ax of axes) {
+    const d2 = (va.get(ax) ?? 0) - (vb.get(ax) ?? 0);
+    if (d2 !== 0) return d2 < 0 ? -1 : 1;
   }
-  return null;
+  return 0;
+};
+var fracQuotient = (N2, D2, thirty) => {
+  if (N2.length !== D2.length || N2.length === 0) return null;
+  let nMin = N2[0];
+  for (const n2 of N2) if (termVecCmp(n2, nMin, thirty) < 0) nMin = n2;
+  let dMin = D2[0];
+  for (const d2 of D2) if (termVecCmp(d2, dMin, thirty) < 0) dMin = d2;
+  if (rnorm(termCanon(dMin, thirty).canonX).n === 0n) return null;
+  const qc = canonComps([
+    ...nMin.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+    ...dMin.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
+  ]);
+  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc }], [dMin], thirty);
+  if (probe === null || probe.length !== 1) return null;
+  const pc = termCanon(probe[0], thirty);
+  const nc = termCanon(nMin, thirty);
+  if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
+  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc };
+  const full = distributeTerms(D2, [cand], thirty);
+  return full !== null && mergeTerms(N2, full, -1n, thirty).length === 0 ? cand : null;
 };
 function fracReduceTerm(q2, thirty) {
   if (q2.terms === void 0 && q2.termsDen === void 0) return null;
@@ -30829,8 +30841,12 @@ var tsRatio = (a2, b2, ctx) => {
     if (den30 === 0n) return err("division-by-zero");
     return { t: "d", ...qv(rnorm({ n: ca.months * 30n + ca.days, d: den30 })) };
   }
-  if (ca.days === 0n && cb.days === 0n) return { t: "d", ...qv(rnorm({ n: ca.months, d: cb.months })) };
-  if (ca.months === 0n && cb.months === 0n) return { t: "d", ...qv(rnorm({ n: ca.days, d: cb.days })) };
+  const ga = spanGroups(a2.c);
+  const gb = spanGroups(b2.c);
+  const pureM9 = (g9) => g9.hasM && !g9.hasD;
+  const pureD9 = (g9) => !g9.hasM;
+  if (pureM9(ga) && pureM9(gb) && cb.months !== 0n) return { t: "d", ...qv(rnorm({ n: ca.months, d: cb.months })) };
+  if (pureD9(ga) && pureD9(gb) && cb.days !== 0n) return { t: "d", ...qv(rnorm({ n: ca.days, d: cb.days })) };
   return err("anchor-required", "months/years and days/weeks only compare around a date");
 };
 function addSummable(acc, v2, ctx) {
@@ -31037,7 +31053,7 @@ function evalAst(ast, env, ctx = {}) {
     case "var": {
       ctx.deps?.variables.add(ast.name);
       const bound = env.get(ast.name);
-      if (bound !== void 0 && (bound.t === "d" || bound.t === "q") && bound.capped === true) ctx.capNotes?.push("inherited");
+      if (bound !== void 0 && bound.capped === true) ctx.capNotes?.push("inherited");
       return bound ?? err("not-understood", `unknown word \u201C${ast.name}\u201D`);
     }
     case "lineRef": {
@@ -31050,7 +31066,7 @@ function evalAst(ast, env, ctx = {}) {
       if (target === null || target === void 0) {
         return err("not-understood", `line ${ast.index} has no value`);
       }
-      if ((target.t === "d" || target.t === "q") && target.capped === true) ctx.capNotes?.push("inherited");
+      if (target.capped === true) ctx.capNotes?.push("inherited");
       return target;
     }
     case "agg": {
@@ -31062,7 +31078,7 @@ function evalAst(ast, env, ctx = {}) {
         const v2 = lines[i2];
         if (isSummable(v2 ?? null)) values.push(v2);
       }
-      if (values.some((v9) => (v9.t === "d" || v9.t === "q") && v9.capped === true)) ctx.capNotes?.push("aggregate");
+      if (values.some((v9) => v9.capped === true)) ctx.capNotes?.push("aggregate");
       if (ast.fn === "count") return { t: "d", v: new DecC(values.length) };
       if (ast.fn === "median") {
         if (values.length === 0) return err("not-understood", "nothing to take a median of in this section");
@@ -33854,7 +33870,8 @@ function parse3(tokens) {
         }
         const prep = PERCENT_PREPOSITIONS[t2.text.toLowerCase()];
         if (prep === void 0) throw new ParseError("syntax", `unexpected \u201C${t2.text}\u201D here`);
-        if (left.k !== "pct") throw new ParseError("syntax", `\u201C${t2.text}\u201D without a preceding percentage`);
+        const pctish9 = (a9) => a9.k === "pct" || a9.k === "un" && pctish9(a9.e);
+        if (!pctish9(left)) throw new ParseError("syntax", `\u201C${t2.text}\u201D without a preceding percentage`);
         const base = expr(12);
         left = prep === "of" ? { k: "pctOf", pct: left, base } : prep === "on" ? { k: "pctOn", pct: left, base } : { k: "pctOff", pct: left, base };
         continue;
@@ -35037,6 +35054,15 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       out.push(t2);
       continue;
     }
+    const siPrefixedUnit9 = (w9) => {
+      if (isUnitWord(w9)) return false;
+      const m9 = new RegExp("^(da|[YZEPTGMkhdcmu\xB5npfazy])(\\p{L}.+|\\p{L})$", "u").exec(w9);
+      if (!m9) return false;
+      const tail9 = m9[2];
+      if (!isUnitWord(tail9)) return false;
+      if (new RegExp("^\\p{Lu}", "u").test(tail9)) return true;
+      return tail9.length >= 2 && !isTimespanUnitWord(tail9);
+    };
     if (violations.length === 0) {
       if (tokens[idx + 1]?.kind === "lparen") {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
@@ -35046,7 +35072,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
         } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text) || !isUnitWord(t2.text) && unitWordCaseTwin(t2.text) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // unit prefix (≥2 chars) + a letters-only tail — MHzmonth is
         // a fused pseudo-suffix, never prose (audit AF)
-        [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9)))) || // after a PERCENT, only code-like or composite suffixes refuse —
+        [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || siPrefixedUnit9(t2.text)) || // after a PERCENT, only code-like or composite suffixes refuse —
         // "5% for 10 years" is phrase glue, not a suffix (audit X)
         prev?.kind === "percent" && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -35062,9 +35088,9 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || // unit + glued code (kgCHFF): a unit PREFIX followed by an
         // uppercase-led remainder is never prose (audit X)
         [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // two units GLUED (Nms = N + ms) are never prose (audit AF)
-        !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (isUnitWord(t2.text.slice(k9)) || isTimespanUnitWord(t2.text.slice(k9))))) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
+        !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (isUnitWord(t2.text.slice(k9)) || isTimespanUnitWord(t2.text.slice(k9)))) || siPrefixedUnit9(t2.text)) && (prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "percent" || tokens[idx + 1]?.kind === "number" || tokens[idx + 1]?.kind === "fraction")) {
           violations.push(`\u201C${t2.text}\u201D is not a registered currency or unit code`);
-        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text) || isUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))))) {
+        } else if (prev?.kind === "word" && (isReservedWord(prev.text) || env.has(prev.text) || isUnitWord(prev.text)) && (looksLikeCode(t2.text) || new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]{1,5}$", "u").test(t2.text) || /[\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Cherokee}\p{Script=Armenian}\p{Script=Canadian_Aboriginal}\p{Script=Old_Italic}\p{Script=Lisu}\p{Script=Carian}\p{Script=Lycian}\p{Script=Lydian}\p{Script=Coptic}]/u.test(t2.text) && /[\p{Script=Latin}\u00B0]/u.test(t2.text) || !isUnitWord(t2.text) && ((s9) => s9.length >= 2 && unitWordCaseTwin(s9))(t2.text.normalize("NFD").replace(new RegExp("\\p{M}", "gu"), "")) || !isUnitWord(t2.text) && [2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{L}+$", "u").test(t2.text.slice(k9))) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || skeleton(t2.text) !== t2.text && (isUnitWord(skeleton(t2.text)) || looksLikeCode(skeleton(t2.text))) || t2.text.length <= 4 && new RegExp("^\\p{Ll}+$", "u").test(t2.text) && [2, 3].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9))) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || siPrefixedUnit9(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction" || prev?.kind === "rparen" || prev?.kind === "percent" || prev?.kind === "date" || prev?.kind === "clocktime" || prev?.kind === "bang") && prev.end === t2.start && !(prev.kind === "number" && prev.plainInt === true && ["er", "re", "\xE8re", "ere", "e", "\xE8me", "eme", "th", "st", "nd", "rd"].includes(lower))) {
           violations.push(prev.kind === "number" || prev.kind === "fraction" ? `\u201C${prev.text}${t2.text}\u201D is not a number, unit or date` : `\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -35397,7 +35423,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     rt2 = finalizeCurrencies(rt2, ctx);
     if (capNotes.length > 0) {
       rawAssume.push({ code: "exactness-capped", level: 2, impact: "value", data: {} });
-      if (rt2.t === "d" || rt2.t === "q") rt2 = { ...rt2, capped: true };
+      rt2 = { ...rt2, capped: true };
     }
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && !rt2.v.isZero() && Math.abs(rt2.v.e) > 9999) {
       rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
@@ -36157,7 +36183,7 @@ function runSheet(text, context, cache2, initialCfg) {
           ];
         }
       }
-      const asms9 = publicResult.assumptions ?? [];
+      const asms9 = (publicResult.assumptions ?? []).filter((a9) => a9.code !== "exactness-capped");
       const ownLevel = asms9.length === 0 ? 0 : Math.max(...asms9.map((a9) => a9.level));
       const sig9 = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" ? `${Math.max(srcLevel, ownLevel, 1)}:ambiguous` : asms9.length === 0 ? "" : `${ownLevel}:${asms9.map((a9) => a9.code).join(",")}`;
       doubtSigs.push(sig9);
