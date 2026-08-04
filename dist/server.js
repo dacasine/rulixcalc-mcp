@@ -29225,8 +29225,10 @@ var polyDiv = (num9, den9, thirty) => {
   let rest9 = num9;
   const q9 = [];
   let prev9 = null;
-  const cap9 = num9.length + den9.length + 16;
-  for (let it9 = 0; it9 < cap9 && rest9.length > 0; it9++) {
+  const qCap9 = num9.length + den9.length + 512;
+  const digitCap9 = 2 * Math.max(40, ...[...num9, ...den9].map((t9) => Math.max((t9.x.n < 0n ? -t9.x.n : t9.x.n).toString().length, t9.x.d.toString().length))) + 80;
+  for (let it9 = 0; it9 < 4096 && rest9.length > 0; it9++) {
+    if (q9.length > qCap9) return null;
     const nl9 = lead9(rest9);
     if (prev9 !== null && termVecCmp(nl9, prev9, thirty) >= 0) return null;
     prev9 = nl9;
@@ -29239,6 +29241,7 @@ var polyDiv = (num9, den9, thirty) => {
     }
     if (rnorm(dl9.x).n === 0n) return null;
     const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0) };
+    if ((m9.x.n < 0n ? -m9.x.n : m9.x.n).toString().length > digitCap9 || m9.x.d.toString().length > digitCap9) return null;
     q9.push(m9);
     const sub9 = distributeTerms([m9], den9, thirty);
     if (sub9 === null) return null;
@@ -30626,6 +30629,7 @@ var zeroState = (rt2, thirty) => {
   const x9 = rt2.t === "q" || rt2.t === "p" ? rt2.vx ?? decToRat(rt2.v) : rt2.t === "d" || rt2.t === "f" ? numRat(rt2) : null;
   if (x9 === null) return "nonzero";
   if (x9.n !== 0n) return "nonzero";
+  if (rt2.capped === true) return "undecidable";
   const t9 = rt2.terms;
   if (t9 === void 0 || t9.length === 0 || t9.every((u9) => u9.x.n === 0n)) return "zero";
   const m9 = mergeTerms(t9, [], 1n, thirty);
@@ -30666,6 +30670,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   const quot9 = num9 === null || den9 === null ? null : fracQuotient(num9, den9, t30);
   if (quot9 !== null) {
     const c9 = termCanon(quot9, t30);
+    if (c9.key === "|" && dividend9 !== void 0 && dividend9.t === "p") return { t: "p", ...qv(c9.canonX) };
     if (c9.key === "|") return { t: "d", ...qv(c9.canonX) };
     const raw9 = {
       t: "q",
@@ -30674,6 +30679,9 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       symbol: compsSymbol(quot9.comps),
       comps: quot9.comps.map((c8) => ({ ...c8 }))
     };
+    if (dividend9 !== void 0 && dividend9.t === "q" && dividend9.chosen === true) {
+      return { ...raw9, terms: [quot9], chosen: true };
+    }
     const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
     return combineQuantities(one9, raw9, "*", ctx);
   }
@@ -30703,14 +30711,19 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
         acc8 = rAdd(acc8, p8);
       }
       const def8 = rep8.comps.length === 1 && rep8.comps[0].exp === 1 ? rep8.comps[0].def : void 0;
+      const dim8 = dimOfComps(rep8.comps);
+      if (Object.keys(dim8).length > 0 && Object.keys(dim8).every((k9) => k9 === "calmonths" || k9 === "caldays")) {
+        return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
+      }
       return {
         t: "q",
         ...qv(acc8),
-        dim: dimOfComps(rep8.comps),
+        dim: dim8,
         symbol: compsSymbol(rep8.comps),
         comps: rep8.comps.map((c9) => ({ ...c9 })),
         ...def8 && { def: def8 },
-        terms: q82
+        terms: q82,
+        ...dividend9 !== void 0 && dividend9.t === "q" && dividend9.chosen === true && { chosen: true }
       };
     };
     const q8 = polyDiv(num9, den9, t30);
@@ -32153,6 +32166,9 @@ function evalAst(ast, env, ctx = {}) {
       if (p2.t === "e") return p2;
       if (value.t !== "d" && value.t !== "f" && value.t !== "ts" && !isCarrier(value)) return err("unsupported-pair");
       if (p2.t !== "p" && p2.t !== "d" && p2.t !== "f") return err("unsupported-pair");
+      if (value.t === "ts" && !value.c.years && !value.c.months && !value.c.weeks && !value.c.days) {
+        return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+      }
       const pvr = p2.t === "p" ? p2.vx ?? decToRat(p2.v) : numRat(p2);
       if (pvr.n === 0n) {
         if (p2.t !== "p" || p2.terms === void 0 && p2.termsDen === void 0) return err("division-by-zero");
@@ -32271,6 +32287,9 @@ function evalAst(ast, env, ctx = {}) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
       const cent = { n: 100n, d: 1n };
+      if (value.t === "ts" && !value.c.years && !value.c.months && !value.c.weeks && !value.c.days) {
+        return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+      }
       const px = p2.vx ?? decToRat(p2.v);
       const denom = ast.sign === 1 ? rAdd(cent, px) : rSub(cent, px);
       if (denom.n === 0n) {
@@ -33338,7 +33357,9 @@ function evalAst(ast, env, ctx = {}) {
                 out = { n: a3.n * b3.n, d: a3.d * b3.d };
                 break;
               case "mod": {
-                if (b3.n === 0n) return err("division-by-zero");
+                if (b3.n === 0n) {
+                  return r3.capped === true ? err("inexact", "division by a capped value that projects to zero is not decidable") : err("division-by-zero");
+                }
                 const q0 = rDiv(a3, b3);
                 const t0 = q0.n / q0.d;
                 out = rSub(a3, rMul(b3, { n: t0, d: 1n }));
@@ -33350,7 +33371,9 @@ function evalAst(ast, env, ctx = {}) {
                 break;
               }
               default:
-                if (b3.n === 0n) return err("division-by-zero");
+                if (b3.n === 0n) {
+                  return r3.capped === true ? err("inexact", "division by a capped value that projects to zero is not decidable") : err("division-by-zero");
+                }
                 out = { n: a3.n * b3.d, d: a3.d * b3.n };
             }
             const capA9 = l2.capped === true || r3.capped === true;
@@ -35504,8 +35527,6 @@ function parse3(tokens) {
         }
         const prep = PERCENT_PREPOSITIONS[t2.text.toLowerCase()];
         if (prep === void 0) throw new ParseError("syntax", `unexpected \u201C${t2.text}\u201D here`);
-        const pctish9 = (a9) => a9.k === "pct" || a9.k === "var" || a9.k === "lineRef" || a9.k === "un" && pctish9(a9.e);
-        if (!pctish9(left)) throw new ParseError("syntax", `\u201C${t2.text}\u201D without a preceding percentage`);
         const base = expr(12);
         left = prep === "of" ? { k: "pctOf", pct: left, base } : prep === "on" ? { k: "pctOn", pct: left, base } : { k: "pctOff", pct: left, base };
         continue;
@@ -35552,11 +35573,11 @@ function matchPercentPrototypes(tokens) {
   const isWord = (t2, set) => t2?.kind === "word" && set.has(t2.text.toLowerCase());
   {
     const n2 = tokens.length;
-    if (n2 >= 6 && isWord(tokens[n2 - 1], WHAT_OBJECT_WORDS) && tokens[n2 - 2]?.kind === "word" && PERCENT_PREPOSITIONS[tokens[n2 - 2].text.toLowerCase()] === "of" && tokens[n2 - 3]?.kind === "percent") {
-      const isIdx = tokens.findIndex((t2, idx) => idx >= 1 && idx < n2 - 3 && isWord(t2, IS_WORDS));
+    if (n2 >= 5 && isWord(tokens[n2 - 1], WHAT_OBJECT_WORDS) && tokens[n2 - 2]?.kind === "word" && PERCENT_PREPOSITIONS[tokens[n2 - 2].text.toLowerCase()] === "of") {
+      const isIdx = tokens.findIndex((t2, idx) => idx >= 1 && idx < n2 - 2 && isWord(t2, IS_WORDS));
       if (isIdx > 0) {
         const valueTokens = tokens.slice(0, isIdx);
-        const pctTokens = tokens.slice(isIdx + 1, n2 - 3);
+        const pctTokens = tokens.slice(isIdx + 1, n2 - 2);
         if (valueTokens.length > 0 && pctTokens.length > 0) {
           return { k: "isPctOfWhat", value: parse3(valueTokens), pct: parse3(pctTokens) };
         }
@@ -35739,7 +35760,7 @@ function parseExpressionInner(tokens) {
   if (financeProto) return financeProto;
   const dateProto = matchDatePrototypes(tokens);
   if (dateProto) return dateProto;
-  if (tokens.some((t2) => t2.kind === "percent")) {
+  if (tokens.some((t2) => t2.kind === "percent" || t2.kind === "word" && PERCENT_PREPOSITIONS[t2.text.toLowerCase()] !== void 0)) {
     const proto = matchPercentPrototypes(tokens);
     if (proto) return proto;
   }
@@ -36096,6 +36117,7 @@ function confusableRole(text, rawText, lexicon) {
     // (audit BE): KͺB folds to KiB and must refuse, never drop
     plausibleUnitReason(tw9) !== null);
   };
+  if (/\u0345/u.test(text) && twinHits9(text)) return true;
   if (rawText !== void 0 && rawText !== text) {
     if (nonLatin9(rawText)) {
       const sk9 = skeleton(rawText);
@@ -36247,6 +36269,23 @@ function extractReferences(tokens, rts, formatting) {
 }
 function stripParentheticalComments(tokens, env, lexicon, violations, ignored, rts) {
   const out = [...tokens];
+  for (let i2 = 0; i2 + 1 < out.length; i2++) {
+    if (out[i2].kind !== "lparen" || out[i2 + 1].kind !== "lparen") continue;
+    let d9 = 0;
+    let j9 = i2 + 1;
+    for (; j9 < out.length; j9++) {
+      if (out[j9].kind === "lparen") d9++;
+      else if (out[j9].kind === "rparen") {
+        d9--;
+        if (d9 === 0) break;
+      }
+    }
+    if (j9 + 1 < out.length && out[j9 + 1]?.kind === "rparen") {
+      out.splice(j9 + 1, 1);
+      out.splice(i2, 1);
+      i2--;
+    }
+  }
   for (let i2 = 0; i2 < out.length; i2++) {
     if (out[i2].kind !== "lparen") continue;
     {
@@ -36291,7 +36330,15 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
     );
     if (inner.length === 0) continue;
     if (meaningful.some((t2) => t2.kind === "op" || t2.kind === "percent" || t2.kind === "equals")) continue;
-    if (meaningful.some((t2) => t2.kind === "word" && (lexicon.operatorWords.has(t2.text.toLowerCase()) || lexicon.divisionParticles.has(t2.text.toLowerCase()) || CORE_OP_WORDS.has(t2.text.toLowerCase())))) continue;
+    if (meaningful.some((t2) => t2.kind === "word" && (() => {
+      let w0 = t2.text.toLowerCase();
+      for (; ; ) {
+        const m0 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(w0);
+        if (!m0) break;
+        w0 = m0[1];
+      }
+      return lexicon.operatorWords.has(w0) || lexicon.divisionParticles.has(w0) || CORE_OP_WORDS.has(w0);
+    })())) continue;
     const PREP9 = /* @__PURE__ */ new Set(["in", "en", "im", "de", "a", "\xE0"]);
     const modifierish9 = meaningful.length >= 1 && meaningful.every((t9) => t9.kind === "word") && meaningful.some((t9) => isPostfixModifierWord(t9.text) || SCALAR_WORDS[t9.text.toLowerCase()] !== void 0) && meaningful.every((t9) => isPostfixModifierWord(t9.text) || SCALAR_WORDS[t9.text.toLowerCase()] !== void 0 || PREP9.has(t9.text.toLowerCase()));
     if (modifierish9) {
@@ -36327,11 +36374,19 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(s9);
         return m9 ? m9[1] : s9;
       };
+      const declitFix9 = (s9) => {
+        let cur9 = s9;
+        for (; ; ) {
+          const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(cur9);
+          if (!m9) return cur9;
+          cur9 = m9[1];
+        }
+      };
       const plaus0 = meaningful.find((t2) => t2.kind === "word" && // a RECOGNIZED unit or currency named in a note stays prose
       // ("montant (en CHF)"); only plausible-unknown fragments refuse —
       // clitics resolve first ((d'CHFF)), and an INACTIVE pack's
       // vocabulary never vanishes through a note ((times) with fr only)
-      (plausibleFragment(deparen9(t2.text)) || confusableRole(deparen9(t2.text), t2.rawText, lexicon) || (() => {
+      (plausibleFragment(declitFix9(deparen9(t2.text))) || confusableRole(declitFix9(deparen9(t2.text)), t2.rawText, lexicon) || plausibleFragment(deparen9(t2.text)) || confusableRole(deparen9(t2.text), t2.rawText, lexicon) || (() => {
         const w9 = deparen9(t2.text).toLowerCase();
         return isAnyPackWord(w9) && !lexicon.operatorWords.has(w9) && !lexicon.divisionParticles.has(w9) && !lexicon.blockers.has(w9) && !CORE_OP_WORDS.has(w9);
       })() || !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => {
@@ -36764,7 +36819,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (lower9.includes("\xB7")) {
       const segsU9 = tb9.text.split(/[·/]/u).map((s9) => s9.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
       const compoundish9 = segsU9.every((s9) => s9 === "" || isUnitWord(s9) || isTimespanUnitWord(s9));
-      if (!compoundish9 && (roleSpelling(lower9.replace(/·/gu, ""), lexicon) || plausibleUnitReason(lower9.replace(/·/gu, "")) !== null)) {
+      if (!compoundish9 && (roleSpelling(lower9.replace(/·/gu, ""), lexicon) || plausibleUnitReason(lower9.replace(/·/gu, "")) !== null || plausibleUnitReason(tb9.text.replace(/·/gu, "")) !== null || confusableRole(tb9.text.replace(/·/gu, ""), void 0, lexicon))) {
         violations.push(`\u201C${tb9.text}\u201D splits a known word with interpuncts \u2014 write it plainly`);
         continue;
       }
@@ -36781,7 +36836,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       const tk9 = tokens[ib9 + k9];
       if (tk9?.kind !== "word") return false;
       const b9 = declitic9(bkey9(tk9.text));
-      const f9 = b9.replace(/\s+/gu, "");
+      const f9 = b9.replace(/[\s·]+/gu, "");
       return [
         b9,
         skeleton(b9).toLowerCase(),
@@ -36799,7 +36854,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       const tk9 = tokens[ib9 + k9];
       if (tk9?.kind !== "word") return false;
       const b9 = declitic9(bkey9(tk9.text));
-      const f9 = b9.replace(/\s+/gu, "");
+      const f9 = b9.replace(/[\s·]+/gu, "");
       return [
         b9,
         skeleton(b9).toLowerCase(),
@@ -36870,7 +36925,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       const bridgeWord9 = (tk9, w9) => {
         if (tk9?.kind !== "word") return false;
         const b9 = declitic9(bkey9(tk9.text));
-        const f9 = b9.replace(/\s+/gu, "");
+        const f9 = b9.replace(/[\s·]+/gu, "");
         return [
           b9,
           skeleton(b9).toLowerCase(),
@@ -36881,7 +36936,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       };
       const isBridgeHead9 = br9.words.has(lower9) || fusedBridge9 || br9.groups.some((g9) => bridgeWord9(tokens[ib9], g9[0]) && g9.every((w9, k9) => bridgeWord9(tokens[ib9 + k9], w9)));
       if (isBridgeHead9) {
-        const glen9 = br9.words.has(lower9) || fusedBridge9 ? 1 : br9.groups.find((g9) => g9[0] === lower9).length;
+        const gMatch9 = br9.groups.find((g9) => bridgeWord9(tokens[ib9], g9[0]) && g9.every((w9, k9) => bridgeWord9(tokens[ib9 + k9], w9)));
+        const glen9 = br9.words.has(lower9) || fusedBridge9 ? 1 : gMatch9?.length ?? 1;
         const nxt9 = tokens[ib9 + glen9];
         const nxtnxt9 = tokens[ib9 + glen9 + 1];
         const anchorBefore9 = tokens.slice(0, ib9).some((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text));
@@ -36994,6 +37050,16 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (op) {
       out.push({ ...t2, kind: "op", op });
       continue;
+    }
+    if (t2.kind === "word" && t2.text.includes("\xB7") && !t2.text.startsWith("\xB7") && !t2.text.endsWith("\xB7")) {
+      const segsV9 = t2.text.split("\xB7");
+      if (segsV9.every((s9) => env.has(s9))) {
+        for (let sv9 = 0; sv9 < segsV9.length; sv9++) {
+          if (sv9 > 0) out.push({ kind: "op", op: "*", text: "\xB7", start: t2.start, end: t2.end });
+          out.push({ kind: "word", text: segsV9[sv9], start: t2.start, end: t2.end });
+        }
+        continue;
+      }
     }
     if (isPercentPreposition(lower)) {
       if (prev?.kind === "percent" || prev?.kind === "rparen" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
@@ -37468,7 +37534,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       tokens.slice(0, eqIdx).some((t9) => t9.kind === "word" && !env.has(t9.text) && (plausibleUnitReason(t9.text) !== null || looksLikeCode(t9.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹]/u.test(t9.text) || !isUnitWord(t9.text) && [2, 3, 4].some((k9) => k9 < t9.text.length && isUnitWord(t9.text.slice(0, k9)) && isTimespanUnitWord(t9.text.slice(k9))))) || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || // P-9 reserves of/off in ANY position of a name (audit BE): a
       // bound « revenu of » could never read back through the percent
       // grammar — French « de » names (taux de change) stay bindable
-      w9 === "of" || w9 === "off" || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
+      w9 === "of" || w9 === "off" || /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
       void phrase9;
       if (roled9) {
         throw new ParseError("not-understood", `\u201C${tokens.slice(0, eqIdx).map((t9) => t9.text).join(" ")}\u201D is operator vocabulary and cannot be a variable name`);
