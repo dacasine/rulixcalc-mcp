@@ -30580,6 +30580,7 @@ var polyDiv = (num9, den9, thirty) => {
   const q9 = [];
   for (let it9 = 0; it9 < 64 && rest9.length > 0; it9++) {
     const nl9 = lead9(rest9);
+    if (deg9(nl9) < deg9(dl9)) return null;
     const map9 = /* @__PURE__ */ new Map();
     for (const c9 of nl9.comps) map9.set(c9.def.id, { def: c9.def, exp: c9.exp });
     for (const c9 of dl9.comps) {
@@ -30613,9 +30614,24 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   const t30 = ctx.monthToDays === "30";
   if (zeroState(divisor9, t30) === "zero") return err("division-by-zero");
   if (num9 !== null && (num9.length === 0 || num9.every((t9) => t9.x.n === 0n))) {
+    const dvDims9 = divisor9.t === "q" && (compsOf(divisor9)?.length ?? 0) > 0 ? divisor9 : null;
+    if (dvDims9 !== null) {
+      const l1 = dividend9 !== void 0 && dividend9.t === "q" ? { ...dividend9, ...qv({ n: 1n, d: 1n }), terms: void 0, termsDen: void 0 } : { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+      const r1 = {
+        t: "q",
+        v: new DecC(1),
+        dim: dvDims9.dim,
+        symbol: dvDims9.symbol,
+        comps: (compsOf(dvDims9) ?? []).map((c9) => ({ ...c9 }))
+      };
+      const shell9 = combineQuantities(l1, r1, "/", ctx);
+      if (shell9.t === "q") return { ...shell9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+      return { t: "d", ...qv({ n: 0n, d: 1n }) };
+    }
     if (dividend9 !== void 0 && dividend9.t === "q" && (compsOf(dividend9)?.length ?? 0) > 0) {
       return { ...dividend9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
     }
+    if (dividend9 !== void 0 && dividend9.t === "p") return { t: "p", ...qv({ n: 0n, d: 1n }) };
     return { t: "d", ...qv({ n: 0n, d: 1n }) };
   }
   const quot9 = num9 === null || den9 === null ? null : fracQuotient(num9, den9, t30);
@@ -30633,30 +30649,48 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
     return combineQuantities(one9, raw9, "*", ctx);
   }
   if (num9 !== null && den9 !== null) {
+    const emitPoly8 = (q82) => {
+      if (q82.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
+        const v8 = termsProject(q82);
+        if (v8 === null) return null;
+        return attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q82, ONE_TERMS());
+      }
+      const rep8 = q82.find((t9) => t9.comps.every((c9) => c9.def.factorDec === void 0));
+      if (rep8 === void 0) return null;
+      let acc8 = { n: 0n, d: 1n };
+      for (const t9 of q82) {
+        const map8 = /* @__PURE__ */ new Map();
+        for (const c9 of t9.comps) map8.set(c9.def.id, { def: c9.def, exp: c9.exp });
+        for (const c9 of rep8.comps) {
+          const e9 = map8.get(c9.def.id) ?? { def: c9.def, exp: 0 };
+          e9.exp -= c9.exp;
+          map8.set(c9.def.id, e9);
+        }
+        const resid8 = [...map8.values()].filter((c9) => c9.exp !== 0);
+        if (!dimIsEmpty(dimOfComps(resid8))) return null;
+        const p8 = termsProject([{ x: t9.x, comps: resid8 }]);
+        if (p8 === null) return null;
+        acc8 = rAdd(acc8, p8);
+      }
+      return {
+        t: "q",
+        ...qv(acc8),
+        dim: dimOfComps(rep8.comps),
+        symbol: compsSymbol(rep8.comps),
+        comps: rep8.comps.map((c9) => ({ ...c9 })),
+        terms: q82
+      };
+    };
     const q8 = polyDiv(num9, den9, t30);
     if (q8 !== null) {
-      const v8 = termsProject(q8);
-      if (v8 !== null && q8.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
-        return attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q8, ONE_TERMS());
-      }
-      if (v8 !== null) {
-        const d0 = dimOfComps(q8[0].comps);
-        const uniform8 = q8.every((t9) => {
-          const d9 = dimOfComps(t9.comps);
-          const keys9 = /* @__PURE__ */ new Set([...Object.keys(d0), ...Object.keys(d9)]);
-          return [...keys9].every((k9) => (d0[k9] ?? 0) === (d9[k9] ?? 0));
-        });
-        const rep8 = q8.find((t9) => t9.comps.every((c9) => c9.def.factorDec === void 0));
-        if (uniform8 && rep8 !== void 0) {
-          return {
-            t: "q",
-            ...qv(v8),
-            dim: d0,
-            symbol: compsSymbol(rep8.comps),
-            comps: rep8.comps.map((c9) => ({ ...c9 })),
-            terms: q8
-          };
-        }
+      const out8 = emitPoly8(q8);
+      if (out8 !== null) return out8;
+    }
+    const q2 = polyDiv(den9, num9, t30);
+    if (q2 !== null && q2.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
+      const pq2 = termsProject(q2);
+      if (pq2 !== null && pq2.n !== 0n) {
+        return attachFrac({ t: "q", ...qv(rDiv({ n: 1n, d: 1n }, pq2)), dim: {}, symbol: "", comps: [] }, ONE_TERMS(), q2);
       }
     }
   }
@@ -31918,7 +31952,7 @@ function evalAst(ast, env, ctx = {}) {
         return { ...base, ...qv(rMul(qx(base), k9)), ...scaleTerms(base, k9), ...(p2.capped === true || base.capped === true) && { capped: true } };
       }
       if (base.t === "ts") {
-        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c } };
+        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
         const pv9 = pctFigure(p2, ctx.monthToDays === "30");
         if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
         const s9 = tsScale(base, rDiv(rSub({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
@@ -32033,7 +32067,7 @@ function evalAst(ast, env, ctx = {}) {
         return { ...base, ...qv(rMul(qx(base), pf)), ...scaleTerms(base, pf), ...(p2.capped === true || base.capped === true) && { capped: true } };
       }
       if (base.t === "ts") {
-        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c } };
+        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
         const pv9 = pctFigure(p2, ctx.monthToDays === "30");
         if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
         const s9 = tsScale(base, rDiv(pv9, { n: 100n, d: 1n }), ctx);
@@ -32063,7 +32097,7 @@ function evalAst(ast, env, ctx = {}) {
         return { ...base, ...qv(rMul(qx(base), kOn)), ...scaleTerms(base, kOn), ...(p2.capped === true || base.capped === true) && { capped: true } };
       }
       if (base.t === "ts") {
-        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c } };
+        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
         const pv9 = pctFigure(p2, ctx.monthToDays === "30");
         if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
         const s9 = tsScale(base, rDiv(rAdd({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
@@ -32083,7 +32117,7 @@ function evalAst(ast, env, ctx = {}) {
       const p2 = evalAst(ast.pct, env, ctx);
       if (value.t === "e") return value;
       if (p2.t === "e") return p2;
-      if (value.t !== "d" && value.t !== "f" && value.t !== "ts") return err("unsupported-pair");
+      if (value.t !== "d" && value.t !== "f" && value.t !== "ts" && !isCarrier(value)) return err("unsupported-pair");
       if (p2.t !== "p" && p2.t !== "d" && p2.t !== "f") return err("unsupported-pair");
       const pvr = p2.t === "p" ? p2.vx ?? decToRat(p2.v) : numRat(p2);
       if (pvr.n === 0n) {
@@ -32093,7 +32127,7 @@ function evalAst(ast, env, ctx = {}) {
         return divProjZero(fbz9.den.map((t9) => ({ x: rMul(t9.x, rMul(vz9, { n: 100n, d: 1n })), comps: t9.comps })), fbz9.num, p2, ctx);
       }
       if (value.t === "ts") {
-        if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c } };
+        if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
         const pv9 = p2.t === "p" ? pctFigure(p2, ctx.monthToDays === "30") : pvr;
         if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
         const s9 = tsScale(value, rDiv({ n: 100n, d: 1n }, pv9), ctx);
@@ -32102,9 +32136,14 @@ function evalAst(ast, env, ctx = {}) {
       }
       {
         const ff9 = p2.t === "p" ? pctFactorFrac(p2, "inv", ctx.monthToDays === "30") : null;
-        const x9 = rDiv(numRat(value), rDiv(pvr, { n: 100n, d: 1n }));
-        if (ff9 !== null && (value.t === "d" || value.t === "f")) {
+        const vx9 = isCarrier(value) ? qx(value) : numRat(value);
+        const x9 = rDiv(vx9, rDiv(pvr, { n: 100n, d: 1n }));
+        if (ff9 !== null && (value.t === "d" || value.t === "f" || isCarrier(value))) {
           return applyFracFactor(value, x9, ff9, ctx, p2.capped === true || value.capped === true);
+        }
+        if (isCarrier(value)) {
+          const k9 = rDiv({ n: 100n, d: 1n }, pvr);
+          return { ...value, ...qv(x9), ...scaleTerms(value, k9), ...(p2.capped === true || value.capped === true) && { capped: true } };
         }
         return { t: "d", ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } };
       }
@@ -32119,6 +32158,35 @@ function evalAst(ast, env, ctx = {}) {
         const r9 = tsRatio(part, base, ctx);
         if (r9.t !== "d") return r9;
         return { t: "p", ...qv(rMul(r9.vx ?? decToRat(r9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
+      }
+      if ((isCarrier(base) || isCarrier(part)) && (isCarrier(base) || base.t === "d" || base.t === "f") && (isCarrier(part) || part.t === "d" || part.t === "f")) {
+        const t30w = ctx.monthToDays === "30";
+        const fB9 = isCarrier(base) ? fracOf(base) : { num: [{ x: numRat(base), comps: [] }], den: ONE_TERMS() };
+        const fP9 = isCarrier(part) ? fracOf(part) : { num: [{ x: numRat(part), comps: [] }], den: ONE_TERMS() };
+        const bx9 = isCarrier(base) ? qx(base) : numRat(base);
+        if (bx9.n === 0n) {
+          const n0 = distributeTerms(fP9.num, fB9.den, t30w);
+          const d0 = distributeTerms(fP9.den, fB9.num, t30w);
+          const z9 = divProjZero(n0, d0, base, ctx);
+          if (z9.t === "d") return { t: "p", ...qv(rMul(z9.vx ?? decToRat(z9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
+          return z9;
+        }
+        const px9 = isCarrier(part) ? qx(part) : numRat(part);
+        const x9 = rMul(rDiv(px9, bx9), { n: 100n, d: 1n });
+        const n9 = distributeTerms(fP9.num, fB9.den, t30w);
+        const d9 = distributeTerms(fP9.den, fB9.num, t30w);
+        if (n9 === null || d9 === null) {
+          ctx.capNotes?.push("product");
+          return { t: "p", ...qv(x9), capped: true };
+        }
+        const q9 = attachFrac({ t: "q", ...qv(rDiv(px9, bx9)), dim: {}, symbol: "", comps: [] }, n9, d9);
+        return {
+          t: "p",
+          ...qv(x9),
+          ...q9.terms && { terms: q9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })) },
+          ...q9.termsDen && { termsDen: q9.termsDen },
+          ...capW9 && { capped: true }
+        };
       }
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
       if (part.t !== "d" && part.t !== "f") return err("unsupported-pair");
@@ -32172,7 +32240,13 @@ function evalAst(ast, env, ctx = {}) {
         if (ffm9 === null) return err("division-by-zero");
         const vm9 = value.t === "d" || value.t === "f" ? numRat(value) : value.t === "q" ? qx(value) : { n: 1n, d: 1n };
         const synth9 = { t: "q", v: new DecC(0), vx: { n: 0n, d: 1n }, dim: {}, symbol: "", comps: [], terms: ffm9.den };
-        return divProjZero(ffm9.num.map((t9) => ({ x: rMul(t9.x, vm9), comps: t9.comps })), ffm9.den, synth9, ctx);
+        return divProjZero(
+          ffm9.num.map((t9) => ({ x: rMul(t9.x, vm9), comps: t9.comps })),
+          ffm9.den,
+          synth9,
+          ctx,
+          value.t === "q" || value.t === "p" ? value : void 0
+        );
       }
       const factor = rDiv(cent, denom);
       if (value.t === "q") {
@@ -32181,7 +32255,7 @@ function evalAst(ast, env, ctx = {}) {
         return { ...value, ...qv(rMul(qx(value), factor)), ...scaleTerms(value, factor), ...(p2.capped === true || value.capped === true) && { capped: true } };
       }
       if (value.t === "ts") {
-        if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c } };
+        if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
         const pv9 = pctFigure(p2, ctx.monthToDays === "30");
         if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
         const den9 = ast.sign === 1 ? rAdd(cent, pv9) : rSub(cent, pv9);
@@ -32541,7 +32615,7 @@ function evalAst(ast, env, ctx = {}) {
             if (ast.op === "/" && qx(r3).n === 0n) {
               const n0 = distributeTerms(fa9.num, fb9.den, t30c);
               const d0 = distributeTerms(fa9.den, fb9.num, t30c);
-              return divProjZero(n0, d0, r3, ctx);
+              return divProjZero(n0, d0, r3, ctx, l2);
             }
             const x9 = ast.op === "*" ? rMul(lp9, qx(r3)) : rDiv(lp9, qx(r3));
             const base9 = { t: "p", ...qv(x9), ...cap9 && { capped: true } };
@@ -33069,6 +33143,10 @@ function evalAst(ast, env, ctx = {}) {
           }
           if (l2.t === "ts" && r3.t === "ts" && ast.op === "/") return tsRatio(l2, r3, ctx);
           if (l2.t === "ts" && r3.t !== "ds" && r3.t !== "ts" && (ast.op === "*" || ast.op === "/")) {
+            if (!l2.c.years && !l2.c.months && !l2.c.weeks && !l2.c.days && (r3.t === "p" || r3.t === "d" || r3.t === "f" || r3.t === "q")) {
+              if (ast.op === "/" && zeroState(r3, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
+              return { t: "ts", c: { ...l2.c } };
+            }
             const k9 = tsScalarOf(r3, ctx);
             if (k9 === "irr") return err("inexact", TS_IRR_MSG);
             if (k9 !== null) {
@@ -33080,6 +33158,9 @@ function evalAst(ast, env, ctx = {}) {
             }
           }
           if (r3.t === "ts" && l2.t !== "ds" && l2.t !== "ts" && ast.op === "*") {
+            if (!r3.c.years && !r3.c.months && !r3.c.weeks && !r3.c.days && (l2.t === "p" || l2.t === "d" || l2.t === "f" || l2.t === "q")) {
+              return { t: "ts", c: { ...r3.c } };
+            }
             const k9 = tsScalarOf(l2, ctx);
             if (k9 === "irr") return err("inexact", TS_IRR_MSG);
             if (k9 !== null) return tsScale(r3, k9, ctx);
@@ -35378,7 +35459,7 @@ function parse3(tokens) {
         }
         const prep = PERCENT_PREPOSITIONS[t2.text.toLowerCase()];
         if (prep === void 0) throw new ParseError("syntax", `unexpected \u201C${t2.text}\u201D here`);
-        const pctish9 = (a9) => a9.k === "pct" || a9.k === "un" && pctish9(a9.e);
+        const pctish9 = (a9) => a9.k === "pct" || a9.k === "var" || a9.k === "un" && pctish9(a9.e);
         if (!pctish9(left)) throw new ParseError("syntax", `\u201C${t2.text}\u201D without a preceding percentage`);
         const base = expr(12);
         left = prep === "of" ? { k: "pctOf", pct: left, base } : prep === "on" ? { k: "pctOn", pct: left, base } : { k: "pctOff", pct: left, base };
@@ -35959,7 +36040,7 @@ var skeletonM = (w2) => {
 };
 function roleSpelling(w9, lexicon) {
   const s9 = w9.toLowerCase();
-  return isUnitWord(w9) || isUnitWord(s9) || isTimespanUnitWord(s9) || isReservedWord(s9) || isComputableWord(s9) || isDateKeywordWord(s9) || isAnyPackWord(s9) || allPackBridges().words.has(s9) || CORE_OP_WORDS.has(s9) || isPercentPreposition(s9) || /^(of|off|increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(s9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === s9) || allPackBridges().groups.some((g9) => g9.join("") === s9);
+  return isUnitWord(w9) || isUnitWord(s9) || isTimespanUnitWord(s9) || isReservedWord(s9) || isComputableWord(s9) || isDateKeywordWord(s9) || isAnyPackWord(s9) || allPackBridges().words.has(s9) || CORE_OP_WORDS.has(s9) || isPercentPreposition(s9) || /^(of|off|increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(s9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === s9 || g9.words.join("\xB7") === s9) || allPackBridges().groups.some((g9) => g9.join("") === s9 || g9.join("\xB7") === s9);
 }
 function confusableRole(text, rawText, lexicon) {
   if (roleSpelling(text, lexicon)) return false;
@@ -36192,7 +36273,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
       // ("montant (en CHF)"); only plausible-unknown fragments refuse —
       // clitics resolve first ((d'CHFF)), and an INACTIVE pack's
       // vocabulary never vanishes through a note ((times) with fr only)
-      (plausibleFragment(deparen9(t2.text)) || (() => {
+      (plausibleFragment(deparen9(t2.text)) || confusableRole(deparen9(t2.text), t2.rawText, lexicon) || (() => {
         const w9 = deparen9(t2.text).toLowerCase();
         return isAnyPackWord(w9) && !lexicon.operatorWords.has(w9) && !lexicon.divisionParticles.has(w9) && !lexicon.blockers.has(w9) && !CORE_OP_WORDS.has(w9);
       })() || !isUnitWord(t2.text) && [1, 2, 3, 4].some((k9) => {
@@ -36722,7 +36803,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         }
       }
     }
-    if ((lower9 === "of" || lower9 === "off" ? operandAt9(ib9 + 1) : /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(lower9) && operandAhead9(ib9 + 1)) && tokens[ib9 - 1]?.kind !== "percent" && tokens[ib9 - 1]?.kind !== "number" && !(tokens[ib9 - 1]?.kind === "word" && isPrepositionAnchorWord(tokens[ib9 - 1].text))) {
+    if ((lower9 === "of" || lower9 === "off" ? operandAt9(ib9 + 1) : /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(lower9) && operandAhead9(ib9 + 1)) && tokens[ib9 - 1]?.kind !== "percent" && tokens[ib9 - 1]?.kind !== "number" && !(tokens[ib9 - 1]?.kind === "word" && env.has(tokens[ib9 - 1].text)) && !(tokens[ib9 - 1]?.kind === "word" && isPrepositionAnchorWord(tokens[ib9 - 1].text))) {
       violations.push(`\u201C${tb9.text}\u201D is a percent operator without its percentage`);
       continue;
     }
@@ -36809,7 +36890,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       continue;
     }
     if (isPercentPreposition(lower)) {
-      if (prev?.kind === "percent" || prev?.kind === "word" && isPrepositionAnchorWord(prev.text)) {
+      if (prev?.kind === "percent" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
         out.push(t2);
         continue;
       }
@@ -37254,21 +37335,23 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         return false;
       };
       const textWords9 = tokens.slice(0, eqIdx).map((t9) => t9.text);
-      const lists9 = [
-        rawWords9.map((w9) => w9.toLowerCase()),
-        rawWords9.map((w9) => skeleton(w9).toLowerCase()),
-        rawWords9.map((w9) => skeletonM(w9).toLowerCase()),
-        // the CANONICAL key (NFKC, invisibles stripped) judges too (audit
-        // BC): revenu au pr<ZWJ>ix de and fullwidth prix refuse
-        textWords9.map((w9) => w9.toLowerCase()),
-        textWords9.map((w9) => skeleton(w9).toLowerCase()),
-        textWords9.map((w9) => skeletonM(w9).toLowerCase()),
-        // decliticized (d'au prix de) and interpunct-split (au·prix·de)
-        canon9,
-        textWords9.flatMap((w9) => w9.toLowerCase().split("\xB7"))
-      ];
+      const declitW9 = (s9) => {
+        const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(s9);
+        return m9 ? m9[1] : s9;
+      };
+      const composed9 = (words9, fold9) => words9.flatMap((w9) => declitW9(w9.toLowerCase()).split("\xB7")).map((s9) => fold9(s9).toLowerCase());
+      const lists9 = [];
+      for (const source9 of [rawWords9, textWords9]) {
+        for (const fold9 of [(s9) => s9, (s9) => skeleton(s9), (s9) => skeletonM(s9)]) {
+          lists9.push(composed9(source9, fold9));
+        }
+      }
+      lists9.push(canon9);
       const skelGroup9 = lists9.some((l9) => groupHit9(l9));
-      const roled9 = skelGroup9 || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
+      const roled9 = skelGroup9 || // définissable ⇒ lisible (audit BD): a name shaped like a unit or
+      // a code (㎡, CHFF, KiB) would never read back as a variable —
+      // digit-bearing ORDINARY names (a1, x2) stay bindable
+      tokens.slice(0, eqIdx).some((t9) => t9.kind === "word" && !env.has(t9.text) && (plausibleUnitReason(t9.text) !== null || looksLikeCode(t9.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹]/u.test(t9.text))) || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
       void phrase9;
       if (roled9) {
         throw new ParseError("not-understood", `\u201C${tokens.slice(0, eqIdx).map((t9) => t9.text).join(" ")}\u201D is operator vocabulary and cannot be a variable name`);
