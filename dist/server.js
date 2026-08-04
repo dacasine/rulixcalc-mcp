@@ -29062,6 +29062,209 @@ var rFloor = (x2) => {
   return x2.n < 0n && q2 * x2.d !== x2.n ? q2 - 1n : q2;
 };
 
+// ../textual-calculator/core/packages/engine/src/terms.ts
+var canonComps = (list) => {
+  const out = [];
+  for (const c2 of list) {
+    const same = out.find((o2) => o2.def.id === c2.def.id);
+    if (same) same.exp += c2.exp;
+    else out.push({ ...c2 });
+  }
+  return out.filter((o2) => o2.exp !== 0);
+};
+var termCanon = (t2, thirty) => {
+  const dims = /* @__PURE__ */ new Map();
+  const sym = [];
+  let fold = { n: 1n, d: 1n };
+  for (const c2 of t2.comps) {
+    const d2 = c2.def;
+    if (d2.currency !== void 0) {
+      sym.push(`C:${d2.currency}^${c2.exp}`);
+      continue;
+    }
+    if (d2.factorDec !== void 0) {
+      sym.push(`D:${d2.factorDec}^${c2.exp}`);
+      continue;
+    }
+    if (d2.affine !== void 0) {
+      sym.push(`A:${d2.id}^${c2.exp}`);
+      continue;
+    }
+    fold = rMul(fold, rPowInt(ratOfFactor(d2.factor ?? { n: 1n, d: 1n }), c2.exp));
+    for (const [k2, v2] of Object.entries(d2.dim)) {
+      let kk = k2 === "tempdelta" ? "temperature" : k2;
+      if (thirty === true && kk === "calmonths") {
+        kk = "caldays";
+        fold = rMul(fold, rPowInt({ n: 30n, d: 1n }, v2 * c2.exp));
+      }
+      dims.set(kk, (dims.get(kk) ?? 0) + v2 * c2.exp);
+    }
+  }
+  const dimKey = [...dims].filter(([, v2]) => v2 !== 0).sort((a2, b2) => a2[0] < b2[0] ? -1 : 1).map(([k2, v2]) => `${k2}^${v2}`).join("\xB7");
+  return { key: `${dimKey}|${sym.sort().join("\xB7")}`, canonX: rMul(t2.x, fold), fold };
+};
+var mergeTerms = (a2, b2, sign2, thirty) => {
+  const out = /* @__PURE__ */ new Map();
+  const addAll = (list, s2) => {
+    for (const t2 of list) {
+      const { key, canonX, fold } = termCanon(t2, thirty);
+      const xs = s2 === 1n ? canonX : { n: -canonX.n, d: canonX.d };
+      const prev = out.get(key);
+      if (prev) prev.canonX = rAdd(prev.canonX, xs);
+      else out.set(key, { canonX: xs, comps: t2.comps, fold });
+    }
+  };
+  addAll(a2, 1n);
+  addAll(b2, sign2);
+  return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps }));
+};
+var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
+  if (a2.length * b2.length > 65536) return null;
+  const out = [];
+  for (const ta of a2) {
+    for (const tb of b2) {
+      out.push({
+        x: sign2 === 1 ? rMul(ta.x, tb.x) : rDiv(ta.x, tb.x),
+        comps: canonComps([
+          ...ta.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+          ...tb.comps.map((c2) => ({ def: c2.def, exp: c2.exp * sign2 }))
+        ])
+      });
+    }
+  }
+  const merged = mergeTerms(out, [], 1n, thirty);
+  return merged.length > 4096 ? null : merged;
+};
+var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
+var termVec = (t2, thirty) => {
+  const v2 = /* @__PURE__ */ new Map();
+  const bump = (k2, e) => {
+    v2.set(k2, (v2.get(k2) ?? 0) + e);
+  };
+  for (const c2 of t2.comps) {
+    const d2 = c2.def;
+    if (d2.currency !== void 0) {
+      bump(`C:${d2.currency}`, c2.exp);
+      continue;
+    }
+    if (d2.factorDec !== void 0) {
+      bump(`D:${d2.factorDec}`, c2.exp);
+      continue;
+    }
+    if (d2.affine !== void 0) {
+      bump(`A:${d2.id}`, c2.exp);
+      continue;
+    }
+    for (const [k2, e] of Object.entries(d2.dim)) {
+      let kk = k2 === "tempdelta" ? "temperature" : k2;
+      if (thirty === true && kk === "calmonths") kk = "caldays";
+      bump(`d:${kk}`, e * c2.exp);
+    }
+  }
+  return v2;
+};
+var termVecCmp = (a2, b2, thirty) => {
+  const va = termVec(a2, thirty);
+  const vb = termVec(b2, thirty);
+  const axes = [.../* @__PURE__ */ new Set([...va.keys(), ...vb.keys()])].sort();
+  for (const ax of axes) {
+    const d2 = (va.get(ax) ?? 0) - (vb.get(ax) ?? 0);
+    if (d2 !== 0) return d2 < 0 ? -1 : 1;
+  }
+  return 0;
+};
+var fracQuotient = (N2, D2, thirty) => {
+  if (N2.length !== D2.length || N2.length === 0) return null;
+  let nMin = N2[0];
+  for (const n2 of N2) if (termVecCmp(n2, nMin, thirty) < 0) nMin = n2;
+  let dMin = D2[0];
+  for (const d2 of D2) if (termVecCmp(d2, dMin, thirty) < 0) dMin = d2;
+  if (rnorm(termCanon(dMin, thirty).canonX).n === 0n) return null;
+  const qc = canonComps([
+    ...nMin.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+    ...dMin.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
+  ]);
+  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc }], [dMin], thirty);
+  if (probe === null || probe.length !== 1) return null;
+  const pc = termCanon(probe[0], thirty);
+  const nc = termCanon(nMin, thirty);
+  if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
+  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc };
+  const full = distributeTerms(D2, [cand], thirty);
+  return full !== null && mergeTerms(N2, full, -1n, thirty).length === 0 ? cand : null;
+};
+var termsCmp = (a2, b2, thirty) => {
+  const d2 = mergeTerms(a2, b2, -1n, thirty);
+  if (d2.length === 0) return 0;
+  if (d2.length === 1) {
+    const x2 = rnorm(d2[0].x);
+    return x2.n === 0n ? 0 : x2.n > 0n ? 1 : -1;
+  }
+  let sum2 = { n: 0n, d: 1n };
+  let dimKey = null;
+  for (const t2 of d2) {
+    const { key, canonX } = termCanon(t2, thirty);
+    const [dk, sym] = key.split("|");
+    if (sym !== "") return null;
+    if (dimKey === null) dimKey = dk;
+    else if (dimKey !== dk) return null;
+    sum2 = rAdd(sum2, canonX);
+  }
+  const s2 = rnorm(sum2);
+  return s2.n === 0n ? 0 : s2.n > 0n ? 1 : -1;
+};
+var polyDiv = (num9, den9, thirty) => {
+  const lead9 = (list9) => {
+    let best9 = list9[0];
+    for (let k9 = 1; k9 < list9.length; k9++) {
+      if (termVecCmp(list9[k9], best9, thirty) > 0) best9 = list9[k9];
+    }
+    return best9;
+  };
+  const dl9 = lead9(den9);
+  let rest9 = num9;
+  const q9 = [];
+  let prev9 = null;
+  const cap9 = num9.length + den9.length + 16;
+  for (let it9 = 0; it9 < cap9 && rest9.length > 0; it9++) {
+    const nl9 = lead9(rest9);
+    if (prev9 !== null && termVecCmp(nl9, prev9, thirty) >= 0) return null;
+    prev9 = nl9;
+    const map9 = /* @__PURE__ */ new Map();
+    for (const c9 of nl9.comps) map9.set(c9.def.id, { def: c9.def, exp: c9.exp });
+    for (const c9 of dl9.comps) {
+      const e9 = map9.get(c9.def.id) ?? { def: c9.def, exp: 0 };
+      e9.exp -= c9.exp;
+      map9.set(c9.def.id, e9);
+    }
+    if (rnorm(dl9.x).n === 0n) return null;
+    const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0) };
+    q9.push(m9);
+    const sub9 = distributeTerms([m9], den9, thirty);
+    if (sub9 === null) return null;
+    rest9 = mergeTerms(rest9, sub9, -1n, thirty);
+  }
+  return rest9.length === 0 && q9.length > 0 ? mergeTerms(q9, [], 1n, thirty) : null;
+};
+var termsProject = (list9, thirty) => {
+  let acc9 = { n: 0n, d: 1n };
+  for (const t9 of list9) {
+    let x9 = t9.x;
+    for (const c9 of t9.comps) {
+      if (c9.def.factorDec !== void 0) x9 = rMul(x9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
+      else if (c9.def.factor !== void 0) {
+        let f9 = ratOfFactor(c9.def.factor);
+        if (thirty === true && (c9.def.dim["calmonths"] ?? 0) !== 0) {
+          f9 = rMul(f9, rPowInt({ n: 30n, d: 1n }, c9.def.dim["calmonths"]));
+        }
+        x9 = rMul(x9, rPowInt(f9, c9.exp));
+      } else return null;
+    }
+    acc9 = rAdd(acc9, x9);
+  }
+  return acc9;
+};
+
 // ../textual-calculator/core/packages/engine/src/units.ts
 var r2 = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
 var DEFS = [
@@ -30378,128 +30581,7 @@ function basePartOf(comps, ctx) {
   }
   return { rat, dec: dec2 };
 }
-var termCanon = (t2, thirty) => {
-  const dims = /* @__PURE__ */ new Map();
-  const sym = [];
-  let fold = { n: 1n, d: 1n };
-  for (const c2 of t2.comps) {
-    const d2 = c2.def;
-    if (d2.currency !== void 0) {
-      sym.push(`C:${d2.currency}^${c2.exp}`);
-      continue;
-    }
-    if (d2.factorDec !== void 0) {
-      sym.push(`D:${d2.factorDec}^${c2.exp}`);
-      continue;
-    }
-    if (d2.affine !== void 0) {
-      sym.push(`A:${d2.id}^${c2.exp}`);
-      continue;
-    }
-    fold = rMul(fold, rPowInt(ratOfFactor(d2.factor ?? { n: 1n, d: 1n }), c2.exp));
-    for (const [k2, v2] of Object.entries(d2.dim)) {
-      let kk = k2 === "tempdelta" ? "temperature" : k2;
-      if (thirty === true && kk === "calmonths") {
-        kk = "caldays";
-        fold = rMul(fold, rPowInt({ n: 30n, d: 1n }, v2 * c2.exp));
-      }
-      dims.set(kk, (dims.get(kk) ?? 0) + v2 * c2.exp);
-    }
-  }
-  const dimKey = [...dims].filter(([, v2]) => v2 !== 0).sort((a2, b2) => a2[0] < b2[0] ? -1 : 1).map(([k2, v2]) => `${k2}^${v2}`).join("\xB7");
-  return { key: `${dimKey}|${sym.sort().join("\xB7")}`, canonX: rMul(t2.x, fold), fold };
-};
-var mergeTerms = (a2, b2, sign2, thirty) => {
-  const out = /* @__PURE__ */ new Map();
-  const addAll = (list, s2) => {
-    for (const t2 of list) {
-      const { key, canonX, fold } = termCanon(t2, thirty);
-      const xs = s2 === 1n ? canonX : { n: -canonX.n, d: canonX.d };
-      const prev = out.get(key);
-      if (prev) prev.canonX = rAdd(prev.canonX, xs);
-      else out.set(key, { canonX: xs, comps: t2.comps, fold });
-    }
-  };
-  addAll(a2, 1n);
-  addAll(b2, sign2);
-  return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps }));
-};
 var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
-var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
-  if (a2.length * b2.length > 65536) return null;
-  const out = [];
-  for (const ta of a2) {
-    for (const tb of b2) {
-      out.push({
-        x: sign2 === 1 ? rMul(ta.x, tb.x) : rDiv(ta.x, tb.x),
-        comps: canonComps([
-          ...ta.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
-          ...tb.comps.map((c2) => ({ def: c2.def, exp: c2.exp * sign2 }))
-        ])
-      });
-    }
-  }
-  const merged = mergeTerms(out, [], 1n, thirty);
-  return merged.length > 4096 ? null : merged;
-};
-var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
-var termVec = (t2, thirty) => {
-  const v2 = /* @__PURE__ */ new Map();
-  const bump = (k2, e) => {
-    v2.set(k2, (v2.get(k2) ?? 0) + e);
-  };
-  for (const c2 of t2.comps) {
-    const d2 = c2.def;
-    if (d2.currency !== void 0) {
-      bump(`C:${d2.currency}`, c2.exp);
-      continue;
-    }
-    if (d2.factorDec !== void 0) {
-      bump(`D:${d2.factorDec}`, c2.exp);
-      continue;
-    }
-    if (d2.affine !== void 0) {
-      bump(`A:${d2.id}`, c2.exp);
-      continue;
-    }
-    for (const [k2, e] of Object.entries(d2.dim)) {
-      let kk = k2 === "tempdelta" ? "temperature" : k2;
-      if (thirty === true && kk === "calmonths") kk = "caldays";
-      bump(`d:${kk}`, e * c2.exp);
-    }
-  }
-  return v2;
-};
-var termVecCmp = (a2, b2, thirty) => {
-  const va = termVec(a2, thirty);
-  const vb = termVec(b2, thirty);
-  const axes = [.../* @__PURE__ */ new Set([...va.keys(), ...vb.keys()])].sort();
-  for (const ax of axes) {
-    const d2 = (va.get(ax) ?? 0) - (vb.get(ax) ?? 0);
-    if (d2 !== 0) return d2 < 0 ? -1 : 1;
-  }
-  return 0;
-};
-var fracQuotient = (N2, D2, thirty) => {
-  if (N2.length !== D2.length || N2.length === 0) return null;
-  let nMin = N2[0];
-  for (const n2 of N2) if (termVecCmp(n2, nMin, thirty) < 0) nMin = n2;
-  let dMin = D2[0];
-  for (const d2 of D2) if (termVecCmp(d2, dMin, thirty) < 0) dMin = d2;
-  if (rnorm(termCanon(dMin, thirty).canonX).n === 0n) return null;
-  const qc = canonComps([
-    ...nMin.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
-    ...dMin.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
-  ]);
-  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc }], [dMin], thirty);
-  if (probe === null || probe.length !== 1) return null;
-  const pc = termCanon(probe[0], thirty);
-  const nc = termCanon(nMin, thirty);
-  if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
-  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc };
-  const full = distributeTerms(D2, [cand], thirty);
-  return full !== null && mergeTerms(N2, full, -1n, thirty).length === 0 ? cand : null;
-};
 function fracReduceTerm(q2, thirty) {
   if (q2.terms === void 0 && q2.termsDen === void 0) return null;
   const N2 = q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
@@ -30527,26 +30609,6 @@ var attachFrac = (base, num, den) => {
   }
   return { ...base, terms: num, termsDen: den };
 };
-var termsCmp = (a2, b2, thirty) => {
-  const d2 = mergeTerms(a2, b2, -1n, thirty);
-  if (d2.length === 0) return 0;
-  if (d2.length === 1) {
-    const x2 = rnorm(d2[0].x);
-    return x2.n === 0n ? 0 : x2.n > 0n ? 1 : -1;
-  }
-  let sum2 = { n: 0n, d: 1n };
-  let dimKey = null;
-  for (const t2 of d2) {
-    const { key, canonX } = termCanon(t2, thirty);
-    const [dk, sym] = key.split("|");
-    if (sym !== "") return null;
-    if (dimKey === null) dimKey = dk;
-    else if (dimKey !== dk) return null;
-    sum2 = rAdd(sum2, canonX);
-  }
-  const s2 = rnorm(sum2);
-  return s2.n === 0n ? 0 : s2.n > 0n ? 1 : -1;
-};
 var fracCmpRT = (a9, b9, thirty) => {
   if (a9.termsDen === void 0 && b9.termsDen === void 0) return termsCmp(termsOf(a9), termsOf(b9), thirty);
   const x9 = distributeTerms(termsOf(a9), b9.termsDen ?? ONE_TERMS(), thirty);
@@ -30572,44 +30634,6 @@ var zeroState = (rt2, thirty) => {
   if (s9 === 0) return "zero";
   return s9 === null ? "undecidable" : "nonzero";
 };
-var polyDiv = (num9, den9, thirty) => {
-  const deg9 = (t9) => t9.comps.reduce((s9, c9) => s9 + Math.abs(c9.exp), 0);
-  const lead9 = (list9) => [...list9].sort((a9, b9) => deg9(b9) - deg9(a9) || (termCanon(a9, thirty).key < termCanon(b9, thirty).key ? -1 : 1))[0];
-  const dl9 = lead9(den9);
-  let rest9 = num9;
-  const q9 = [];
-  for (let it9 = 0; it9 < 64 && rest9.length > 0; it9++) {
-    const nl9 = lead9(rest9);
-    if (deg9(nl9) < deg9(dl9)) return null;
-    const map9 = /* @__PURE__ */ new Map();
-    for (const c9 of nl9.comps) map9.set(c9.def.id, { def: c9.def, exp: c9.exp });
-    for (const c9 of dl9.comps) {
-      const e9 = map9.get(c9.def.id) ?? { def: c9.def, exp: 0 };
-      e9.exp -= c9.exp;
-      map9.set(c9.def.id, e9);
-    }
-    if (rnorm(dl9.x).n === 0n) return null;
-    const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0) };
-    q9.push(m9);
-    const sub9 = distributeTerms([m9], den9, thirty);
-    if (sub9 === null) return null;
-    rest9 = mergeTerms(rest9, sub9, -1n, thirty);
-  }
-  return rest9.length === 0 && q9.length > 0 ? mergeTerms(q9, [], 1n, thirty) : null;
-};
-var termsProject = (list9) => {
-  let acc9 = { n: 0n, d: 1n };
-  for (const t9 of list9) {
-    let x9 = t9.x;
-    for (const c9 of t9.comps) {
-      if (c9.def.factorDec !== void 0) x9 = rMul(x9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
-      else if (c9.def.factor !== void 0) x9 = rMul(x9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
-      else return null;
-    }
-    acc9 = rAdd(acc9, x9);
-  }
-  return acc9;
-};
 var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   const t30 = ctx.monthToDays === "30";
   if (zeroState(divisor9, t30) === "zero") return err("division-by-zero");
@@ -30626,6 +30650,11 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       };
       const shell9 = combineQuantities(l1, r1, "/", ctx);
       if (shell9.t === "q") return { ...shell9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+      if (shell9.t === "ts") {
+        const c0 = {};
+        for (const k9 of Object.keys(shell9.c)) c0[k9] = 0;
+        return { t: "ts", c: Object.keys(c0).length > 0 ? c0 : { days: 0 } };
+      }
       return { t: "d", ...qv({ n: 0n, d: 1n }) };
     }
     if (dividend9 !== void 0 && dividend9.t === "q" && (compsOf(dividend9)?.length ?? 0) > 0) {
@@ -30651,9 +30680,10 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   if (num9 !== null && den9 !== null) {
     const emitPoly8 = (q82) => {
       if (q82.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
-        const v8 = termsProject(q82);
-        if (v8 === null) return null;
-        return attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q82, ONE_TERMS());
+        const v8 = termsProject(q82, t30);
+        if (v8 !== null) {
+          return attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q82, ONE_TERMS());
+        }
       }
       const rep8 = q82.find((t9) => t9.comps.every((c9) => c9.def.factorDec === void 0));
       if (rep8 === void 0) return null;
@@ -30667,17 +30697,19 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
           map8.set(c9.def.id, e9);
         }
         const resid8 = [...map8.values()].filter((c9) => c9.exp !== 0);
-        if (!dimIsEmpty(dimOfComps(resid8))) return null;
-        const p8 = termsProject([{ x: t9.x, comps: resid8 }]);
+        if (!dimsCompatible(dimOfComps(resid8), {}, ctx)) return null;
+        const p8 = termsProject([{ x: t9.x, comps: resid8 }], t30);
         if (p8 === null) return null;
         acc8 = rAdd(acc8, p8);
       }
+      const def8 = rep8.comps.length === 1 && rep8.comps[0].exp === 1 ? rep8.comps[0].def : void 0;
       return {
         t: "q",
         ...qv(acc8),
         dim: dimOfComps(rep8.comps),
         symbol: compsSymbol(rep8.comps),
         comps: rep8.comps.map((c9) => ({ ...c9 })),
+        ...def8 && { def: def8 },
         terms: q82
       };
     };
@@ -30687,10 +30719,21 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       if (out8 !== null) return out8;
     }
     const q2 = polyDiv(den9, num9, t30);
-    if (q2 !== null && q2.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
-      const pq2 = termsProject(q2);
-      if (pq2 !== null && pq2.n !== 0n) {
-        return attachFrac({ t: "q", ...qv(rDiv({ n: 1n, d: 1n }, pq2)), dim: {}, symbol: "", comps: [] }, ONE_TERMS(), q2);
+    if (q2 !== null) {
+      const em2 = emitPoly8(q2);
+      if (em2 !== null && em2.t === "q") {
+        const px2 = qx(em2);
+        if (px2.n !== 0n) {
+          const invComps2 = (compsOf(em2) ?? []).map((c9) => ({ def: c9.def, exp: -c9.exp }));
+          const base2 = {
+            t: "q",
+            ...qv(rDiv({ n: 1n, d: 1n }, px2)),
+            dim: dimOfComps(invComps2),
+            symbol: compsSymbol(invComps2),
+            comps: invComps2
+          };
+          return attachFrac(base2, ONE_TERMS(), q2);
+        }
       }
     }
   }
@@ -30907,15 +30950,6 @@ function alignForAdd(l2, r3, ctx) {
 }
 var isOffsetScale = (q2) => q2.def?.affine !== void 0 && q2.def.affine.b !== 0n;
 var isPureLinear = (u2) => u2.factor !== void 0 && !u2.affine && !u2.currency && !u2.factorDec;
-var canonComps = (list) => {
-  const out = [];
-  for (const c2 of list) {
-    const same = out.find((o2) => o2.def.id === c2.def.id);
-    if (same) same.exp += c2.exp;
-    else out.push({ ...c2 });
-  }
-  return out.filter((o2) => o2.exp !== 0);
-};
 var compsOf = (q2) => {
   if (q2.comps) return canonComps(q2.comps.map((c2) => ({ ...c2 })));
   if (q2.def) return [{ def: q2.def, exp: 1 }];
@@ -32122,9 +32156,13 @@ function evalAst(ast, env, ctx = {}) {
       const pvr = p2.t === "p" ? p2.vx ?? decToRat(p2.v) : numRat(p2);
       if (pvr.n === 0n) {
         if (p2.t !== "p" || p2.terms === void 0 && p2.termsDen === void 0) return err("division-by-zero");
+        const t30z0 = ctx.monthToDays === "30";
         const fbz9 = { num: p2.terms ?? [{ x: pvr, comps: [] }], den: p2.termsDen ?? ONE_TERMS() };
-        const vz9 = value.t === "ts" ? { n: 1n, d: 1n } : numRat(value);
-        return divProjZero(fbz9.den.map((t9) => ({ x: rMul(t9.x, rMul(vz9, { n: 100n, d: 1n })), comps: t9.comps })), fbz9.num, p2, ctx);
+        const vz9 = value.t === "ts" || isCarrier(value) ? { n: 1n, d: 1n } : numRat(value);
+        const fVz9 = value.t === "q" ? fracOf(value) : { num: [{ x: vz9, comps: [] }], den: ONE_TERMS() };
+        const nZ0 = distributeTerms(fVz9.num, fbz9.den.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })), t30z0);
+        const dZ0 = distributeTerms(fVz9.den, fbz9.num, t30z0);
+        return divProjZero(nZ0, dZ0, p2, ctx, value.t === "q" || value.t === "p" ? value : void 0);
       }
       if (value.t === "ts") {
         if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
@@ -32238,11 +32276,15 @@ function evalAst(ast, env, ctx = {}) {
       if (denom.n === 0n) {
         const ffm9 = pctFactorFrac(p2, ast.sign === 1 ? "moreBase" : "lessBase", ctx.monthToDays === "30");
         if (ffm9 === null) return err("division-by-zero");
+        const t30m0 = ctx.monthToDays === "30";
         const vm9 = value.t === "d" || value.t === "f" ? numRat(value) : value.t === "q" ? qx(value) : { n: 1n, d: 1n };
+        const fV9 = value.t === "q" ? fracOf(value) : { num: [{ x: vm9, comps: [] }], den: ONE_TERMS() };
         const synth9 = { t: "q", v: new DecC(0), vx: { n: 0n, d: 1n }, dim: {}, symbol: "", comps: [], terms: ffm9.den };
+        const nM0 = distributeTerms(fV9.num, ffm9.num, t30m0);
+        const dM0 = distributeTerms(fV9.den, ffm9.den, t30m0);
         return divProjZero(
-          ffm9.num.map((t9) => ({ x: rMul(t9.x, vm9), comps: t9.comps })),
-          ffm9.den,
+          nM0,
+          dM0,
           synth9,
           ctx,
           value.t === "q" || value.t === "p" ? value : void 0
@@ -33045,6 +33087,9 @@ function evalAst(ast, env, ctx = {}) {
                 } else {
                   tres = attachFrac(tres, f9.den.map((t0) => applyCal0(t0, count, 1)), f9.num);
                 }
+              }
+              if (tres.t === "ts" && (qSide.terms !== void 0 || qSide.termsDen !== void 0) && fracReduce(qSide, ctx.monthToDays === "30") === null) {
+                return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
               }
               return qSide.chosen && tres.t === "q" ? { ...tres, chosen: true } : tres;
             }
@@ -35459,7 +35504,7 @@ function parse3(tokens) {
         }
         const prep = PERCENT_PREPOSITIONS[t2.text.toLowerCase()];
         if (prep === void 0) throw new ParseError("syntax", `unexpected \u201C${t2.text}\u201D here`);
-        const pctish9 = (a9) => a9.k === "pct" || a9.k === "var" || a9.k === "un" && pctish9(a9.e);
+        const pctish9 = (a9) => a9.k === "pct" || a9.k === "var" || a9.k === "lineRef" || a9.k === "un" && pctish9(a9.e);
         if (!pctish9(left)) throw new ParseError("syntax", `\u201C${t2.text}\u201D without a preceding percentage`);
         const base = expr(12);
         left = prep === "of" ? { k: "pctOf", pct: left, base } : prep === "on" ? { k: "pctOn", pct: left, base } : { k: "pctOff", pct: left, base };
@@ -36047,7 +36092,9 @@ function confusableRole(text, rawText, lexicon) {
   const nonLatin9 = (w9) => [...w9].some((ch9) => new RegExp("\\p{L}", "u").test(ch9) && !/[\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(ch9));
   const twinHits9 = (w9) => {
     const flat9 = w9.replace(/\s+/gu, "");
-    return [flat9, flat9.replace(/I/gu, "l"), flat9.replace(/I/gu, "i"), flat9.replace(/ι/gu, "i"), flat9.replace(/ι/gu, "l")].some((tw9) => roleSpelling(tw9, lexicon));
+    return [flat9, flat9.replace(/I/gu, "l"), flat9.replace(/I/gu, "i"), flat9.replace(/[ι\u0345]/gu, "i"), flat9.replace(/[ι\u0345]/gu, "l")].some((tw9) => roleSpelling(tw9, lexicon) || // a PLAUSIBLE unit spelling (KiB, CHFF) closes the same way
+    // (audit BE): KͺB folds to KiB and must refuse, never drop
+    plausibleUnitReason(tw9) !== null);
   };
   if (rawText !== void 0 && rawText !== text) {
     if (nonLatin9(rawText)) {
@@ -36203,6 +36250,17 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
   for (let i2 = 0; i2 < out.length; i2++) {
     if (out[i2].kind !== "lparen") continue;
     {
+      let jv9 = i2 + 1;
+      const wv9 = [];
+      while (jv9 < out.length && out[jv9].kind === "word") {
+        wv9.push(out[jv9].text);
+        jv9++;
+      }
+      if (jv9 < out.length && out[jv9].kind === "rparen" && wv9.length >= 1 && env.has(wv9.join(" "))) {
+        continue;
+      }
+    }
+    {
       let jj9 = i2 + 1;
       const ws9 = [];
       while (jj9 < out.length && out[jj9].kind === "word") {
@@ -36340,7 +36398,18 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
       const qualifies = (b2) => b2 !== void 0 && (b2.kind === "date" || b2.kind === "clocktime" || b2.kind === "rparen" && (!isRefRparen(b2) || innerHasCode) || b2.kind === "bang" || datePhraseNumber(b2) || b2.kind === "word" && (isTimespanUnitWord(b2.text) || env.has(b2.text) || isAggWord(b2.text) || timeUnit9(b2.text)) && temporalContext() || // a bare NUMBER, PERCENT or ANY unit word closing a temporal
       // expression carries the qualifier discipline: 1 h * 100%
       // (approx) and 1 h * 1 kg/kg (approx) refuse (AJ/AK)
-      (b2.kind === "number" || b2.kind === "fraction" || b2.kind === "percent") && temporalContext() || b2.kind === "word" && isUnitWord(b2.text) && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))));
+      (b2.kind === "number" || b2.kind === "fraction" || b2.kind === "percent") && temporalContext() || b2.kind === "word" && isUnitWord(b2.text) && temporalContext() || b2.kind === "word" && !isUnitWord(b2.text) && !isTimespanUnitWord(b2.text) && !isAggWord(b2.text) && ((env.has(b2.text) ? ["ds", "ct", "wd", "ts"].includes(env.get(b2.text)?.t ?? "") : false) || !env.has(b2.text) && (isComputableWord(b2.text) || isReservedWord(b2.text))) || // a bound MULTI-WORD variable ending here counts too (audit BE)
+      b2.kind === "word" && (() => {
+        const bi9 = out.slice(0, i2).map((t9) => t9).lastIndexOf(b2);
+        if (bi9 < 0) return false;
+        for (let ln9 = 2; ln9 <= 16 && bi9 - ln9 + 1 >= 0; ln9++) {
+          const seq9 = out.slice(bi9 - ln9 + 1, bi9 + 1);
+          if (!seq9.every((t9) => t9.kind === "word")) break;
+          const nm9 = seq9.map((t9) => t9.text).join(" ");
+          if (env.has(nm9)) return ["ds", "ct", "wd", "ts"].includes(env.get(nm9)?.t ?? "");
+        }
+        return false;
+      })());
       if (qualifies(before) || qualifies(beforeEff)) {
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
         return out;
@@ -36675,8 +36744,12 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   }
   const bkey9 = (s9) => s9.toLowerCase().replace(/[\ufe00-\ufe0f\u034f\u200b-\u200d\u2060-\u2064\u180b-\u180f\u115f\u1160\u17b4\u17b5\u3164\uffa0\u{e0100}-\u{e01ef}]/gu, "");
   const declitic9 = (s9) => {
-    const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(s9);
-    return m9 ? m9[1] : s9;
+    let cur9 = s9;
+    for (; ; ) {
+      const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(cur9);
+      if (!m9) return cur9;
+      cur9 = m9[1];
+    }
   };
   for (let ib9 = 0; ib9 < tokens.length; ib9++) {
     const tb9 = tokens[ib9];
@@ -36689,6 +36762,12 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       return m9 ? m9[1] : tb9.text;
     })();
     if (lower9.includes("\xB7")) {
+      const segsU9 = tb9.text.split(/[·/]/u).map((s9) => s9.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
+      const compoundish9 = segsU9.every((s9) => s9 === "" || isUnitWord(s9) || isTimespanUnitWord(s9));
+      if (!compoundish9 && (roleSpelling(lower9.replace(/·/gu, ""), lexicon) || plausibleUnitReason(lower9.replace(/·/gu, "")) !== null)) {
+        violations.push(`\u201C${tb9.text}\u201D splits a known word with interpuncts \u2014 write it plainly`);
+        continue;
+      }
       const segs9 = lower9.split("\xB7");
       const hit9 = [...lexicon.blockerGroups, ...allPackBlockerGroups()].find((g9) => segs9.some((_s9, i9) => g9.words.every((w9, k9) => segs9[i9 + k9] === w9))) ?? (segs9.some((s9) => lexicon.blockers.has(s9)) ? { reason: [...lexicon.blockers.values()][0] } : void 0);
       const single9 = segs9.find((s9) => lexicon.blockers.has(s9));
@@ -36700,7 +36779,16 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     }
     const grp9 = lexicon.blockerGroups.find((g9) => g9.words[0] === lower9 && g9.words.every((w9, k9) => {
       const tk9 = tokens[ib9 + k9];
-      return tk9?.kind === "word" && declitic9(bkey9(tk9.text)) === w9;
+      if (tk9?.kind !== "word") return false;
+      const b9 = declitic9(bkey9(tk9.text));
+      const f9 = b9.replace(/\s+/gu, "");
+      return [
+        b9,
+        skeleton(b9).toLowerCase(),
+        skeletonM(b9).toLowerCase(),
+        f9.replace(/[ι\u0345]/gu, "i").toLowerCase(),
+        f9.replace(/I/gu, "l").toLowerCase()
+      ].includes(w9);
     }));
     if (grp9 !== void 0) {
       violations.push(`\u201C${tokens.slice(ib9, ib9 + grp9.words.length).map((t9) => t9.text).join(" ")}\u201D is a numeric modifier \u2014 ${grp9.reason}`);
@@ -36709,7 +36797,16 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     }
     const anyGrp9 = allPackBlockerGroups().find((g9) => g9.words[0] === lower9 && g9.words.every((w9, k9) => {
       const tk9 = tokens[ib9 + k9];
-      return tk9?.kind === "word" && declitic9(bkey9(tk9.text)) === w9;
+      if (tk9?.kind !== "word") return false;
+      const b9 = declitic9(bkey9(tk9.text));
+      const f9 = b9.replace(/\s+/gu, "");
+      return [
+        b9,
+        skeleton(b9).toLowerCase(),
+        skeletonM(b9).toLowerCase(),
+        f9.replace(/[ι\u0345]/gu, "i").toLowerCase(),
+        f9.replace(/I/gu, "l").toLowerCase()
+      ].includes(w9);
     }));
     if (anyGrp9 !== void 0) {
       violations.push(`\u201C${tokens.slice(ib9, ib9 + anyGrp9.words.length).map((t9) => t9.text).join(" ")}\u201D is a numeric modifier \u2014 ${anyGrp9.reason}`);
@@ -36770,10 +36867,19 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     {
       const br9 = allPackBridges();
       const fusedBridge9 = br9.groups.some((g9) => g9.join("") === lower9 || g9.join("\xB7") === lower9);
-      const isBridgeHead9 = br9.words.has(lower9) || fusedBridge9 || br9.groups.some((g9) => g9[0] === lower9 && g9.every((w9, k9) => {
-        const tk9 = tokens[ib9 + k9];
-        return tk9?.kind === "word" && declitic9(bkey9(tk9.text)) === w9;
-      }));
+      const bridgeWord9 = (tk9, w9) => {
+        if (tk9?.kind !== "word") return false;
+        const b9 = declitic9(bkey9(tk9.text));
+        const f9 = b9.replace(/\s+/gu, "");
+        return [
+          b9,
+          skeleton(b9).toLowerCase(),
+          skeletonM(b9).toLowerCase(),
+          f9.replace(/[ι\u0345]/gu, "i").toLowerCase(),
+          f9.replace(/I/gu, "l").toLowerCase()
+        ].includes(w9);
+      };
+      const isBridgeHead9 = br9.words.has(lower9) || fusedBridge9 || br9.groups.some((g9) => bridgeWord9(tokens[ib9], g9[0]) && g9.every((w9, k9) => bridgeWord9(tokens[ib9 + k9], w9)));
       if (isBridgeHead9) {
         const glen9 = br9.words.has(lower9) || fusedBridge9 ? 1 : br9.groups.find((g9) => g9[0] === lower9).length;
         const nxt9 = tokens[ib9 + glen9];
@@ -36803,7 +36909,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         }
       }
     }
-    if ((lower9 === "of" || lower9 === "off" ? operandAt9(ib9 + 1) : /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(lower9) && operandAhead9(ib9 + 1)) && tokens[ib9 - 1]?.kind !== "percent" && tokens[ib9 - 1]?.kind !== "number" && !(tokens[ib9 - 1]?.kind === "word" && env.has(tokens[ib9 - 1].text)) && !(tokens[ib9 - 1]?.kind === "word" && isPrepositionAnchorWord(tokens[ib9 - 1].text))) {
+    if ((lower9 === "of" || lower9 === "off" ? operandAt9(ib9 + 1) : /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(lower9) && operandAhead9(ib9 + 1)) && tokens[ib9 - 1]?.kind !== "percent" && tokens[ib9 - 1]?.kind !== "number" && tokens[ib9 - 1]?.kind !== "rparen" && !(tokens[ib9 - 1]?.kind === "word" && (env.has(tokens[ib9 - 1].text) || multiVarEnd9(ib9 - 1))) && !(tokens[ib9 - 1]?.kind === "word" && isPrepositionAnchorWord(tokens[ib9 - 1].text))) {
       violations.push(`\u201C${tb9.text}\u201D is a percent operator without its percentage`);
       continue;
     }
@@ -36890,7 +36996,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       continue;
     }
     if (isPercentPreposition(lower)) {
-      if (prev?.kind === "percent" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
+      if (prev?.kind === "percent" || prev?.kind === "rparen" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
         out.push(t2);
         continue;
       }
@@ -37307,8 +37413,12 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       const nameWords9 = tokens.slice(0, eqIdx).map((t9) => t9.text.toLowerCase());
       const phrase9 = nameWords9.join(" ");
       const declit9 = (s9) => {
-        const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(s9);
-        return m9 ? m9[1] : s9;
+        let cur9 = s9;
+        for (; ; ) {
+          const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(cur9);
+          if (!m9) return cur9;
+          cur9 = m9[1];
+        }
       };
       const canon9 = nameWords9.map(declit9);
       const phrase0 = canon9.join(" ");
@@ -37336,8 +37446,12 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       };
       const textWords9 = tokens.slice(0, eqIdx).map((t9) => t9.text);
       const declitW9 = (s9) => {
-        const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(s9);
-        return m9 ? m9[1] : s9;
+        let cur9 = s9;
+        for (; ; ) {
+          const m9 = /^(?:[dljmnst]|qu|jusqu|lorsqu|puisqu|quoiqu)[’'ʼ](.+)$/iu.exec(cur9);
+          if (!m9) return cur9;
+          cur9 = m9[1];
+        }
       };
       const composed9 = (words9, fold9) => words9.flatMap((w9) => declitW9(w9.toLowerCase()).split("\xB7")).map((s9) => fold9(s9).toLowerCase());
       const lists9 = [];
@@ -37351,7 +37465,10 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       const roled9 = skelGroup9 || // définissable ⇒ lisible (audit BD): a name shaped like a unit or
       // a code (㎡, CHFF, KiB) would never read back as a variable —
       // digit-bearing ORDINARY names (a1, x2) stay bindable
-      tokens.slice(0, eqIdx).some((t9) => t9.kind === "word" && !env.has(t9.text) && (plausibleUnitReason(t9.text) !== null || looksLikeCode(t9.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹]/u.test(t9.text))) || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
+      tokens.slice(0, eqIdx).some((t9) => t9.kind === "word" && !env.has(t9.text) && (plausibleUnitReason(t9.text) !== null || looksLikeCode(t9.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹]/u.test(t9.text) || !isUnitWord(t9.text) && [2, 3, 4].some((k9) => k9 < t9.text.length && isUnitWord(t9.text.slice(0, k9)) && isTimespanUnitWord(t9.text.slice(k9))))) || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || // P-9 reserves of/off in ANY position of a name (audit BE): a
+      // bound « revenu of » could never read back through the percent
+      // grammar — French « de » names (taux de change) stay bindable
+      w9 === "of" || w9 === "off" || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
       void phrase9;
       if (roled9) {
         throw new ParseError("not-understood", `\u201C${tokens.slice(0, eqIdx).map((t9) => t9.text).join(" ")}\u201D is operator vocabulary and cannot be a variable name`);
