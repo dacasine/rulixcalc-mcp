@@ -29027,6 +29027,7 @@ var bgcd = (a2, b2) => {
   return a2 || 1n;
 };
 var rnorm = (x2) => {
+  if (x2.d === 0n) throw new RangeError("exact arithmetic: zero denominator");
   const g2 = bgcd(x2.n, x2.d);
   const s2 = x2.d < 0n ? -1n : 1n;
   return { n: s2 * x2.n / g2, d: s2 * x2.d / g2 };
@@ -30146,6 +30147,32 @@ function perfectRoot(n2, k2) {
   return lo ** k2 === n2 ? lo : null;
 }
 function applyExactFunction(fn, rts) {
+  const cap9 = (rt9) => rt9 !== void 0 && rt9.capped === true;
+  if ([
+    "floor",
+    "ceil",
+    "ceiling",
+    "trunc",
+    "round",
+    "abs",
+    "min",
+    "max",
+    "mod",
+    "fact",
+    "factorial",
+    "factorielle"
+  ].includes(fn) && rts.some((r9) => cap9(r9))) {
+    return err("inexact", `${fn}() decides from its argument \u2014 a capped value decides nothing; exactness was dropped upstream`);
+  }
+  if (["sqrt", "racine", "cbrt", "log", "ln", "lb", "lg"].includes(fn) && rts[0] !== void 0 && cap9(rts[0]) && numRat(rts[0]).n === 0n) {
+    return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
+  }
+  if (["asin", "acos"].includes(fn) && rts[0] !== void 0 && cap9(rts[0]) && (() => {
+    const x9 = numRat(rts[0]);
+    return (x9.n < 0n ? -x9.n : x9.n) === x9.d;
+  })()) {
+    return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
+  }
   const asF = (x3) => rts.some((r3) => r3.t === "f") ? makeFrac(x3.n, x3.d, "derived") : { t: "d", ...qv(x3) };
   const x2 = numRat(rts[0]);
   switch (fn) {
@@ -30674,6 +30701,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       const shell9 = combineQuantities(l1, r1, "/", ctx);
       if (shell9.t === "q") return { ...shell9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
       if (shell9.t === "ts") return shell9;
+      if (shell9.t === "e") return shell9;
       return { t: "d", ...qv({ n: 0n, d: 1n }) };
     }
     if (dividend9 !== void 0 && dividend9.t === "q" && (compsOf(dividend9)?.length ?? 0) > 0) {
@@ -31331,20 +31359,22 @@ var tsScale = (span, k2, ctx) => {
   return err("anchor-required", "this result is a fractional timespan \u2014 anchor to a date first");
 };
 var tsRatio = (a2, b2, ctx) => {
+  if (b2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+  const capA9 = a2.capped === true;
   const ca = spanCanon(a2.c);
   const cb = spanCanon(b2.c);
   if (cb.months === 0n && cb.days === 0n) return err("division-by-zero");
   if (ctx.monthToDays === "30") {
     const den30 = cb.months * 30n + cb.days;
     if (den30 === 0n) return err("division-by-zero");
-    return { t: "d", ...qv(rnorm({ n: ca.months * 30n + ca.days, d: den30 })) };
+    return { t: "d", ...qv(rnorm({ n: ca.months * 30n + ca.days, d: den30 })), ...capA9 && { capped: true } };
   }
   const ga = spanGroups(a2.c);
   const gb = spanGroups(b2.c);
   const pureM9 = (g9) => g9.hasM && !g9.hasD;
   const pureD9 = (g9) => !g9.hasM;
-  if (pureM9(ga) && pureM9(gb) && cb.months !== 0n) return { t: "d", ...qv(rnorm({ n: ca.months, d: cb.months })) };
-  if (pureD9(ga) && pureD9(gb) && cb.days !== 0n) return { t: "d", ...qv(rnorm({ n: ca.days, d: cb.days })) };
+  if (pureM9(ga) && pureM9(gb) && cb.months !== 0n) return { t: "d", ...qv(rnorm({ n: ca.months, d: cb.months })), ...capA9 && { capped: true } };
+  if (pureD9(ga) && pureD9(gb) && cb.days !== 0n) return { t: "d", ...qv(rnorm({ n: ca.days, d: cb.days })), ...capA9 && { capped: true } };
   return err("anchor-required", "months/years and days/weeks only compare around a date");
 };
 function addSummable(acc, v2, ctx) {
@@ -31612,6 +31642,9 @@ function evalAst(ast, env, ctx = {}) {
         if (ast.fn === "count") return { t: "d", v: new DecC(values.length) };
         if (ast.fn === "median") {
           if (values.length === 0) return err("not-understood", "nothing to take a median of in this section");
+          if (values.some((v9) => v9.capped === true)) {
+            return err("inexact", "a median cannot be ordered around a capped value \u2014 exactness was dropped upstream");
+          }
           const first = values[0];
           if (values.length === 1) return values[0];
           if (first.t === "ts" && values.every((v9) => v9.t === "ts" && spanCanon(v9.c).months === spanCanon(first.c).months && spanCanon(v9.c).days === spanCanon(first.c).days)) {
@@ -31953,6 +31986,10 @@ function evalAst(ast, env, ctx = {}) {
       if (rateRT.capped === true || yearsRT.capped === true) {
         return err("inexact", "a finance branch cannot be decided from a capped value \u2014 exactness was dropped upstream");
       }
+      const fig9 = pctFigure(rateRT, ctx.monthToDays === "30");
+      if (fig9 === "irr") {
+        return err("inexact", "the rate\u2019s exact shadow cannot traverse the finance formula \u2014 write the formula explicitly");
+      }
       let yQ = null;
       if (yearsRT.t === "ts") {
         const c9 = yearsRT.c;
@@ -31967,7 +32004,7 @@ function evalAst(ast, env, ctx = {}) {
       }
       const principal = amount.t === "q" ? qx(amount) : numRat(amount);
       const y2 = Number(yQ.n);
-      const rate = rateRT.vx ?? decToRat(rateRT.v);
+      const rate = fig9;
       const cent = { n: 100n, d: 1n };
       let kFin;
       if (ast.fn === "interest") {
@@ -31977,7 +32014,10 @@ function evalAst(ast, env, ctx = {}) {
         const r3 = rDiv(rate, { n: 1200n, d: 1n });
         if (r3.n === 0n) kFin = rDiv({ n: 1n, d: 1n }, { n: BigInt(y2) * 12n, d: 1n });
         else {
-          const denom = rSub({ n: 1n, d: 1n }, rPowInt(rAdd({ n: 1n, d: 1n }, r3), -12 * y2));
+          const base9 = rAdd({ n: 1n, d: 1n }, r3);
+          if (base9.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
+          const denom = rSub({ n: 1n, d: 1n }, rPowInt(base9, -12 * y2));
+          if (denom.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
           kFin = rDiv(r3, denom);
         }
       }
@@ -32319,8 +32359,9 @@ function evalAst(ast, env, ctx = {}) {
         }
         const x9 = rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n });
         if (part.capped === true) return { t: "p", ...qv(x9), capped: true };
-        const n9 = distributeTerms(fP9.num, fB9.den, t30w9);
-        const d9 = distributeTerms(fP9.den, fB9.num, t30w9);
+        const fA9 = fracOf(aligned9);
+        const n9 = distributeTerms(fA9.num, fB9.den, t30w9);
+        const d9 = distributeTerms(fA9.den, fB9.num, t30w9);
         if (n9 === null || d9 === null) {
           ctx.capNotes?.push("product");
           return { t: "p", ...qv(x9), capped: true };
@@ -33138,9 +33179,13 @@ function evalAst(ast, env, ctx = {}) {
             const tsSide = l2.t === "ts" ? l2 : r3.t === "ts" ? r3 : null;
             const qSide = l2.t === "q" ? l2 : r3.t === "q" ? r3 : null;
             if (tsSide && qSide && (ast.op === "*" || ast.op === "/")) {
-              if (!tsSide.c.years && !tsSide.c.months && !tsSide.c.weeks && !tsSide.c.days && dimIsEmpty(qSide.dim)) {
-                if (ast.op === "/" && zeroState(qSide, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
-                return { t: "ts", c: { ...tsSide.c } };
+              if (!tsSide.c.years && !tsSide.c.months && !tsSide.c.weeks && !tsSide.c.days && dimIsEmpty(qSide.dim) && (compsOf(qSide)?.length ?? 0) === 0) {
+                if (ast.op === "/" && r3.t === "ts") return err("division-by-zero");
+                if (ast.op === "/") {
+                  if (qSide.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+                  if (zeroState(qSide, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
+                }
+                return { t: "ts", c: { ...tsSide.c }, ...qSide.capped === true && { capped: true } };
               }
               {
                 const qF8 = isCarrier(qSide) ? qSide : dimIsEmpty(qSide.dim) && (qSide.terms !== void 0 || qSide.termsDen !== void 0) ? {
@@ -33461,7 +33506,7 @@ function evalAst(ast, env, ctx = {}) {
                 out = { n: a3.n * b3.n, d: a3.d * b3.d };
                 break;
               case "mod": {
-                if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+                if (l2.capped === true || r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
                 if (b3.n === 0n) return err("division-by-zero");
                 const q0 = rDiv(a3, b3);
                 const t0 = q0.n / q0.d;
@@ -33504,8 +33549,9 @@ function evalAst(ast, env, ctx = {}) {
               if (b2.isZero()) return err("division-by-zero");
               return capOut9({ t: "d", v: a2.div(b2) });
             case "mod":
+              if (capD9) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (b2.isZero()) return err("division-by-zero");
-              return capOut9({ t: "d", v: a2.mod(b2) });
+              return { t: "d", v: a2.mod(b2) };
             case "^": {
               if (b2.abs().gt(MAX_POW_EXPONENT)) return err("inexact", "exponent magnitude too large");
               const rExact = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
@@ -35845,6 +35891,10 @@ function matchFinancePrototypes(tokens) {
     let rateStart;
     if (tokens[rateEnd - 1]?.kind === "percent" && tokens[rateEnd - 2]?.kind === "number") {
       rateStart = rateEnd - 2;
+      const sg9 = tokens[rateStart - 1];
+      if (rateStart - 1 >= 2 && sg9?.kind === "op" && (sg9.op === "-" || sg9.op === "+")) {
+        rateStart--;
+      }
     } else if (refStart9(rateEnd) !== null) {
       rateStart = refStart9(rateEnd);
     } else if (nameWord9(tokens[rateEnd - 1]) && !FILLERS.has(tokens[rateEnd - 1].text.toLowerCase())) {
@@ -36598,6 +36648,19 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D sits inside a phrase \u2014 remove it or move it to the end`);
         return out;
       }
+      {
+        const opOf9 = (t9) => t9 === void 0 ? void 0 : t9.kind === "op" ? t9.op : t9.kind === "word" ? lexicon.operatorWords.get(t9.text.toLowerCase()) ?? (lexicon.divisionParticles.has(t9.text.toLowerCase()) ? "/" : void 0) : void 0;
+        const opish9 = (t9) => t9 !== void 0 && (t9.kind === "op" || t9.kind === "word" && isOpWordTok(t9));
+        const b2 = out[i2 - 2];
+        const binB9 = opish9(before) && i2 - 2 >= 0 && b2 !== void 0 && !opish9(b2) && b2.kind !== "lparen" && b2.kind !== "equals";
+        const safeA9 = after !== void 0 && !opish9(after) && after.kind !== "rparen" && after.kind !== "percent" && after.kind !== "equals" && after.kind !== "bang";
+        const signA9 = opOf9(after) === "+" || opOf9(after) === "-";
+        const openBB9 = before === void 0 || before.kind === "lparen" || opish9(before) && !binB9 || before.kind === "comma";
+        if (binB9 && !safeA9 || openBB9 && signA9) {
+          violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D occupies an operand slot \u2014 removing it would change a neighbouring operator`);
+          return out;
+        }
+      }
       ignored.push({
         text: out.slice(i2, j2).map((t2) => t2.text.replace(/⁣/gu, "")).join(" "),
         range: { start: out[i2].start, end: out[j2 - 1].end }
@@ -36615,10 +36678,11 @@ function splitInterpuncts(tokens, lexicon) {
       const segsU0 = t0.text.split(/[·/]/u).map((s0) => s0.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
       const compound0 = segsU0.every((s0) => s0 === "" || isUnitWord(s0) || isTimespanUnitWord(s0));
       const joined0 = t0.text.replace(/·/gu, "");
+      const rawJoin0 = t0.rawText !== void 0 ? t0.rawText.replace(/[·\s]+/gu, "") : void 0;
       const jl0 = joined0.toLowerCase();
       const roleish0 = roleSpelling(jl0, lexicon) || plausibleUnitReason(joined0) !== null || plausibleUnitReason(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) !== null || // two units glued across the · (ligature splits, ㎏́·㎏) stay a
       // loud refusal, never a blind product (audit BG)
-      ((s0) => [1, 2, 3, 4].some((k0) => k0 < s0.length && isUnitWord(s0.slice(0, k0)) && isUnitWord(s0.slice(k0))))(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) || confusableRole(joined0, void 0, lexicon) || // a GROUP MEMBER rejoined (p·rix, a·u) stays with the group
+      ((s0) => [1, 2, 3, 4].some((k0) => k0 < s0.length && isUnitWord(s0.slice(0, k0)) && isUnitWord(s0.slice(k0))))(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) || confusableRole(joined0, rawJoin0, lexicon) || // a GROUP MEMBER rejoined (p·rix, a·u) stays with the group
       // matchers downstream — never a blind split (audit BG)
       [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g0) => g0.words.includes(jl0)) || allPackBridges().groups.some((g0) => g0.includes(jl0)) || // an OPERATOR segment keeps the old refusal (m·oins), while
       // computable atoms (pi·pi) split into a real product
@@ -36628,15 +36692,30 @@ function splitInterpuncts(tokens, lexicon) {
       });
       if (!compound0 && !roleish0) {
         const segs0 = t0.text.split("\xB7");
-        let off0 = t0.start;
-        segs0.forEach((s0, k0) => {
-          if (k0 > 0) {
-            out0.push({ kind: "op", op: "*", text: "\xB7", start: Math.min(off0, t0.end), end: Math.min(off0 + 1, t0.end) });
-            off0 += 1;
-          }
-          out0.push({ ...t0, text: s0, start: Math.min(off0, t0.end), end: Math.min(off0 + s0.length, t0.end) });
-          off0 += s0.length;
-        });
+        const raw0 = t0.rawText ?? t0.text;
+        const rawSegs0 = raw0.split("\xB7");
+        if (rawSegs0.length === segs0.length) {
+          let off0 = t0.start;
+          segs0.forEach((s0, k0) => {
+            if (k0 > 0) {
+              out0.push({ kind: "op", op: "*", text: "\xB7", start: Math.min(off0, t0.end), end: Math.min(off0 + 1, t0.end) });
+              off0 += 1;
+            }
+            const rl0 = rawSegs0[k0].length;
+            const seg0 = { ...t0, text: s0, start: Math.min(off0, t0.end), end: Math.min(off0 + rl0, t0.end) };
+            if (rawSegs0[k0] !== s0) seg0.rawText = rawSegs0[k0];
+            else delete seg0.rawText;
+            out0.push(seg0);
+            off0 += rl0;
+          });
+        } else {
+          segs0.forEach((s0, k0) => {
+            if (k0 > 0) out0.push({ kind: "op", op: "*", text: "\xB7", start: t0.start, end: t0.end });
+            const seg0 = { ...t0, text: s0, start: t0.start, end: t0.end };
+            seg0.rawText = raw0;
+            out0.push(seg0);
+          });
+        }
         continue;
       }
     }
@@ -37106,7 +37185,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         const nxt9 = tokens[ib9 + glen9];
         const nxtnxt9 = tokens[ib9 + glen9 + 1];
         const anchorBefore9 = tokens.slice(0, ib9).some((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text));
-        const pctOperand9 = nxt9?.kind === "number" && nxtnxt9?.kind === "percent" || // the SUBSTITUTION INVARIANT reaches the finance bridge (audit
+        const pctOperand9 = nxt9?.kind === "number" && nxtnxt9?.kind === "percent" || // a SIGNED literal rate anchors too (audit BI): « at -1% »
+        nxt9?.kind === "op" && ["+", "-"].includes(nxt9.op ?? "") && nxtnxt9?.kind === "number" && tokens[ib9 + glen9 + 2]?.kind === "percent" || // the SUBSTITUTION INVARIANT reaches the finance bridge (audit
         // BH): a BOUND word or a line(N) reference in the rate slot
         // anchors « at » exactly like the literal 5%
         nxt9?.kind === "word" && (env.has(nxt9.text) || multiVarAt9(ib9 + glen9)) || nxt9?.kind === "word" && REF_WORDS.has(nxt9.text.toLowerCase()) && nxtnxt9?.kind === "lparen";
@@ -37238,7 +37318,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       if (tokens[idx + 1]?.kind === "lparen" && tokens[idx + 1].start === t2.end) {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
       } else {
-        const financeGlue9 = ["at", "\xE0", "a", "zu", "au"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.slice(idx + 1).some((t0) => t0.kind === "percent") || tokens[idx + 1]?.kind === "word" && (env.has(tokens[idx + 1].text) || REF_WORDS.has(tokens[idx + 1].text.toLowerCase())));
+        const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))));
         const reason = quarantineReason(t2.text);
         if (reason !== null) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
@@ -37288,16 +37368,17 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         const compGlue9 = /^(que|qu|qu['’ʼ]|als|than)$/u.test(lower) && prev?.kind === "op" && ["plus", "moins", "more", "less", "mehr", "weniger"].includes(prev.text.toLowerCase());
         const beforeOp9 = out[out.length - 2];
         const binOp9 = prev !== void 0 && prev.kind === "op" && beforeOp9 !== void 0 && ["number", "fraction", "percent", "rparen", "date", "clocktime", "bang", "word"].includes(beforeOp9.kind);
-        const safeN9 = nxtA9 !== void 0 && ["number", "fraction", "date", "clocktime", "badnumber", "lparen", "word", "colon", "comma"].includes(nxtA9.kind);
+        const nxtOpMap9 = nxtA9?.kind === "op" ? nxtA9.op : nxtA9?.kind === "word" ? lexicon.operatorWords.get(nxtA9.text.toLowerCase()) ?? (lexicon.divisionParticles.has(nxtA9.text.toLowerCase()) ? "/" : void 0) : void 0;
+        const safeN9 = nxtA9 !== void 0 && nxtOpMap9 === void 0 && ["number", "fraction", "date", "clocktime", "badnumber", "lparen", "word", "colon", "comma"].includes(nxtA9.kind);
         const prevOp9 = !compGlue9 && binOp9 && !safeN9;
         const openB9 = prev === void 0 || prev.kind === "lparen" || prev.kind === "op" && !binOp9 || prev.kind === "comma";
-        const signN9 = nxtA9?.kind === "op" && (nxtA9.op === "+" || nxtA9.op === "-");
+        const signN9 = nxtOpMap9 === "+" || nxtOpMap9 === "-";
         if (prevOp9 || openB9 && signN9) {
           violations.push(`dropping \u201C${t2.text}\u201D would change the arity of a neighbouring operator \u2014 remove it or bind it`);
         }
       }
     }
-    ignored.push({ text: t2.text.replace(/⁣/gu, ""), range: { start: t2.start, end: t2.end } });
+    ignored.push({ text: (t2.rawText ?? t2.text).replace(/⁣/gu, ""), range: { start: t2.start, end: t2.end } });
   }
   return out;
 }
