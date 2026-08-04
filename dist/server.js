@@ -30164,15 +30164,6 @@ function applyExactFunction(fn, rts) {
   ].includes(fn) && rts.some((r9) => cap9(r9))) {
     return err("inexact", `${fn}() decides from its argument \u2014 a capped value decides nothing; exactness was dropped upstream`);
   }
-  if (["sqrt", "racine", "cbrt", "log", "ln", "lb", "lg"].includes(fn) && rts[0] !== void 0 && cap9(rts[0]) && numRat(rts[0]).n === 0n) {
-    return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
-  }
-  if (["asin", "acos"].includes(fn) && rts[0] !== void 0 && cap9(rts[0]) && (() => {
-    const x9 = numRat(rts[0]);
-    return (x9.n < 0n ? -x9.n : x9.n) === x9.d;
-  })()) {
-    return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
-  }
   const asF = (x3) => rts.some((r3) => r3.t === "f") ? makeFrac(x3.n, x3.d, "derived") : { t: "d", ...qv(x3) };
   const x2 = numRat(rts[0]);
   switch (fn) {
@@ -31018,9 +31009,42 @@ function alignForAdd(l2, r3, ctx) {
       }
       return out9;
     })();
-    if (lBase2.dec === null && rBase2.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio)), terms: termShadow, termsDen: r3.termsDen };
+    const denShadow = (() => {
+      if (r3.termsDen === void 0 || !needShadow()) return r3.termsDen;
+      const lCodes8 = [...new Set(lCur.map((c9) => c9.def.currency))];
+      if (lCodes8.length !== 1) return r3.termsDen;
+      const lDef8 = lCur.find((c9) => c9.def.currency === lCodes8[0]).def;
+      const out8 = [];
+      for (const t9 of r3.termsDen) {
+        let x9 = t9.x;
+        let bad9 = false;
+        const comps8 = /* @__PURE__ */ new Map();
+        const push8 = (d9, e9) => {
+          const p9 = comps8.get(d9.id);
+          if (p9) p9.exp += e9;
+          else comps8.set(d9.id, { def: d9, exp: e9 });
+        };
+        for (const c9 of t9.comps) {
+          if (c9.def.currency === void 0 || c9.def.currency === lDef8.currency) {
+            push8(c9.def, c9.exp);
+            continue;
+          }
+          const k9 = rateBetween(c9.def.currency, lDef8.currency);
+          if (k9 === null) {
+            bad9 = true;
+            break;
+          }
+          x9 = rMul(x9, rPowInt(k9, c9.exp));
+          push8(lDef8, c9.exp);
+        }
+        if (bad9) return r3.termsDen;
+        out8.push({ x: x9, comps: [...comps8.values()].filter((c9) => c9.exp !== 0) });
+      }
+      return out8;
+    })();
+    if (lBase2.dec === null && rBase2.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio)), terms: termShadow, termsDen: denShadow };
     const decR = (rBase2.dec ?? new DecC(1)).div(lBase2.dec ?? new DecC(1));
-    return { ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0, terms: termShadow, termsDen: r3.termsDen };
+    return { ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0, terms: termShadow, termsDen: denShadow };
   }
   if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
   const conv = convertQuantity(r3, l2.def, ctx);
@@ -31282,7 +31306,12 @@ var pctFigure = (p9, thirty) => {
     ...p9.terms && { terms: p9.terms },
     ...p9.termsDen && { termsDen: p9.termsDen }
   };
-  return fracReduce(q9, thirty) ?? "irr";
+  const r9 = fracReduce(q9, thirty);
+  if (r9 !== null) return r9;
+  const pn0 = p9.terms === void 0 ? p9.vx ?? decToRat(p9.v) : termsProject(p9.terms, thirty);
+  const pd0 = p9.termsDen === void 0 ? { n: 1n, d: 1n } : termsProject(p9.termsDen, thirty);
+  if (pn0 !== null && pn0.n === 0n && pd0 !== null && pd0.n !== 0n) return { n: 0n, d: 1n };
+  return "irr";
 };
 var TS_IRR_MSG = "scaling a timespan by this factor is not exact \u2014 the factor is irrational";
 var pctFactorFrac = (p9, mode9, thirty) => {
@@ -31924,6 +31953,9 @@ function evalAst(ast, env, ctx = {}) {
     case "convertBase": {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
+      if (e.capped === true) {
+        return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
+      }
       if (e.t !== "d" || numRat(e).d !== 1n) {
         return err("unsupported-pair", "only whole numbers convert to hex/binary/octal");
       }
@@ -31974,14 +32006,14 @@ function evalAst(ast, env, ctx = {}) {
     }
     case "finance": {
       const amount = evalAst(ast.amount, env, ctx);
+      const rateRT = evalAst(ast.rate, env, ctx);
+      const yearsRT = evalAst(ast.years, env, ctx);
       if (amount.t === "e") return amount;
       if (amount.t !== "d" && amount.t !== "f" && amount.t !== "q") {
         return err("unsupported-pair", "finance phrases need an amount");
       }
-      const rateRT = evalAst(ast.rate, env, ctx);
       if (rateRT.t === "e") return rateRT;
       if (rateRT.t !== "p") return err("unsupported-pair", "this slot needs a percentage \u2014 write 5% not 5");
-      const yearsRT = evalAst(ast.years, env, ctx);
       if (yearsRT.t === "e") return yearsRT;
       if (rateRT.capped === true || yearsRT.capped === true) {
         return err("inexact", "a finance branch cannot be decided from a capped value \u2014 exactness was dropped upstream");
@@ -32351,10 +32383,21 @@ function evalAst(ast, env, ctx = {}) {
         const fB9 = fracOf(base);
         const fP9 = fracOf(part);
         if (bq9.n === 0n) {
-          const n0 = distributeTerms(fP9.num, fB9.den, t30w9);
-          const d0 = distributeTerms(fP9.den, fB9.num, t30w9);
+          const fA0 = fracOf(aligned9);
+          const n0 = distributeTerms(fA0.num, fB9.den, t30w9);
+          const d0 = distributeTerms(fA0.den, fB9.num, t30w9);
           const z9 = divProjZero(n0, d0, base, ctx);
           if (z9.t === "d") return { t: "p", ...qv(rMul(z9.vx ?? decToRat(z9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
+          if (z9.t === "q" && qx(z9).n === 0n) return { t: "p", ...qv({ n: 0n, d: 1n }), ...capW9 && { capped: true } };
+          if (z9.t === "q" && dimsCompatible(z9.dim, {}, ctx)) {
+            return {
+              t: "p",
+              ...qv(rMul(qx(z9), { n: 100n, d: 1n })),
+              ...z9.terms && { terms: z9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })) },
+              ...z9.termsDen && { termsDen: z9.termsDen },
+              ...capW9 && { capped: true }
+            };
+          }
           return z9;
         }
         const x9 = rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n });
@@ -32366,9 +32409,11 @@ function evalAst(ast, env, ctx = {}) {
           ctx.capNotes?.push("product");
           return { t: "p", ...qv(x9), capped: true };
         }
+        const redQ9 = fracReduce({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [], terms: n9, termsDen: d9 }, t30w9);
+        const xv9 = redQ9 !== null ? rMul(redQ9, { n: 100n, d: 1n }) : x9;
         return {
           t: "p",
-          ...qv(x9),
+          ...qv(xv9),
           terms: n9.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })),
           termsDen: d9,
           ...capW9 && { capped: true }
@@ -32571,6 +32616,9 @@ function evalAst(ast, env, ctx = {}) {
           }
         }
       }
+      if (["sqrt", "racine", "log", "ln", "lb", "lg", "asin", "acos", "acosh", "atanh"].includes(ast.fn) && evaluated9.some((v9) => v9.capped === true)) {
+        return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
+      }
       const rts = [];
       let fnCapped9 = false;
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
@@ -32756,6 +32804,9 @@ function evalAst(ast, env, ctx = {}) {
       if (l2.t === "e") return l2;
       if (r3.t === "e") return r3;
       const bin9 = (() => {
+        if (ast.op === "/" && r3.capped === true) {
+          return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+        }
         if ((l2.t === "q" || r3.t === "q") && l2.t !== "ct" && r3.t !== "ct") {
           if (l2.t === "q" && r3.t === "p") {
             if (isOffsetScale(l2)) {
@@ -33264,6 +33315,13 @@ function evalAst(ast, env, ctx = {}) {
           const other = l2.t === "ct" ? r3 : l2;
           if (other.t === "q" && (ast.op === "+" || ast.op === "-") && !(l2.t === "ct" && r3.t === "ct")) {
             if (l2.t !== "ct" && ast.op === "-") return err("unsupported-pair", "cannot subtract a time from a duration");
+            if (other.capped === true) {
+              return err("inexact", "a clock time cannot move by a capped duration \u2014 exactness was dropped upstream");
+            }
+            const dirtyCt9 = (list9) => (list9 ?? []).some((t9) => t9.comps.some((c9) => c9.exp !== 1 || (c9.def.dim["time"] ?? 0) !== 1 || Object.keys(c9.def.dim).filter((k9) => c9.def.dim[k9] !== 0).length !== 1));
+            if (dirtyCt9(other.terms) || other.termsDen !== void 0) {
+              return err("inexact", "moving a clock time by this duration is not exact \u2014 the factor carries an irreducible shadow");
+            }
             const mins = quantityToMinutes(other);
             if (mins === null) return err("unsupported-pair", "clock times only combine with h/min/s durations");
             if (mins.d !== 1n) return err("inexact", "sub-minute clock arithmetic is not supported");
@@ -33557,6 +33615,9 @@ function evalAst(ast, env, ctx = {}) {
               const rExact = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
               if (rExact && rExact.d === 1n) {
                 return err("inexact", "integer exponents above 10000 exceed exact arithmetic");
+              }
+              if (rExact && rExact.d !== 1n && l2.capped === true) {
+                return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
               }
               if (a2.isNegative() && rExact && rExact.d !== 1n) {
                 if (rExact.d % 2n === 0n) {
@@ -35869,6 +35930,18 @@ function matchFinancePrototypes(tokens) {
   if (fn === null) return null;
   const n2 = tokens.length;
   const refStart9 = (end9) => end9 - 4 >= 1 && tokens[end9 - 4]?.kind === "word" && LINE_REF_WORDS.has(tokens[end9 - 4].text.toLowerCase()) && tokens[end9 - 3]?.kind === "lparen" && tokens[end9 - 2]?.kind === "number" && tokens[end9 - 1]?.kind === "rparen" ? end9 - 4 : null;
+  const parenStart9 = (end9) => {
+    if (tokens[end9 - 1]?.kind !== "rparen") return null;
+    let d9 = 0;
+    for (let k9 = end9 - 1; k9 >= 1; k9--) {
+      if (tokens[k9].kind === "rparen") d9++;
+      else if (tokens[k9].kind === "lparen") {
+        d9--;
+        if (d9 === 0) return k9;
+      }
+    }
+    return null;
+  };
   const nameWord9 = (t9) => t9?.kind === "word" && !isUnitWord(t9.text) && spanUnitOf(t9.text) === void 0 && !isComputableWord(t9.text) && !isReservedWord(t9.text);
   const FILLERS = /* @__PURE__ */ new Set(["sur", "over", "pendant", "pour", "durant", "f\xFCr", "fuer", "on", "\xE0", "a", "at", "for"]);
   try {
@@ -35879,6 +35952,9 @@ function matchFinancePrototypes(tokens) {
       years = { k: "span", e: { k: "num", dec: tokens[n2 - 2].dec }, unit: "year" };
     } else if (refStart9(n2) !== null) {
       yearsStart = refStart9(n2);
+      years = parse3(tokens.slice(yearsStart));
+    } else if (parenStart9(n2) !== null) {
+      yearsStart = parenStart9(n2);
       years = parse3(tokens.slice(yearsStart));
     } else if (nameWord9(tokens[n2 - 1]) && !FILLERS.has(tokens[n2 - 1].text.toLowerCase())) {
       yearsStart = n2 - 1;
@@ -35897,6 +35973,8 @@ function matchFinancePrototypes(tokens) {
       }
     } else if (refStart9(rateEnd) !== null) {
       rateStart = refStart9(rateEnd);
+    } else if (parenStart9(rateEnd) !== null && parenStart9(rateEnd) >= 2) {
+      rateStart = parenStart9(rateEnd);
     } else if (nameWord9(tokens[rateEnd - 1]) && !FILLERS.has(tokens[rateEnd - 1].text.toLowerCase())) {
       rateStart = rateEnd - 1;
     } else {
@@ -36478,6 +36556,17 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         jj9++;
       }
       if (jj9 < out.length && out[jj9].kind === "rparen" && ws9.length >= 1 && ([...loadLexicon([...DEFAULT_LANGUAGES, "de"]).blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === ws9.join(" ")) || ws9.length === 1 && isAnyPackWord(ws9[0]) && lexicon.blockers.has(ws9[0]))) {
+        const bB9 = out[i2 - 1];
+        const aB9 = out[jj9 + 1];
+        const b2B9 = out[i2 - 2];
+        const binBB9 = bB9?.kind === "op" && b2B9 !== void 0 && b2B9.kind !== "op" && b2B9.kind !== "lparen" && b2B9.kind !== "equals";
+        const safeBB9 = aB9 !== void 0 && aB9.kind !== "op" && aB9.kind !== "rparen" && aB9.kind !== "percent" && aB9.kind !== "equals" && aB9.kind !== "bang";
+        const signBB9 = aB9?.kind === "op" && (aB9.op === "+" || aB9.op === "-");
+        const openBB9 = bB9 === void 0 || bB9.kind === "lparen" || bB9.kind === "op" && !binBB9 || bB9.kind === "comma";
+        if (binBB9 && !safeBB9 || openBB9 && signBB9) {
+          violations.push(`the note \u201C(${ws9.join(" ")})\u201D occupies an operand slot \u2014 removing it would change a neighbouring operator`);
+          return out;
+        }
         const start9 = out[i2].start;
         const end9 = out[jj9].end;
         ignored.push({ text: out.slice(i2, jj9 + 1).map((t9) => t9.text).join(" "), range: { start: start9, end: end9 } });
@@ -36671,10 +36760,16 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
   }
   return out;
 }
-function splitInterpuncts(tokens, lexicon) {
+function splitInterpuncts(tokens, lexicon, violations) {
   const out0 = [];
   for (const t0 of tokens) {
     if (t0.kind === "word" && t0.text.includes("\xB7") && !t0.text.startsWith("\xB7") && !t0.text.endsWith("\xB7")) {
+      const rawFull0 = t0.rawText;
+      if (rawFull0 !== void 0 && /[ŀĿ]/u.test(rawFull0) && !rawFull0.includes("\xB7")) {
+        violations.push(`\u201C${rawFull0}\u201D contains \u201C\u0140\u201D, which normalises into an interpunct operator \u2014 write it plainly`);
+        out0.push(t0);
+        continue;
+      }
       const segsU0 = t0.text.split(/[·/]/u).map((s0) => s0.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
       const compound0 = segsU0.every((s0) => s0 === "" || isUnitWord(s0) || isTimespanUnitWord(s0));
       const joined0 = t0.text.replace(/·/gu, "");
@@ -36709,10 +36804,55 @@ function splitInterpuncts(tokens, lexicon) {
             off0 += rl0;
           });
         } else {
+          const cuts0 = (() => {
+            const canon0 = t0.text;
+            let ci0 = 0;
+            let ri0 = 0;
+            const outC0 = [];
+            for (let k0 = 0; k0 < segs0.length; k0++) {
+              if (k0 > 0) {
+                if (canon0[ci0] !== "\xB7") return null;
+                if (raw0[ri0] === "\xB7") ri0 += 1;
+                ci0 += 1;
+              }
+              const rs0 = ri0;
+              const ce0 = ci0 + segs0[k0].length;
+              while (ci0 < ce0) {
+                if (ri0 >= raw0.length) return null;
+                const cp0 = String.fromCodePoint(raw0.codePointAt(ri0));
+                const exp0 = cp0.normalize("NFKC").replace(/[⁣\u200b-\u200d\u2060-\u2062\ufe00-\ufe0f\u034f\u180b-\u180f]/gu, "");
+                if (exp0 === "") {
+                  ri0 += cp0.length;
+                  continue;
+                }
+                const expTrim0 = exp0.replace(/·+$/u, "");
+                if (expTrim0 === "" || canon0.startsWith(expTrim0, ci0)) {
+                  ci0 += expTrim0.length;
+                  ri0 += cp0.length;
+                  continue;
+                }
+                return null;
+              }
+              if (ci0 !== ce0) return null;
+              outC0.push({ start: rs0, end: ri0, raw: raw0.slice(rs0, ri0) });
+            }
+            return outC0;
+          })();
           segs0.forEach((s0, k0) => {
-            if (k0 > 0) out0.push({ kind: "op", op: "*", text: "\xB7", start: t0.start, end: t0.end });
-            const seg0 = { ...t0, text: s0, start: t0.start, end: t0.end };
-            seg0.rawText = raw0;
+            const c0 = cuts0?.[k0];
+            if (k0 > 0) {
+              const opAt0 = c0 !== void 0 ? t0.start + c0.start : t0.start;
+              out0.push({ kind: "op", op: "*", text: "\xB7", start: opAt0, end: c0 !== void 0 ? opAt0 : t0.end });
+            }
+            const seg0 = {
+              ...t0,
+              text: s0,
+              start: c0 !== void 0 ? t0.start + c0.start : t0.start,
+              end: c0 !== void 0 ? Math.min(t0.start + c0.end, t0.end) : t0.end
+            };
+            if (c0 !== void 0 && c0.raw !== s0) seg0.rawText = c0.raw;
+            else if (c0 !== void 0) delete seg0.rawText;
+            else seg0.rawText = raw0;
             out0.push(seg0);
           });
         }
@@ -37189,7 +37329,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         nxt9?.kind === "op" && ["+", "-"].includes(nxt9.op ?? "") && nxtnxt9?.kind === "number" && tokens[ib9 + glen9 + 2]?.kind === "percent" || // the SUBSTITUTION INVARIANT reaches the finance bridge (audit
         // BH): a BOUND word or a line(N) reference in the rate slot
         // anchors « at » exactly like the literal 5%
-        nxt9?.kind === "word" && (env.has(nxt9.text) || multiVarAt9(ib9 + glen9)) || nxt9?.kind === "word" && REF_WORDS.has(nxt9.text.toLowerCase()) && nxtnxt9?.kind === "lparen";
+        nxt9?.kind === "word" && (env.has(nxt9.text) || multiVarAt9(ib9 + glen9)) || nxt9?.kind === "word" && REF_WORDS.has(nxt9.text.toLowerCase()) && nxtnxt9?.kind === "lparen" || // a PARENTHESISED slot anchors too (audit BJ): « at (rate) for … »
+        nxt9?.kind === "lparen" && nxtnxt9?.kind === "word" && (env.has(nxtnxt9.text) || multiVarAt9(ib9 + glen9 + 1));
         const financeAnchored9 = anchorBefore9 && pctOperand9;
         const dpNext9 = nxtnxt9?.kind === "word" && /^(d[ée]cimales?|dp|decimals?)$/iu.test(nxtnxt9.text);
         const operandNext9 = !dpNext9 && operandAhead9(ib9 + glen9);
@@ -37305,6 +37446,17 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       (prev?.kind === "number" || prev?.kind === "fraction") && out[out.length - 2]?.kind === "op" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
         out.push(t2);
         continue;
+      }
+      {
+        const b2p9 = out[out.length - 2];
+        const binP9 = prev?.kind === "op" && b2p9 !== void 0 && b2p9.kind !== "op" && b2p9.kind !== "lparen" && b2p9.kind !== "equals";
+        const nxtP9 = tokens[idx + 1];
+        const nxtOpP9 = nxtP9?.kind === "op" ? nxtP9.op : nxtP9?.kind === "word" ? lexicon.operatorWords.get(nxtP9.text.toLowerCase()) ?? (lexicon.divisionParticles.has(nxtP9.text.toLowerCase()) ? "/" : void 0) : void 0;
+        const safeP9 = nxtP9 !== void 0 && nxtOpP9 === void 0 && ["number", "fraction", "date", "clocktime", "badnumber", "lparen", "word", "colon", "comma"].includes(nxtP9.kind);
+        const openP9 = prev === void 0 || prev.kind === "lparen" || prev.kind === "op" && !binP9 || prev.kind === "comma";
+        if (violations.length === 0 && (binP9 && !safeP9 || openP9 && (nxtOpP9 === "+" || nxtOpP9 === "-"))) {
+          violations.push(`dropping \u201C${t2.text}\u201D would change the arity of a neighbouring operator \u2014 remove it or bind it`);
+        }
       }
       ignored.push({ text: t2.text.replace(/⁣/gu, ""), range: { start: t2.start, end: t2.end } });
       continue;
@@ -37724,9 +37876,10 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
   let rt2;
   let defines = null;
   let envWords = [];
+  const violations = [];
   try {
     tokens = lex(line, grammar, dateOrder, misplacedPolicy);
-    tokens = splitInterpuncts(tokens, lexicon);
+    tokens = splitInterpuncts(tokens, lexicon, violations);
     const eqIdx = tokens.findIndex((t2) => t2.kind === "equals");
     const isAssignment = eqIdx >= 1 && tokens.slice(0, eqIdx).every((t2) => t2.kind === "word");
     if (isAssignment && eqIdx > MAX_VARIABLE_WORDS) {
@@ -37816,7 +37969,6 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         envWords.push(joined);
       }
     }
-    const violations = [];
     const exprTokens = prepareTokens(rawExpr, env, lexicon, violations, ignoredTokens, rts);
     if (!hasComputableContent(exprTokens, env)) {
       return empty(tokens, envWords);
