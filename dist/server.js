@@ -30182,6 +30182,7 @@ function applyExactFunction(fn, rts) {
     case "fact":
     case "factorial":
     case "factorielle":
+      if (rts[0].capped === true) return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
       if (numRat(rts[0]).d !== 1n) return err("inexact", "factorial needs a whole number \u2265 0");
       return null;
     // magnitude checks live in factorial()
@@ -30197,6 +30198,9 @@ function applyExactFunction(fn, rts) {
     }
     case "round": {
       const dpRt = rts[1];
+      if (dpRt !== void 0 && dpRt.capped === true) {
+        return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
+      }
       if (dpRt !== void 0 && (numRat(dpRt).d !== 1n || numRat(dpRt).n < 0n)) {
         return err("inexact", "round() decimal places must be a whole number \u2265 0");
       }
@@ -30708,7 +30712,12 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
           return car8;
         }
       }
-      const rep8 = q82.find((t9) => t9.comps.every((c9) => c9.def.factorDec === void 0));
+      const rep8 = q82.find((t9) => t9.comps.every((c9) => c9.def.factorDec === void 0)) ?? // a PURE-factorDec polynomial still has a clean representative
+      // (audit BH): the least-decorated term carries the unit —
+      // ((z+z²)·rad)/z is (1+z) rad, published 1 rad — its residues
+      // project through the same rounded constants the engine
+      // publishes everywhere
+      [...q82].sort((a9, b9) => a9.comps.reduce((s9, c9) => s9 + Math.abs(c9.exp), 0) - b9.comps.reduce((s9, c9) => s9 + Math.abs(c9.exp), 0))[0];
       if (rep8 === void 0) return null;
       let acc8 = { n: 0n, d: 1n };
       for (const t9 of q82) {
@@ -30748,7 +30757,17 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
     }
     const q2 = polyDiv(den9, num9, t30);
     if (q2 !== null) {
-      const em2 = emitPoly8(q2);
+      const em0 = emitPoly8(q2);
+      const em2 = em0 !== null && em0.t === "p" ? {
+        t: "q",
+        v: em0.v,
+        ...em0.vx !== void 0 && { vx: em0.vx },
+        dim: {},
+        symbol: "",
+        comps: [],
+        ...em0.terms && { terms: em0.terms },
+        ...em0.termsDen && { termsDen: em0.termsDen }
+      } : em0;
       if (em2 !== null && em2.t === "q") {
         const px2 = qx(em2);
         if (px2.n !== 0n) {
@@ -31926,12 +31945,29 @@ function evalAst(ast, env, ctx = {}) {
       if (amount.t !== "d" && amount.t !== "f" && amount.t !== "q") {
         return err("unsupported-pair", "finance phrases need an amount");
       }
-      if (!ast.years.isInteger() || ast.years.lte(0) || ast.years.gt(1e3)) {
+      const rateRT = evalAst(ast.rate, env, ctx);
+      if (rateRT.t === "e") return rateRT;
+      if (rateRT.t !== "p") return err("unsupported-pair", "this slot needs a percentage \u2014 write 5% not 5");
+      const yearsRT = evalAst(ast.years, env, ctx);
+      if (yearsRT.t === "e") return yearsRT;
+      if (rateRT.capped === true || yearsRT.capped === true) {
+        return err("inexact", "a finance branch cannot be decided from a capped value \u2014 exactness was dropped upstream");
+      }
+      let yQ = null;
+      if (yearsRT.t === "ts") {
+        const c9 = yearsRT.c;
+        if ((c9.months ?? 0) === 0 && (c9.weeks ?? 0) === 0 && (c9.days ?? 0) === 0 && (c9.years ?? 0) !== 0 && Number.isInteger(c9.years ?? 0)) {
+          yQ = { n: BigInt(c9.years ?? 0), d: 1n };
+        }
+      } else if (yearsRT.t === "d" || yearsRT.t === "f") {
+        yQ = numRat(yearsRT);
+      }
+      if (yQ === null || yQ.d !== 1n || yQ.n <= 0n || yQ.n > 1000n) {
         return err("inexact", "the duration must be a whole number of years (1\u20131000)");
       }
       const principal = amount.t === "q" ? qx(amount) : numRat(amount);
-      const y2 = ast.years.toNumber();
-      const rate = decToRat(ast.rate);
+      const y2 = Number(yQ.n);
+      const rate = rateRT.vx ?? decToRat(rateRT.v);
       const cent = { n: 100n, d: 1n };
       let kFin;
       if (ast.fn === "interest") {
@@ -32186,8 +32222,10 @@ function evalAst(ast, env, ctx = {}) {
       if (value.t === "q" && isOffsetScale(value)) return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       if (value.t !== "d" && value.t !== "f" && value.t !== "ts" && value.t !== "q") return err("unsupported-pair");
       if (p2.t !== "p") return err("unsupported-pair", "this slot needs a percentage \u2014 write 50% not 50");
+      if (p2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
       if (value.t === "ts" && !value.c.years && !value.c.months && !value.c.weeks && !value.c.days) {
-        return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+        if (zeroState(p2, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
+        return { t: "ts", c: { ...value.c }, ...value.capped === true && { capped: true } };
       }
       const pvr = p2.t === "p" ? p2.vx ?? decToRat(p2.v) : numRat(p2);
       if (pvr.n === 0n) {
@@ -32265,14 +32303,39 @@ function evalAst(ast, env, ctx = {}) {
       if (base.t === "q" && part.t === "q") {
         if (isOffsetScale(base) || isOffsetScale(part)) return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
         if (!dimsCompatible(base.dim, part.dim, ctx)) return err("unit-mismatch", `cannot compare ${part.symbol} to ${base.symbol}`);
+        if (base.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
         const aligned9 = alignForAdd(base, part, ctx);
         if (aligned9.t !== "q") return aligned9;
+        const t30w9 = ctx.monthToDays === "30";
         const bq9 = qx(base);
-        if (bq9.n === 0n) return err("division-by-zero");
-        return { t: "p", ...qv(rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
+        const fB9 = fracOf(base);
+        const fP9 = fracOf(part);
+        if (bq9.n === 0n) {
+          const n0 = distributeTerms(fP9.num, fB9.den, t30w9);
+          const d0 = distributeTerms(fP9.den, fB9.num, t30w9);
+          const z9 = divProjZero(n0, d0, base, ctx);
+          if (z9.t === "d") return { t: "p", ...qv(rMul(z9.vx ?? decToRat(z9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
+          return z9;
+        }
+        const x9 = rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n });
+        if (part.capped === true) return { t: "p", ...qv(x9), capped: true };
+        const n9 = distributeTerms(fP9.num, fB9.den, t30w9);
+        const d9 = distributeTerms(fP9.den, fB9.num, t30w9);
+        if (n9 === null || d9 === null) {
+          ctx.capNotes?.push("product");
+          return { t: "p", ...qv(x9), capped: true };
+        }
+        return {
+          t: "p",
+          ...qv(x9),
+          terms: n9.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })),
+          termsDen: d9,
+          ...capW9 && { capped: true }
+        };
       }
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
       if (part.t !== "d" && part.t !== "f") return err("unsupported-pair");
+      if (base.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
       const br2 = numRat(base);
       if (br2.n === 0n) return err("division-by-zero");
       return { t: "p", ...qv(rMul(rDiv(numRat(part), br2), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
@@ -32312,6 +32375,7 @@ function evalAst(ast, env, ctx = {}) {
       if (p2.t === "e") return p2;
       if (p2.t !== "p") return err("unsupported-pair", "P-7 needs a percentage");
       if (value.t !== "d" && value.t !== "f" && value.t !== "q" && value.t !== "ts") return err("unsupported-pair", "P-7 needs an amount");
+      if (p2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
       if (value.t === "q" && isOffsetScale(value)) {
         return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
       }
@@ -32484,11 +32548,9 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "e") return e;
       if (e.t === "q") e = carrierNum(foldIrrationalResidue(e, ctx.monthToDays === "30"), ctx);
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair", "factorial needs a plain number");
+      if (e.capped === true) return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
       if (numRat(e).d !== 1n) return err("inexact", "factorial needs a whole number \u2265 0");
-      {
-        const f9 = factorial(toDec(e));
-        return e.capped === true && f9.t !== "e" ? { ...f9, capped: true } : f9;
-      }
+      return factorial(toDec(e));
     }
     case "convertSpan": {
       const e = evalAst(ast.e, env, ctx);
@@ -32944,6 +33006,7 @@ function evalAst(ast, env, ctx = {}) {
               return { ...l2, ...qv(rDiv(qx(l2), b3)), ...scaleTerms(l2, rDiv({ n: 1n, d: 1n }, b3)) };
             }
             if (ast.op === "^") {
+              if (r3.capped === true) return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
               const n2 = numRat(r3);
               if (n2.d !== 1n) return err("unsupported-pair", "quantities support whole-number exponents only");
               if (isOffsetScale(l2)) return err("unit-mismatch", "raising offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
@@ -32951,6 +33014,7 @@ function evalAst(ast, env, ctx = {}) {
               if (Math.abs(e0) > 1e6) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
               if (e0 === 0) return { t: "d", v: new DecC(1) };
               if (e0 === 1) return l2;
+              if (e0 < 0 && l2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (e0 < 0 && qx(l2).n === 0n) {
                 const t30z = ctx.monthToDays === "30";
                 const fl0 = fracOf(l2);
@@ -33052,6 +33116,7 @@ function evalAst(ast, env, ctx = {}) {
             }
             const b3 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : l2.vx ?? decToRat(l2.v);
             if (ast.op === "*") return { ...r3, ...qv(rMul(qx(r3), b3)), ...scaleTerms(r3, b3), ...l2.capped === true && { capped: true } };
+            if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
             if (qx(r3).n === 0n) {
               const t30z = ctx.monthToDays === "30";
               const fr0 = fracOf(r3);
@@ -35630,7 +35695,9 @@ function matchPercentPrototypes(tokens) {
       if (w2(n2 - 2) === "than" && (w2(n2 - 3) === "more" || w2(n2 - 3) === "less") && (tokens[n2 - 4]?.kind === "percent" || tokens[n2 - 4]?.kind === "word" || tokens[n2 - 4]?.kind === "rparen")) {
         opSign = w2(n2 - 3) === "more" ? 1 : -1;
         pctIdx = n2 - 4;
-      } else if (tokens[n2 - 2]?.kind === "op" && (tokens[n2 - 2].op === "+" || tokens[n2 - 2].op === "-") && w2(n2 - 3) !== null && PERCENT_PREPOSITIONS[w2(n2 - 3)] === "of" && tokens[n2 - 4]?.kind === "percent") {
+      } else if (tokens[n2 - 2]?.kind === "op" && (tokens[n2 - 2].op === "+" || tokens[n2 - 2].op === "-") && w2(n2 - 3) !== null && PERCENT_PREPOSITIONS[w2(n2 - 3)] === "of" && // P-9 generic in FRENCH too (audit BH): the percent slot may
+      // be a bound variable or expression — evaluator type-checks
+      (tokens[n2 - 4]?.kind === "percent" || tokens[n2 - 4]?.kind === "word" || tokens[n2 - 4]?.kind === "rparen")) {
         opSign = tokens[n2 - 2].op === "+" ? 1 : -1;
         pctIdx = n2 - 4;
       }
@@ -35754,28 +35821,45 @@ function matchFinancePrototypes(tokens) {
   const lower = first.text.toLowerCase();
   const fn = INTEREST_WORDS.has(lower) ? "interest" : PAYMENT_WORDS.has(lower) ? "payment" : null;
   if (fn === null) return null;
-  const pctIdx = tokens.findIndex((t2) => t2.kind === "percent");
   const n2 = tokens.length;
-  const yearsTok = tokens[n2 - 2];
-  const yearWord = tokens[n2 - 1];
-  if (pctIdx < 2 || // needs an amount before the rate
-  tokens[pctIdx - 1]?.kind !== "number" || yearsTok?.kind !== "number" || yearWord?.kind !== "word" || spanUnitOf(yearWord.text) !== "year") {
-    return null;
-  }
-  const amountTokens = tokens.slice(1, pctIdx - 1);
-  if (amountTokens.length === 0) return null;
-  const FILLERS = /* @__PURE__ */ new Set(["sur", "over", "pendant", "pour", "durant", "f\xFCr", "fuer", "on", "\xE0", "a"]);
-  for (let i2 = pctIdx + 1; i2 < n2 - 2; i2++) {
-    const tk = tokens[i2];
-    if (tk.kind !== "word" || !FILLERS.has(tk.text.toLowerCase())) return null;
-  }
+  const refStart9 = (end9) => end9 - 4 >= 1 && tokens[end9 - 4]?.kind === "word" && LINE_REF_WORDS.has(tokens[end9 - 4].text.toLowerCase()) && tokens[end9 - 3]?.kind === "lparen" && tokens[end9 - 2]?.kind === "number" && tokens[end9 - 1]?.kind === "rparen" ? end9 - 4 : null;
+  const nameWord9 = (t9) => t9?.kind === "word" && !isUnitWord(t9.text) && spanUnitOf(t9.text) === void 0 && !isComputableWord(t9.text) && !isReservedWord(t9.text);
+  const FILLERS = /* @__PURE__ */ new Set(["sur", "over", "pendant", "pour", "durant", "f\xFCr", "fuer", "on", "\xE0", "a", "at", "for"]);
   try {
+    let yearsStart;
+    let years;
+    if (tokens[n2 - 1]?.kind === "word" && spanUnitOf(tokens[n2 - 1].text) === "year" && tokens[n2 - 2]?.kind === "number") {
+      yearsStart = n2 - 2;
+      years = { k: "span", e: { k: "num", dec: tokens[n2 - 2].dec }, unit: "year" };
+    } else if (refStart9(n2) !== null) {
+      yearsStart = refStart9(n2);
+      years = parse3(tokens.slice(yearsStart));
+    } else if (nameWord9(tokens[n2 - 1]) && !FILLERS.has(tokens[n2 - 1].text.toLowerCase())) {
+      yearsStart = n2 - 1;
+      years = parse3(tokens.slice(n2 - 1));
+    } else {
+      return null;
+    }
+    let rateEnd = yearsStart;
+    while (rateEnd - 1 > 1 && tokens[rateEnd - 1]?.kind === "word" && FILLERS.has(tokens[rateEnd - 1].text.toLowerCase())) rateEnd--;
+    let rateStart;
+    if (tokens[rateEnd - 1]?.kind === "percent" && tokens[rateEnd - 2]?.kind === "number") {
+      rateStart = rateEnd - 2;
+    } else if (refStart9(rateEnd) !== null) {
+      rateStart = refStart9(rateEnd);
+    } else if (nameWord9(tokens[rateEnd - 1]) && !FILLERS.has(tokens[rateEnd - 1].text.toLowerCase())) {
+      rateStart = rateEnd - 1;
+    } else {
+      return null;
+    }
+    if (rateStart < 2) return null;
+    const amountTokens = tokens.slice(1, rateStart);
     return {
       k: "finance",
       fn,
       amount: parse3(amountTokens),
-      rate: tokens[pctIdx - 1].dec,
-      years: yearsTok.dec
+      rate: parse3(tokens.slice(rateStart, rateEnd)),
+      years
     };
   } catch {
     return null;
@@ -36362,9 +36446,12 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
     if (depth !== 0) continue;
     const inner = out.slice(i2 + 1, j2 - 1);
     const meaningful = inner.filter((t2) => t2.kind !== "lparen" && t2.kind !== "rparen");
-    const isUnitExpr = meaningful.length >= 1 && meaningful.some((t2) => t2.kind === "word" && isUnitWord(t2.text)) && meaningful.every(
+    const foldDot9 = (l9) => l9.map((t9) => t9.kind === "word" && t9.text.includes("\xB7") ? { ...t9, text: t9.text.replace(/·/gu, "") } : t9);
+    const innerF9 = foldDot9(inner);
+    const unitExpr9 = (list9) => list9.length >= 1 && list9.some((t2) => t2.kind === "word" && isUnitWord(t2.text)) && list9.every(
       (t2) => t2.kind === "word" && isUnitWord(t2.text) || t2.kind === "op" && (t2.op === "/" || t2.op === "*")
     );
+    const isUnitExpr = unitExpr9(meaningful) || unitExpr9(foldDot9(meaningful));
     if (inner.length === 0) continue;
     if (meaningful.some((t2) => t2.kind === "op" || t2.kind === "percent" || t2.kind === "equals")) continue;
     if (meaningful.some((t2) => t2.kind === "word" && (() => {
@@ -36386,7 +36473,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
       violations.push(`the note \u201C(${inner.map((t2) => t2.text).join(" ")})\u201D qualifies a computed value \u2014 the engine cannot interpret it`);
       return out;
     }
-    if (!isUnitExpr && !hasComputableContent(inner, env)) {
+    if (!isUnitExpr && !hasComputableContent(inner, env) && !hasComputableContent(innerF9, env)) {
       const before = out[i2 - 1];
       const after = out[j2];
       const droppable = (t2) => t2?.kind === "word" && !isReservedWord(t2.text) && !env.has(t2.text) && !lexicon.operatorWords.has(t2.text.toLowerCase()) && !lexicon.divisionParticles.has(t2.text.toLowerCase()) && !CORE_OP_WORDS.has(t2.text.toLowerCase());
@@ -36419,7 +36506,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
           cur9 = m9[1];
         }
       };
-      const plaus0 = meaningful.find((t2) => t2.kind === "word" && // a RECOGNIZED unit or currency named in a note stays prose
+      const plaus0 = [...meaningful, ...foldDot9(meaningful)].find((t2) => t2.kind === "word" && // a RECOGNIZED unit or currency named in a note stays prose
       // ("montant (en CHF)"); only plausible-unknown fragments refuse —
       // clitics resolve first ((d'CHFF)), and an INACTIVE pack's
       // vocabulary never vanishes through a note ((times) with fr only)
@@ -36521,40 +36608,45 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
   }
   return out;
 }
+function splitInterpuncts(tokens, lexicon) {
+  const out0 = [];
+  for (const t0 of tokens) {
+    if (t0.kind === "word" && t0.text.includes("\xB7") && !t0.text.startsWith("\xB7") && !t0.text.endsWith("\xB7")) {
+      const segsU0 = t0.text.split(/[·/]/u).map((s0) => s0.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
+      const compound0 = segsU0.every((s0) => s0 === "" || isUnitWord(s0) || isTimespanUnitWord(s0));
+      const joined0 = t0.text.replace(/·/gu, "");
+      const jl0 = joined0.toLowerCase();
+      const roleish0 = roleSpelling(jl0, lexicon) || plausibleUnitReason(joined0) !== null || plausibleUnitReason(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) !== null || // two units glued across the · (ligature splits, ㎏́·㎏) stay a
+      // loud refusal, never a blind product (audit BG)
+      ((s0) => [1, 2, 3, 4].some((k0) => k0 < s0.length && isUnitWord(s0.slice(0, k0)) && isUnitWord(s0.slice(k0))))(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) || confusableRole(joined0, void 0, lexicon) || // a GROUP MEMBER rejoined (p·rix, a·u) stays with the group
+      // matchers downstream — never a blind split (audit BG)
+      [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g0) => g0.words.includes(jl0)) || allPackBridges().groups.some((g0) => g0.includes(jl0)) || // an OPERATOR segment keeps the old refusal (m·oins), while
+      // computable atoms (pi·pi) split into a real product
+      t0.text.split("\xB7").some((s0) => {
+        const sl0 = s0.toLowerCase();
+        return lexicon.operatorWords.has(sl0) || lexicon.divisionParticles.has(sl0) || CORE_OP_WORDS.has(sl0) || lexicon.blockers.has(sl0);
+      });
+      if (!compound0 && !roleish0) {
+        const segs0 = t0.text.split("\xB7");
+        let off0 = t0.start;
+        segs0.forEach((s0, k0) => {
+          if (k0 > 0) {
+            out0.push({ kind: "op", op: "*", text: "\xB7", start: Math.min(off0, t0.end), end: Math.min(off0 + 1, t0.end) });
+            off0 += 1;
+          }
+          out0.push({ ...t0, text: s0, start: Math.min(off0, t0.end), end: Math.min(off0 + s0.length, t0.end) });
+          off0 += s0.length;
+        });
+        continue;
+      }
+    }
+    out0.push(t0);
+  }
+  return out0;
+}
 function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
   for (let idx9 = 0; idx9 < tokens.length; idx9++) {
-    tokens = (() => {
-      const out0 = [];
-      for (const t0 of tokens) {
-        if (t0.kind === "word" && t0.text.includes("\xB7") && !t0.text.startsWith("\xB7") && !t0.text.endsWith("\xB7")) {
-          const segsU0 = t0.text.split(/[·/]/u).map((s0) => s0.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
-          const compound0 = segsU0.every((s0) => s0 === "" || isUnitWord(s0) || isTimespanUnitWord(s0));
-          const joined0 = t0.text.replace(/·/gu, "");
-          const jl0 = joined0.toLowerCase();
-          const roleish0 = roleSpelling(jl0, lexicon) || plausibleUnitReason(joined0) !== null || plausibleUnitReason(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) !== null || // two units glued across the · (ligature splits, ㎏́·㎏) stay a
-          // loud refusal, never a blind product (audit BG)
-          ((s0) => [1, 2, 3, 4].some((k0) => k0 < s0.length && isUnitWord(s0.slice(0, k0)) && isUnitWord(s0.slice(k0))))(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) || confusableRole(joined0, void 0, lexicon) || // a GROUP MEMBER rejoined (p·rix, a·u) stays with the group
-          // matchers downstream — never a blind split (audit BG)
-          [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g0) => g0.words.includes(jl0)) || allPackBridges().groups.some((g0) => g0.includes(jl0)) || // an OPERATOR segment keeps the old refusal (m·oins), while
-          // computable atoms (pi·pi) split into a real product
-          t0.text.split("\xB7").some((s0) => {
-            const sl0 = s0.toLowerCase();
-            return lexicon.operatorWords.has(sl0) || lexicon.divisionParticles.has(sl0) || CORE_OP_WORDS.has(sl0) || lexicon.blockers.has(sl0);
-          });
-          if (!compound0 && !roleish0) {
-            const segs0 = t0.text.split("\xB7");
-            segs0.forEach((s0, k0) => {
-              if (k0 > 0) out0.push({ kind: "op", op: "*", text: "\xB7", start: t0.start, end: t0.end });
-              out0.push({ ...t0, text: s0 });
-            });
-            continue;
-          }
-        }
-        out0.push(t0);
-      }
-      return out0;
-    })();
     const t9 = tokens[idx9];
     if (t9.kind !== "word" || !t9.text.includes("\u2063") || t9.text.includes("\u2215")) continue;
     const SUPM1 = { "\u2070": 0, "\xB9": 1, "\xB2": 2, "\xB3": 3, "\u2074": 4, "\u2075": 5, "\u2076": 6, "\u2077": 7, "\u2078": 8, "\u2079": 9 };
@@ -37014,7 +37106,10 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         const nxt9 = tokens[ib9 + glen9];
         const nxtnxt9 = tokens[ib9 + glen9 + 1];
         const anchorBefore9 = tokens.slice(0, ib9).some((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text));
-        const pctOperand9 = nxt9?.kind === "number" && nxtnxt9?.kind === "percent";
+        const pctOperand9 = nxt9?.kind === "number" && nxtnxt9?.kind === "percent" || // the SUBSTITUTION INVARIANT reaches the finance bridge (audit
+        // BH): a BOUND word or a line(N) reference in the rate slot
+        // anchors « at » exactly like the literal 5%
+        nxt9?.kind === "word" && (env.has(nxt9.text) || multiVarAt9(ib9 + glen9)) || nxt9?.kind === "word" && REF_WORDS.has(nxt9.text.toLowerCase()) && nxtnxt9?.kind === "lparen";
         const financeAnchored9 = anchorBefore9 && pctOperand9;
         const dpNext9 = nxtnxt9?.kind === "word" && /^(d[ée]cimales?|dp|decimals?)$/iu.test(nxtnxt9.text);
         const operandNext9 = !dpNext9 && operandAhead9(ib9 + glen9);
@@ -37124,18 +37219,10 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       out.push({ ...t2, kind: "op", op });
       continue;
     }
-    if (t2.kind === "word" && t2.text.includes("\xB7") && !t2.text.startsWith("\xB7") && !t2.text.endsWith("\xB7")) {
-      const segsV9 = t2.text.split("\xB7");
-      if (segsV9.every((s9) => env.has(s9))) {
-        for (let sv9 = 0; sv9 < segsV9.length; sv9++) {
-          if (sv9 > 0) out.push({ kind: "op", op: "*", text: "\xB7", start: t2.start, end: t2.end });
-          out.push({ kind: "word", text: segsV9[sv9], start: t2.start, end: t2.end });
-        }
-        continue;
-      }
-    }
     if (isPercentPreposition(lower)) {
-      if (prev?.kind === "percent" || prev?.kind === "rparen" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
+      if (prev?.kind === "percent" || prev?.kind === "rparen" || // a NUMBER closing an OPERATOR expression anchors the
+      // preposition too (audit BH): « rate/1 of 100 » ≡ « (rate/1) of 100 »
+      (prev?.kind === "number" || prev?.kind === "fraction") && out[out.length - 2]?.kind === "op" || prev?.kind === "word" && (isPrepositionAnchorWord(prev.text) || env.has(prev.text))) {
         out.push(t2);
         continue;
       }
@@ -37151,12 +37238,13 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
       if (tokens[idx + 1]?.kind === "lparen" && tokens[idx + 1].start === t2.end) {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
       } else {
+        const financeGlue9 = ["at", "\xE0", "a", "zu", "au"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.slice(idx + 1).some((t0) => t0.kind === "percent") || tokens[idx + 1]?.kind === "word" && (env.has(tokens[idx + 1].text) || REF_WORDS.has(tokens[idx + 1].text.toLowerCase())));
         const reason = quarantineReason(t2.text);
         if (reason !== null) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
-        } else if ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text) || !isUnitWord(t2.text) && unitWordCaseTwin(t2.text) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // unit prefix (≥2 chars) + a letters-only tail — MHzmonth is
+        } else if (!financeGlue9 && ((prev?.kind === "rparen" || prev?.kind === "bang" || prev?.kind === "date" || prev?.kind === "clocktime") && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text) || t2.text.length <= 6 && new RegExp("\\p{L}", "u").test(t2.text) || !isUnitWord(t2.text) && unitWordCaseTwin(t2.text) || [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(t2.text.slice(k9))) || // unit prefix (≥2 chars) + a letters-only tail — MHzmonth is
         // a fused pseudo-suffix, never prose (audit AF)
-        plausibleUnitReason(t2.text) !== null) || // after a PERCENT, only code-like or composite suffixes refuse —
+        plausibleUnitReason(t2.text) !== null)) || // after a PERCENT, only code-like or composite suffixes refuse —
         // "5% for 10 years" is phrase glue, not a suffix (audit X)
         prev?.kind === "percent" && (looksLikeCode(t2.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/.test(t2.text))) {
           violations.push(`\u201C${t2.text}\u201D is not a number, unit or date`);
@@ -37189,6 +37277,23 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           violations.push(`\u201C${t2.text}\u201D is not a valid unit`);
         } else if ((prev?.kind === "number" || prev?.kind === "fraction") && (isUnitWord(t2.text.toLowerCase()) || isUnitWord(t2.text.charAt(0).toUpperCase() + t2.text.slice(1)) || isUnitWord(t2.text.toUpperCase()))) {
           violations.push(`\u201C${t2.text}\u201D is not a unit \u2014 did you mean \u201C${t2.text.toLowerCase()}\u201D?`);
+        }
+      }
+    }
+    if (violations.length === 0) {
+      if (t2.text.includes("\xB7")) {
+        violations.push(`\u201C${t2.text}\u201D is not a valid unit`);
+      } else {
+        const nxtA9 = tokens[idx + 1];
+        const compGlue9 = /^(que|qu|qu['’ʼ]|als|than)$/u.test(lower) && prev?.kind === "op" && ["plus", "moins", "more", "less", "mehr", "weniger"].includes(prev.text.toLowerCase());
+        const beforeOp9 = out[out.length - 2];
+        const binOp9 = prev !== void 0 && prev.kind === "op" && beforeOp9 !== void 0 && ["number", "fraction", "percent", "rparen", "date", "clocktime", "bang", "word"].includes(beforeOp9.kind);
+        const safeN9 = nxtA9 !== void 0 && ["number", "fraction", "date", "clocktime", "badnumber", "lparen", "word", "colon", "comma"].includes(nxtA9.kind);
+        const prevOp9 = !compGlue9 && binOp9 && !safeN9;
+        const openB9 = prev === void 0 || prev.kind === "lparen" || prev.kind === "op" && !binOp9 || prev.kind === "comma";
+        const signN9 = nxtA9?.kind === "op" && (nxtA9.op === "+" || nxtA9.op === "-");
+        if (prevOp9 || openB9 && signN9) {
+          violations.push(`dropping \u201C${t2.text}\u201D would change the arity of a neighbouring operator \u2014 remove it or bind it`);
         }
       }
     }
@@ -37540,6 +37645,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
   let envWords = [];
   try {
     tokens = lex(line, grammar, dateOrder, misplacedPolicy);
+    tokens = splitInterpuncts(tokens, lexicon);
     const eqIdx = tokens.findIndex((t2) => t2.kind === "equals");
     const isAssignment = eqIdx >= 1 && tokens.slice(0, eqIdx).every((t2) => t2.kind === "word");
     if (isAssignment && eqIdx > MAX_VARIABLE_WORDS) {
@@ -37604,7 +37710,13 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       const roled9 = skelGroup9 || // définissable ⇒ lisible (audit BD): a name shaped like a unit or
       // a code (㎡, CHFF, KiB) would never read back as a variable —
       // digit-bearing ORDINARY names (a1, x2) stay bindable
-      tokens.slice(0, eqIdx).some((t9) => t9.kind === "word" && !env.has(t9.text) && (plausibleUnitReason(t9.text) !== null || looksLikeCode(t9.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹]/u.test(t9.text) || !isUnitWord(t9.text) && [2, 3, 4].some((k9) => k9 < t9.text.length && isUnitWord(t9.text.slice(0, k9)) && isTimespanUnitWord(t9.text.slice(k9))))) || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || // P-9 reserves of/off in ANY position of a name (audit BE): a
+      tokens.slice(0, eqIdx).some((t9) => t9.kind === "word" && !env.has(t9.text) && (plausibleUnitReason(t9.text) !== null || looksLikeCode(t9.text) || /[·⁰¹²³⁴⁵⁶⁷⁸⁹]/u.test(t9.text) || !isUnitWord(t9.text) && [2, 3, 4].some((k9) => k9 < t9.text.length && isUnitWord(t9.text.slice(0, k9)) && isTimespanUnitWord(t9.text.slice(k9))))) || tokens.slice(0, eqIdx).some((t9) => confusableRole(t9.text, t9.rawText, lexicon)) || // a DECLITICIZED role stays a role (audit BH): d'sqrt, d'today and
+      // d'kg would never read back as variables — definable ⇒ readable
+      // applies through the clitic
+      nameWords9.some((w9) => {
+        const d9 = declit9(w9);
+        return d9 !== w9 && (isComputableWord(d9) || isReservedWord(d9) || isUnitWord(d9) || isTimespanUnitWord(d9) || isDateKeywordWord(d9));
+      }) || rawWords9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => skelRoled9(w9)) || canon9.some((w9) => lexicon.operatorWords.has(w9) || lexicon.divisionParticles.has(w9) || CORE_OP_WORDS.has(w9) || lexicon.blockers.has(w9) || isAnyPackWord(w9) || allPackBridges().words.has(w9) || canon9.length === 1 && isPercentPreposition(w9) || // P-9 reserves of/off in ANY position of a name (audit BE): a
       // bound « revenu of » could never read back through the percent
       // grammar — French « de » names (taux de change) stay bindable
       w9 === "of" || w9 === "off" || /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || canon9.length === 1 && /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(w9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === w9) || allPackBridges().groups.some((g9) => g9.join("") === w9)) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join(" ") === phrase0 || g9.words.join("") === fused0) || allPackBridges().groups.some((g9) => g9.join(" ") === phrase0 || g9.join("") === fused0);
@@ -37668,7 +37780,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (a2.range === void 0 || a2.altRewrite === void 0) return -1;
     const k9 = altCands.findIndex((c9) => c9.start === a2.range.start && c9.end === a2.range.end && c9.alt === a2.altRewrite);
     if (k9 >= 0) return k9;
-    altCands.push({ start: a2.range.start, end: a2.range.end, alt: a2.altRewrite });
+    altCands.push({ start: a2.range.start, end: a2.range.end, alt: a2.altRewrite, asm: a2 });
     return altCands.length - 1;
   };
   const assumptions = (() => {
@@ -38147,6 +38259,7 @@ function runSheet(text, context, cache2, initialCfg) {
       const sigLevel = (s2) => Number(s2.split(":", 1)[0]) || 1;
       const isAmbErr = (x2) => x2 !== null && x2 !== void 0 && x2.t === "e" && x2.code === "ambiguous";
       const srcLabels = [];
+      const sensLocal9 = /* @__PURE__ */ new Set();
       const srcLineIdxs = [];
       const srcVars = [];
       let srcLevel = 1;
@@ -38345,11 +38458,13 @@ function runSheet(text, context, cache2, initialCfg) {
             "annotate",
             true
           );
-          if (probe9.rt === null) {
+          const div9 = probe9.rt === null || exactSemantic(probe9.rt, t309) !== chosenKey9 && !exactSame(probe9.rt, chosenRt9, t309);
+          if (div9) {
             sensitive = true;
-            return;
+            for (const a9 of list9) {
+              if (a9.line === i2 + 1) sensLocal9.add(a9.id);
+            }
           }
-          if (exactSemantic(probe9.rt, t309) !== chosenKey9 && !exactSame(probe9.rt, chosenRt9, t309)) sensitive = true;
         };
         if (atoms.length > 20) exhausted = true;
         else {
@@ -38384,8 +38499,17 @@ function runSheet(text, context, cache2, initialCfg) {
           publicResult.display = null;
           publicResult.diagnostics = diagnosticsFor(rtOut, line);
         } else {
+          const local9 = [...sensLocal9].map((id9) => entry.altCands[Number(id9.slice(id9.indexOf(":c") + 2))]).map((c9) => c9?.asm).filter((a9) => a9 !== void 0).filter((a9, k9, arr9) => arr9.indexOf(a9) === k9).filter((a9) => !(publicResult.assumptions ?? []).some((b9) => b9.code === a9.code && b9.range?.start === a9.range?.start));
           publicResult.assumptions = [
             ...publicResult.assumptions ?? [],
+            ...local9.map((a9) => ({
+              code: a9.code,
+              level: a9.level,
+              impact: a9.impact,
+              message: assumptionMessage(a9, lang9),
+              ...a9.range && { range: a9.range },
+              ...a9.altRewrite !== void 0 && { alternative: a9.altRewrite }
+            })),
             { code: "ambiguous-reference", level: srcLevel, impact: "reference", message: msg }
           ];
         }
