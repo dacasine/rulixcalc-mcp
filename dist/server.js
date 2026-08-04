@@ -29136,7 +29136,8 @@ var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
   return merged.length > 4096 ? null : merged;
 };
 var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
-var termVec = (t2, thirty) => {
+var tvCache = /* @__PURE__ */ new WeakMap();
+var termVecInner = (t2, thirty) => {
   const v2 = /* @__PURE__ */ new Map();
   const bump = (k2, e) => {
     v2.set(k2, (v2.get(k2) ?? 0) + e);
@@ -29162,6 +29163,14 @@ var termVec = (t2, thirty) => {
     }
   }
   return v2;
+};
+var termVec = (t2, thirty) => {
+  if (thirty === true) return termVecInner(t2, thirty);
+  const hit9 = tvCache.get(t2);
+  if (hit9 !== void 0) return hit9;
+  const v9 = termVecInner(t2, thirty);
+  tvCache.set(t2, v9);
+  return v9;
 };
 var termVecCmp = (a2, b2, thirty) => {
   const va = termVec(a2, thirty);
@@ -29225,10 +29234,13 @@ var polyDiv = (num9, den9, thirty) => {
   let rest9 = num9;
   const q9 = [];
   let prev9 = null;
-  const qCap9 = num9.length + den9.length + 512;
+  const qCap9 = 4096;
+  let work9 = 0;
   const digitCap9 = 2 * Math.max(40, ...[...num9, ...den9].map((t9) => Math.max((t9.x.n < 0n ? -t9.x.n : t9.x.n).toString().length, t9.x.d.toString().length))) + 80;
-  for (let it9 = 0; it9 < 4096 && rest9.length > 0; it9++) {
+  for (let it9 = 0; it9 < 8192 && rest9.length > 0; it9++) {
     if (q9.length > qCap9) return null;
+    work9 += rest9.length + den9.length;
+    if (work9 > 262144) return null;
     const nl9 = lead9(rest9);
     if (prev9 !== null && termVecCmp(nl9, prev9, thirty) >= 0) return null;
     prev9 = nl9;
@@ -30640,11 +30652,14 @@ var zeroState = (rt2, thirty) => {
 };
 var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   const t30 = ctx.monthToDays === "30";
+  if (divisor9.capped === true) {
+    return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+  }
   if (zeroState(divisor9, t30) === "zero") return err("division-by-zero");
   if (num9 !== null && (num9.length === 0 || num9.every((t9) => t9.x.n === 0n))) {
     const dvDims9 = divisor9.t === "q" && (compsOf(divisor9)?.length ?? 0) > 0 ? divisor9 : null;
     if (dvDims9 !== null) {
-      const l1 = dividend9 !== void 0 && dividend9.t === "q" ? { ...dividend9, ...qv({ n: 1n, d: 1n }), terms: void 0, termsDen: void 0 } : { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+      const l1 = dividend9 !== void 0 && dividend9.t === "q" ? { ...dividend9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 } : { t: "q", ...qv({ n: 0n, d: 1n }), dim: {}, symbol: "", comps: [] };
       const r1 = {
         t: "q",
         v: new DecC(1),
@@ -30654,11 +30669,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       };
       const shell9 = combineQuantities(l1, r1, "/", ctx);
       if (shell9.t === "q") return { ...shell9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
-      if (shell9.t === "ts") {
-        const c0 = {};
-        for (const k9 of Object.keys(shell9.c)) c0[k9] = 0;
-        return { t: "ts", c: Object.keys(c0).length > 0 ? c0 : { days: 0 } };
-      }
+      if (shell9.t === "ts") return shell9;
       return { t: "d", ...qv({ n: 0n, d: 1n }) };
     }
     if (dividend9 !== void 0 && dividend9.t === "q" && (compsOf(dividend9)?.length ?? 0) > 0) {
@@ -30690,7 +30701,11 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       if (q82.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
         const v8 = termsProject(q82, t30);
         if (v8 !== null) {
-          return attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q82, ONE_TERMS());
+          const car8 = attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q82, ONE_TERMS());
+          if (dividend9 !== void 0 && dividend9.t === "p") {
+            return { t: "p", ...qv(v8), ...car8.terms && { terms: car8.terms }, ...car8.termsDen && { termsDen: car8.termsDen } };
+          }
+          return car8;
         }
       }
       const rep8 = q82.find((t9) => t9.comps.every((c9) => c9.def.factorDec === void 0));
@@ -30712,7 +30727,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       }
       const def8 = rep8.comps.length === 1 && rep8.comps[0].exp === 1 ? rep8.comps[0].def : void 0;
       const dim8 = dimOfComps(rep8.comps);
-      if (Object.keys(dim8).length > 0 && Object.keys(dim8).every((k9) => k9 === "calmonths" || k9 === "caldays")) {
+      if (Object.keys(dim8).length > 0 && Object.keys(dim8).every((k9) => k9 === "calmonths" || k9 === "caldays") && !dimsCompatible(dim8, {}, ctx)) {
         return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
       }
       return {
@@ -30745,7 +30760,11 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
             symbol: compsSymbol(invComps2),
             comps: invComps2
           };
-          return attachFrac(base2, ONE_TERMS(), q2);
+          const rec2 = attachFrac(base2, ONE_TERMS(), q2);
+          if (dividend9 !== void 0 && dividend9.t === "p" && isCarrier(rec2)) {
+            return { t: "p", ...qv(qx(rec2)), ...rec2.terms && { terms: rec2.terms }, ...rec2.termsDen && { termsDen: rec2.termsDen } };
+          }
+          return rec2;
         }
       }
     }
@@ -32164,8 +32183,9 @@ function evalAst(ast, env, ctx = {}) {
       const p2 = evalAst(ast.pct, env, ctx);
       if (value.t === "e") return value;
       if (p2.t === "e") return p2;
-      if (value.t !== "d" && value.t !== "f" && value.t !== "ts" && !isCarrier(value)) return err("unsupported-pair");
-      if (p2.t !== "p" && p2.t !== "d" && p2.t !== "f") return err("unsupported-pair");
+      if (value.t === "q" && isOffsetScale(value)) return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
+      if (value.t !== "d" && value.t !== "f" && value.t !== "ts" && value.t !== "q") return err("unsupported-pair");
+      if (p2.t !== "p") return err("unsupported-pair", "this slot needs a percentage \u2014 write 50% not 50");
       if (value.t === "ts" && !value.c.years && !value.c.months && !value.c.weeks && !value.c.days) {
         return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
       }
@@ -32195,9 +32215,9 @@ function evalAst(ast, env, ctx = {}) {
         if (ff9 !== null && (value.t === "d" || value.t === "f" || isCarrier(value))) {
           return applyFracFactor(value, x9, ff9, ctx, p2.capped === true || value.capped === true);
         }
-        if (isCarrier(value)) {
+        if (value.t === "q") {
           const k9 = rDiv({ n: 100n, d: 1n }, pvr);
-          return { ...value, ...qv(x9), ...scaleTerms(value, k9), ...(p2.capped === true || value.capped === true) && { capped: true } };
+          return { ...value, ...qv(rMul(qx(value), k9)), ...scaleTerms(value, k9), ...(p2.capped === true || value.capped === true) && { capped: true } };
         }
         return { t: "d", ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } };
       }
@@ -32241,6 +32261,15 @@ function evalAst(ast, env, ctx = {}) {
           ...q9.termsDen && { termsDen: q9.termsDen },
           ...capW9 && { capped: true }
         };
+      }
+      if (base.t === "q" && part.t === "q") {
+        if (isOffsetScale(base) || isOffsetScale(part)) return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
+        if (!dimsCompatible(base.dim, part.dim, ctx)) return err("unit-mismatch", `cannot compare ${part.symbol} to ${base.symbol}`);
+        const aligned9 = alignForAdd(base, part, ctx);
+        if (aligned9.t !== "q") return aligned9;
+        const bq9 = qx(base);
+        if (bq9.n === 0n) return err("division-by-zero");
+        return { t: "p", ...qv(rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
       }
       if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
       if (part.t !== "d" && part.t !== "f") return err("unsupported-pair");
@@ -32910,8 +32939,9 @@ function evalAst(ast, env, ctx = {}) {
             const b3 = r3.t === "f" ? rnorm({ n: r3.n, d: r3.d }) : r3.vx ?? decToRat(r3.v);
             if (ast.op === "*") return { ...l2, ...qv(rMul(qx(l2), b3)), ...scaleTerms(l2, b3), ...r3.capped === true && { capped: true } };
             if (ast.op === "/") {
+              if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (b3.n === 0n) return err("division-by-zero");
-              return { ...l2, ...qv(rDiv(qx(l2), b3)), ...scaleTerms(l2, rDiv({ n: 1n, d: 1n }, b3)), ...r3.capped === true && { capped: true } };
+              return { ...l2, ...qv(rDiv(qx(l2), b3)), ...scaleTerms(l2, rDiv({ n: 1n, d: 1n }, b3)) };
             }
             if (ast.op === "^") {
               const n2 = numRat(r3);
@@ -33208,7 +33238,11 @@ function evalAst(ast, env, ctx = {}) {
           if (l2.t === "ts" && r3.t === "ts" && ast.op === "/") return tsRatio(l2, r3, ctx);
           if (l2.t === "ts" && r3.t !== "ds" && r3.t !== "ts" && (ast.op === "*" || ast.op === "/")) {
             if (!l2.c.years && !l2.c.months && !l2.c.weeks && !l2.c.days && (r3.t === "p" || r3.t === "d" || r3.t === "f" || r3.t === "q")) {
-              if (ast.op === "/" && zeroState(r3, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
+              if (ast.op === "/") {
+                if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+                const zsT9 = zeroState(r3, ctx.monthToDays === "30");
+                if (zsT9 === "zero") return err("division-by-zero");
+              }
               return { t: "ts", c: { ...l2.c } };
             }
             const k9 = tsScalarOf(r3, ctx);
@@ -33280,6 +33314,7 @@ function evalAst(ast, env, ctx = {}) {
                 return out9("p", rDiv(rMul(a3, b3), { n: 100n, d: 1n }), n9 === null ? null : scl9(n9, { n: 1n, d: 100n }), d9);
               }
               case "/": {
+                if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
                 if (b3.n === 0n) {
                   const n0 = distributeTerms(fa92.num, fb9.den, t30p);
                   const d0 = distributeTerms(fa92.den, fb9.num, t30p);
@@ -33334,6 +33369,7 @@ function evalAst(ast, env, ctx = {}) {
             case "*":
               return out9("p", rMul(lp, br), scl9(fa9.num, br), fa9.den);
             case "/":
+              if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (br.n === 0n) return err("division-by-zero");
               return out9("p", rDiv(lp, br), scl9(fa9.num, rDiv({ n: 1n, d: 1n }, br)), fa9.den);
             default:
@@ -33343,6 +33379,9 @@ function evalAst(ast, env, ctx = {}) {
         if ((l2.t === "f" || l2.t === "d") && (r3.t === "f" || r3.t === "d")) {
           const a3 = numRat(l2);
           const b3 = numRat(r3);
+          if (ast.op === "^" && (r3.capped === true && (a3.n === 0n || a3.n < 0n) || l2.capped === true && b3.n < 0n)) {
+            return err("inexact", "a power whose domain depends on a capped value is not decidable");
+          }
           const intPow2 = ast.op === "^" && b3.d === 1n && (b3.n < 0n ? -b3.n : b3.n) <= 10000n;
           if (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/" || ast.op === "mod" || intPow2) {
             let out;
@@ -33357,9 +33396,8 @@ function evalAst(ast, env, ctx = {}) {
                 out = { n: a3.n * b3.n, d: a3.d * b3.d };
                 break;
               case "mod": {
-                if (b3.n === 0n) {
-                  return r3.capped === true ? err("inexact", "division by a capped value that projects to zero is not decidable") : err("division-by-zero");
-                }
+                if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+                if (b3.n === 0n) return err("division-by-zero");
                 const q0 = rDiv(a3, b3);
                 const t0 = q0.n / q0.d;
                 out = rSub(a3, rMul(b3, { n: t0, d: 1n }));
@@ -33371,9 +33409,8 @@ function evalAst(ast, env, ctx = {}) {
                 break;
               }
               default:
-                if (b3.n === 0n) {
-                  return r3.capped === true ? err("inexact", "division by a capped value that projects to zero is not decidable") : err("division-by-zero");
-                }
+                if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
+                if (b3.n === 0n) return err("division-by-zero");
                 out = { n: a3.n * b3.d, d: a3.d * b3.n };
             }
             const capA9 = l2.capped === true || r3.capped === true;
@@ -35590,7 +35627,7 @@ function matchPercentPrototypes(tokens) {
     let pctIdx = -1;
     const w2 = (i2) => tokens[i2]?.kind === "word" ? tokens[i2].text.toLowerCase() : null;
     if (isWord(tokens[n2 - 1], WHAT_OBJECT_WORDS)) {
-      if (w2(n2 - 2) === "than" && (w2(n2 - 3) === "more" || w2(n2 - 3) === "less") && tokens[n2 - 4]?.kind === "percent") {
+      if (w2(n2 - 2) === "than" && (w2(n2 - 3) === "more" || w2(n2 - 3) === "less") && (tokens[n2 - 4]?.kind === "percent" || tokens[n2 - 4]?.kind === "word" || tokens[n2 - 4]?.kind === "rparen")) {
         opSign = w2(n2 - 3) === "more" ? 1 : -1;
         pctIdx = n2 - 4;
       } else if (tokens[n2 - 2]?.kind === "op" && (tokens[n2 - 2].op === "+" || tokens[n2 - 2].op === "-") && w2(n2 - 3) !== null && PERCENT_PREPOSITIONS[w2(n2 - 3)] === "of" && tokens[n2 - 4]?.kind === "percent") {
@@ -35760,7 +35797,7 @@ function parseExpressionInner(tokens) {
   if (financeProto) return financeProto;
   const dateProto = matchDatePrototypes(tokens);
   if (dateProto) return dateProto;
-  if (tokens.some((t2) => t2.kind === "percent" || t2.kind === "word" && PERCENT_PREPOSITIONS[t2.text.toLowerCase()] !== void 0)) {
+  if (tokens.some((t2) => t2.kind === "percent" || t2.kind === "word" && (PERCENT_PREPOSITIONS[t2.text.toLowerCase()] !== void 0 || ["more", "less", "than"].includes(t2.text.toLowerCase())))) {
     const proto = matchPercentPrototypes(tokens);
     if (proto) return proto;
   }
@@ -36487,6 +36524,37 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
 function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
   for (let idx9 = 0; idx9 < tokens.length; idx9++) {
+    tokens = (() => {
+      const out0 = [];
+      for (const t0 of tokens) {
+        if (t0.kind === "word" && t0.text.includes("\xB7") && !t0.text.startsWith("\xB7") && !t0.text.endsWith("\xB7")) {
+          const segsU0 = t0.text.split(/[·/]/u).map((s0) => s0.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
+          const compound0 = segsU0.every((s0) => s0 === "" || isUnitWord(s0) || isTimespanUnitWord(s0));
+          const joined0 = t0.text.replace(/·/gu, "");
+          const jl0 = joined0.toLowerCase();
+          const roleish0 = roleSpelling(jl0, lexicon) || plausibleUnitReason(joined0) !== null || plausibleUnitReason(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) !== null || // two units glued across the · (ligature splits, ㎏́·㎏) stay a
+          // loud refusal, never a blind product (audit BG)
+          ((s0) => [1, 2, 3, 4].some((k0) => k0 < s0.length && isUnitWord(s0.slice(0, k0)) && isUnitWord(s0.slice(k0))))(joined0.normalize("NFD").replace(new RegExp("\\p{M}+", "gu"), "")) || confusableRole(joined0, void 0, lexicon) || // a GROUP MEMBER rejoined (p·rix, a·u) stays with the group
+          // matchers downstream — never a blind split (audit BG)
+          [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g0) => g0.words.includes(jl0)) || allPackBridges().groups.some((g0) => g0.includes(jl0)) || // an OPERATOR segment keeps the old refusal (m·oins), while
+          // computable atoms (pi·pi) split into a real product
+          t0.text.split("\xB7").some((s0) => {
+            const sl0 = s0.toLowerCase();
+            return lexicon.operatorWords.has(sl0) || lexicon.divisionParticles.has(sl0) || CORE_OP_WORDS.has(sl0) || lexicon.blockers.has(sl0);
+          });
+          if (!compound0 && !roleish0) {
+            const segs0 = t0.text.split("\xB7");
+            segs0.forEach((s0, k0) => {
+              if (k0 > 0) out0.push({ kind: "op", op: "*", text: "\xB7", start: t0.start, end: t0.end });
+              out0.push({ ...t0, text: s0 });
+            });
+            continue;
+          }
+        }
+        out0.push(t0);
+      }
+      return out0;
+    })();
     const t9 = tokens[idx9];
     if (t9.kind !== "word" || !t9.text.includes("\u2063") || t9.text.includes("\u2215")) continue;
     const SUPM1 = { "\u2070": 0, "\xB9": 1, "\xB2": 2, "\xB3": 3, "\u2074": 4, "\u2075": 5, "\u2076": 6, "\u2077": 7, "\u2078": 8, "\u2079": 9 };
@@ -36819,6 +36887,11 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (lower9.includes("\xB7")) {
       const segsU9 = tb9.text.split(/[·/]/u).map((s9) => s9.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, ""));
       const compoundish9 = segsU9.every((s9) => s9 === "" || isUnitWord(s9) || isTimespanUnitWord(s9));
+      const joinedG9 = lower9.replace(/·/gu, "");
+      if (!compoundish9 && ([...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.includes(joinedG9)) || allPackBridges().groups.some((g9) => g9.includes(joinedG9)))) {
+        violations.push(`\u201C${tb9.text}\u201D splits a known word with interpuncts \u2014 write it plainly`);
+        continue;
+      }
       if (!compoundish9 && (roleSpelling(lower9.replace(/·/gu, ""), lexicon) || plausibleUnitReason(lower9.replace(/·/gu, "")) !== null || plausibleUnitReason(tb9.text.replace(/·/gu, "")) !== null || confusableRole(tb9.text.replace(/·/gu, ""), void 0, lexicon))) {
         violations.push(`\u201C${tb9.text}\u201D splits a known word with interpuncts \u2014 write it plainly`);
         continue;
