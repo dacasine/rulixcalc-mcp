@@ -30163,9 +30163,11 @@ function factorial(n2) {
 var numRat = (rt2) => rt2.t === "f" ? rnorm({ n: rt2.n, d: rt2.d }) : rt2.vx ?? decToRat(rt2.v);
 function perfectRoot(n2, k2) {
   if (n2 === 0n || n2 === 1n) return n2;
-  if (k2 > BigInt(n2.toString(2).length)) return null;
+  const bits9 = n2.toString(2).length;
+  if (k2 > BigInt(bits9)) return null;
   let lo = 1n;
-  let hi = n2;
+  let hi = (1n << BigInt(Math.ceil(bits9 / Number(k2)) + 1)) + 1n;
+  if (hi > n2) hi = n2;
   while (lo < hi) {
     const mid = (lo + hi) / 2n;
     if (mid ** k2 < n2) lo = mid + 1n;
@@ -30878,6 +30880,18 @@ function alignForAdd(l2, r3, ctx) {
     };
     for (const c2 of lCur) addNet(c2, -1);
     for (const c2 of rCur) addNet(c2, 1);
+    const addShadowCode9 = (list9) => {
+      for (const t9 of list9 ?? []) {
+        for (const c9 of t9.comps) {
+          if (c9.def.currency !== void 0 && !nets.has(c9.def.currency)) {
+            nets.set(c9.def.currency, { def: c9.def, net: 0 });
+            codes.push(c9.def.currency);
+          }
+        }
+      }
+    };
+    addShadowCode9(r3.terms);
+    addShadowCode9(r3.termsDen);
     const needed = codes.filter((c9) => nets.get(c9).net !== 0);
     let ratio = { n: 1n, d: 1n };
     if (needed.length > 0) {
@@ -31007,11 +31021,12 @@ function alignForAdd(l2, r3, ctx) {
         }
         const dimOf9 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
         const lPos9 = lCur.filter((c9) => c9.exp > 0);
-        if (curs9.length === 0 && dimOf9(lPos9) === 0) {
+        if (curs9.length === 0) {
           out9.push({ x: t9.x, comps: t9.comps });
           continue;
         }
-        if (dimOf9(curs9) !== dimOf9(lPos9)) return termsOf(r3);
+        const tgt9 = dimOf9(curs9) === dimOf9(lPos9) ? lPos9 : dimOf9(curs9) === dimOf9(lCur) ? lCur : null;
+        if (tgt9 === null) return termsOf(r3);
         let x9 = t9.x;
         let bad9 = false;
         for (const c9 of curs9) {
@@ -31022,7 +31037,7 @@ function alignForAdd(l2, r3, ctx) {
           }
           x9 = rMul(x9, rPowInt(k9, c9.exp));
         }
-        for (const c9 of lPos9) {
+        for (const c9 of tgt9) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
@@ -31035,7 +31050,7 @@ function alignForAdd(l2, r3, ctx) {
           x: x9,
           comps: [
             ...t9.comps.filter((c9) => c9.def.currency === void 0),
-            ...lPos9.map((c9) => ({ def: c9.def, exp: c9.exp }))
+            ...tgt9.map((c9) => ({ def: c9.def, exp: c9.exp }))
           ]
         });
       }
@@ -31076,11 +31091,12 @@ function alignForAdd(l2, r3, ctx) {
         const curs8 = t9.comps.filter((c9) => c9.def.currency !== void 0);
         const dimOf8 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
         const lNeg8 = lCur.filter((c9) => c9.exp < 0).map((c9) => ({ def: c9.def, exp: -c9.exp }));
-        if (curs8.length === 0 && dimOf8(lNeg8) === 0) {
+        if (curs8.length === 0) {
           out8.push({ x: t9.x, comps: t9.comps });
           continue;
         }
-        if (dimOf8(curs8) !== dimOf8(lNeg8)) return r3.termsDen;
+        const tgt8 = dimOf8(curs8) === dimOf8(lNeg8) ? lNeg8 : dimOf8(curs8) === -dimOf8(lCur) ? lCur.map((c9) => ({ def: c9.def, exp: -c9.exp })) : null;
+        if (tgt8 === null) return r3.termsDen;
         for (const c9 of curs8) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
@@ -31089,7 +31105,7 @@ function alignForAdd(l2, r3, ctx) {
           }
           x9 = rMul(x9, rPowInt(k9, c9.exp));
         }
-        for (const c9 of lNeg8) {
+        for (const c9 of tgt8) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
@@ -31102,7 +31118,7 @@ function alignForAdd(l2, r3, ctx) {
           x: x9,
           comps: [
             ...t9.comps.filter((c9) => c9.def.currency === void 0),
-            ...lNeg8.map((c9) => ({ def: c9.def, exp: c9.exp }))
+            ...tgt8.map((c9) => ({ def: c9.def, exp: c9.exp }))
           ]
         });
       }
@@ -32454,6 +32470,9 @@ function evalAst(ast, env, ctx = {}) {
           const z9 = divProjZero(n0, d0, base, ctx);
           if (z9.t === "d") return { t: "p", ...qv(rMul(z9.vx ?? decToRat(z9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
           if (z9.t === "q" && qx(z9).n === 0n) return { t: "p", ...qv({ n: 0n, d: 1n }), ...capW9 && { capped: true } };
+          if (z9.t === "q" && (compsOf(z9)?.length ?? 0) > 0) {
+            return err("inexact", "this ratio leaves a residual unit the engine cannot reduce to a percentage");
+          }
           if (z9.t === "q" && dimsCompatible(z9.dim, {}, ctx)) {
             return {
               t: "p",
@@ -32684,6 +32703,28 @@ function evalAst(ast, env, ctx = {}) {
       if (["sqrt", "racine", "log", "ln", "lb", "lg", "log10", "log2", "asin", "acos", "acosh", "atanh", "tan"].includes(ast.fn) && evaluated9.some((v9) => v9.capped === true)) {
         return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
       }
+      if (["sqrt", "racine", "log", "ln", "lb", "lg", "log10", "log2", "asin", "acos"].includes(ast.fn) && evaluated9.length >= 1) {
+        const d0 = evaluated9[0];
+        const dq0 = d0.t === "q" && dimIsEmpty(d0.dim) ? isCarrier(d0) ? d0 : foldIrrationalResidue(d0, ctx.monthToDays === "30") : null;
+        if (dq0 !== null && dq0.t === "q" && isCarrier(dq0) && (dq0.terms !== void 0 || dq0.termsDen !== void 0)) {
+          const lift0 = (x0) => ({ t: "q", ...qv(x0), dim: {}, symbol: "", comps: [], terms: [{ x: x0, comps: [] }] });
+          const t30d = ctx.monthToDays === "30";
+          const cmp0 = (b0) => fracCmpRT(dq0, lift0(b0), t30d);
+          if (ast.fn === "asin" || ast.fn === "acos") {
+            const hi0 = cmp0({ n: 1n, d: 1n });
+            const lo0 = cmp0({ n: -1n, d: 1n });
+            if (hi0 !== null && hi0 > 0 || lo0 !== null && lo0 < 0) {
+              return err("inexact", `${ast.fn} needs an argument in [-1, 1]`);
+            }
+          } else {
+            const s0 = cmp0({ n: 0n, d: 1n });
+            if (s0 !== null && s0 < 0) {
+              return err("inexact", ast.fn === "sqrt" || ast.fn === "racine" ? "square root of a negative number" : `${ast.fn} needs a positive argument`);
+            }
+            if (s0 !== null && s0 === 0 && ast.fn !== "sqrt" && ast.fn !== "racine") return err("inexact", `${ast.fn} needs a positive argument`);
+          }
+        }
+      }
       const rts = [];
       let fnCapped9 = false;
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
@@ -32715,6 +32756,9 @@ function evalAst(ast, env, ctx = {}) {
           }
         }
         const hi9 = applyFunction(ast.fn, rts.map(toDecHi));
+        if (ast.fn === "tan" && hi9.t === "d" && hi9.v.abs().gte(new DecC("1e36"))) {
+          return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
+        }
         if (hi9.t === "d" && isRepresentable(hi9.v)) {
           res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), capped: true };
           ctx.capNotes?.push("function");
@@ -32897,15 +32941,17 @@ function evalAst(ast, env, ctx = {}) {
       let r3 = evalAst(ast.r, env, ctx);
       if (l2.t === "e") return l2;
       if (r3.t === "e") return r3;
-      if (ast.op === "^" && l2.t === "q" && dimIsEmpty(l2.dim) && (r3.t === "d" || r3.t === "f") && numRat(r3).d !== 1n) {
-        const lF9 = carrierNum(foldIrrationalResidue(l2, ctx.monthToDays === "30"), ctx);
-        if (lF9.t === "e") return lF9;
-        if (lF9.t === "d" || lF9.t === "f") l2 = lF9;
-      }
+      const lPreCap9 = l2.capped === true;
+      const rPreCap9 = r3.capped === true;
       if (ast.op === "^" && r3.t === "q" && dimIsEmpty(r3.dim)) {
         const rF9 = carrierNum(foldIrrationalResidue(r3, ctx.monthToDays === "30"), ctx);
         if (rF9.t === "e") return rF9;
         if (rF9.t === "d" || rF9.t === "f") r3 = rF9;
+      }
+      if (ast.op === "^" && l2.t === "q" && dimIsEmpty(l2.dim) && (r3.t === "d" || r3.t === "f") && numRat(r3).d !== 1n) {
+        const lF9 = carrierNum(foldIrrationalResidue(l2, ctx.monthToDays === "30"), ctx);
+        if (lF9.t === "e") return lF9;
+        if (lF9.t === "d" || lF9.t === "f") l2 = lF9;
       }
       const bin9 = (() => {
         if (ast.op === "/" && r3.capped === true) {
@@ -33651,7 +33697,7 @@ function evalAst(ast, env, ctx = {}) {
         if ((l2.t === "f" || l2.t === "d") && (r3.t === "f" || r3.t === "d")) {
           const a3 = numRat(l2);
           const b3 = numRat(r3);
-          if (ast.op === "^" && (r3.capped === true && (a3.n === 0n || a3.n < 0n) || l2.capped === true && b3.n < 0n)) {
+          if (ast.op === "^" && (rPreCap9 && (a3.n === 0n || a3.n < 0n) || lPreCap9 && b3.n < 0n)) {
             return err("inexact", "a power whose domain depends on a capped value is not decidable");
           }
           const intPow2 = ast.op === "^" && b3.d === 1n && (b3.n < 0n ? -b3.n : b3.n) <= 10000n;
@@ -33715,6 +33761,17 @@ function evalAst(ast, env, ctx = {}) {
               if (b2.isZero()) return err("division-by-zero");
               return { t: "d", v: a2.mod(b2) };
             case "^": {
+              {
+                const rE0 = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
+                const aP0 = l2.t === "d" || l2.t === "f" ? numRat(l2) : null;
+                if (rE0 !== null && aP0 !== null && aP0.d === (aP0.n < 0n ? -aP0.n : aP0.n)) {
+                  if (aP0.n < 0n && rE0.d % 2n === 0n) {
+                    return err("inexact", "a negative base with an even-root exponent is undefined");
+                  }
+                  const neg1 = aP0.n < 0n && (rE0.n < 0n ? -rE0.n : rE0.n) % 2n === 1n;
+                  return capOut9({ t: "d", ...qv({ n: neg1 ? -1n : 1n, d: 1n }) });
+                }
+              }
               if (b2.abs().gt(MAX_POW_EXPONENT)) return err("inexact", "exponent magnitude too large");
               const rExact = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
               if (rExact && rExact.d === 1n) {
@@ -33727,7 +33784,7 @@ function evalAst(ast, env, ctx = {}) {
                 }
                 return err("inexact", "integer exponents above 10000 exceed exact arithmetic");
               }
-              if (rExact && rExact.d !== 1n && rExact.d % 2n === 0n && l2.capped === true) {
+              if (rExact && rExact.d !== 1n && rExact.d % 2n === 0n && lPreCap9) {
                 return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
               }
               if (rExact && rExact.d !== 1n && (l2.t === "d" || l2.t === "f")) {
@@ -33747,7 +33804,7 @@ function evalAst(ast, env, ctx = {}) {
                   return capOut9({ t: "d", ...qv({ n: sign9, d: 1n }) });
                 }
                 const rootN9 = perfectRoot(neg9 ? -aR9.n : aR9.n, q9);
-                const rootD9 = perfectRoot(aR9.d, q9);
+                const rootD9 = rootN9 === null ? null : perfectRoot(aR9.d, q9);
                 if (rootN9 !== null && rootD9 !== null && pAbs9 <= 10000n) {
                   const powed9 = rPowInt({ n: rootN9, d: rootD9 }, Number(pAbs9));
                   const out9 = rExact.n < 0n ? rDiv({ n: sign9, d: 1n }, powed9) : rMul({ n: sign9, d: 1n }, powed9);
@@ -34290,6 +34347,7 @@ function nfkcWord(text) {
 function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error") {
   const g2 = GRAMMARS[grammar];
   let srcMap = null;
+  let rawLine9 = null;
   if (/[０-９①-⑨⑩-⑳㉑-㉟㊱-㊿⓪\u{1D7CE}-\u{1D7FF}\u{1FBF0}-\u{1FBF9}\u{1CCF0}-\u{1CCF9}]/u.test(line)) {
     let folded = "";
     const map9 = [];
@@ -34346,6 +34404,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     }
     map9.push(line.length);
     srcMap = map9;
+    rawLine9 = line;
     line = folded;
   }
   const tokens = [];
@@ -34685,6 +34744,12 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     for (const t9 of tokens) {
       t9.start = proj9(t9.start);
       t9.end = proj9(t9.end);
+      if (rawLine9 !== null && (t9.kind === "word" || t9.kind === "number")) {
+        const rawSlice9 = rawLine9.slice(t9.start, t9.end);
+        if (rawSlice9 !== t9.text && t9.rawText === void 0) {
+          t9.rawText = rawSlice9;
+        }
+      }
     }
   }
   return tokens;
@@ -36914,6 +36979,7 @@ function splitInterpuncts(tokens, lexicon, violations) {
       if (!compound0 && !roleish0) {
         const segs0 = t0.text.split("\xB7");
         const raw0 = t0.rawText ?? t0.text;
+        const hasLig0 = [...raw0].some((ch9) => UNIT_LIGATURES[ch9] !== void 0);
         const rawSegs0 = raw0.split("\xB7");
         if (rawSegs0.length === segs0.length) {
           let off0 = t0.start;
@@ -36926,6 +36992,7 @@ function splitInterpuncts(tokens, lexicon, violations) {
             const seg0 = { ...t0, text: s0, start: Math.min(off0, t0.end), end: Math.min(off0 + rl0, t0.end) };
             if (rawSegs0[k0] !== s0) seg0.rawText = rawSegs0[k0];
             else delete seg0.rawText;
+            if (hasLig0) seg0.ligSplit9 = true;
             out0.push(seg0);
             off0 += rl0;
           });
@@ -37002,6 +37069,7 @@ function splitInterpuncts(tokens, lexicon, violations) {
             if (c0 !== void 0 && c0.raw !== s0) seg0.rawText = c0.raw;
             else if (c0 !== void 0) delete seg0.rawText;
             else seg0.rawText = raw0;
+            if (hasLig0) seg0.ligSplit9 = true;
             out0.push(seg0);
           });
         }
@@ -37014,27 +37082,37 @@ function splitInterpuncts(tokens, lexicon, violations) {
 }
 function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
-  if (tokens.some((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text))) {
-    const QUAL9 = /^(simples?|monthly|mensuel(le)?s?|daily|quotidien(ne)?s?|journali(er|ère|ere)s?|weekly|hebdomadaires?|annual|annuels?|annuelles?|yearly|quarterly|trimestriel(le)?s?|semestriel(le)?s?|semi-?annual(ly)?|biannual|continuous|continue?s?|bi-?weekly|bi-?monthly|fortnightly|hourly|horaires?|nominal(es?)?|nominaux|effectives?|effectifs?)$/iu;
-    const COMPOUNDISH9 = /^(compound(ed)?|composée?s?)$/iu;
-    for (let iq9 = 0; iq9 < tokens.length; iq9++) {
-      const tq9 = tokens[iq9];
-      if (tq9.kind !== "word" || !QUAL9.test(tq9.text)) continue;
-      if (env.has(tq9.text)) continue;
-      const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text)));
-      let a9 = iq9 + 1;
-      while (thru9(tokens[a9])) a9++;
-      let b9 = iq9 - 1;
-      while (b9 >= 0 && thru9(tokens[b9])) b9--;
-      const adj9 = tokens[a9]?.kind === "word" && isFinanceAnchorWord(tokens[a9].text) || b9 >= 0 && tokens[b9]?.kind === "word" && isFinanceAnchorWord(tokens[b9].text);
-      let depth9 = 0;
-      for (let j9 = 0; j9 < iq9; j9++) {
-        if (tokens[j9].kind === "lparen") depth9++;
-        else if (tokens[j9].kind === "rparen") depth9--;
-      }
-      if (adj9 || depth9 > 0) {
-        violations.push(`\u201C${tq9.text}\u201D qualifies a finance formula the engine does not have \u2014 only annual compound interest and monthly annuities are supported`);
-        break;
+  {
+    const anchorIdx9 = tokens.findIndex((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text));
+    if (anchorIdx9 >= 0) {
+      const QUAL9 = /^(simples?|monthly|mensuel(le)?s?|mensuellement|daily|quotidien(ne)?s?|quotidiennement|journali(er|ère|ere)s?|journellement|weekly|hebdomadaires?|hebdomadairement|annual|annuels?|annuelles?|annuellement|yearly|quarterly|trimestriel(le)?s?|trimestriellement|semestriel(le)?s?|semestriellement|semi-?annual(ly)?|biannual|continuous(ly)?|continue?s?|bi-?weekly|bi-?monthly|fortnightly|hourly|horaires?|nominal(es?)?|nominaux|effectives?|effectifs?)$/iu;
+      const COMPOUNDISH9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?)$/iu;
+      for (let iq9 = 0; iq9 < tokens.length; iq9++) {
+        const tq9 = tokens[iq9];
+        if (tq9.kind !== "word" || !QUAL9.test(tq9.text)) continue;
+        if (env.has(tq9.text)) continue;
+        const boundWin9 = (() => {
+          for (let s9 = Math.max(0, iq9 - 3); s9 <= iq9; s9++) {
+            for (let e9 = iq9; e9 < Math.min(tokens.length, s9 + 4); e9++) {
+              const win9 = tokens.slice(s9, e9 + 1);
+              if (win9.length < 2 || !win9.every((t9) => t9.kind === "word")) continue;
+              if (env.has(win9.map((t9) => t9.text).join(" "))) return true;
+            }
+          }
+          return false;
+        })();
+        if (boundWin9) continue;
+        const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
+        let a9 = iq9 + 1;
+        while (thru9(tokens[a9])) a9++;
+        const adjA9 = tokens[a9]?.kind === "word" && isFinanceAnchorWord(tokens[a9].text);
+        let b9 = iq9 - 1;
+        while (b9 >= 0 && thru9(tokens[b9])) b9--;
+        const adjB9 = b9 >= 0 && tokens[b9]?.kind === "word" && isFinanceAnchorWord(tokens[b9].text);
+        if (adjA9 || adjB9 || iq9 > anchorIdx9) {
+          violations.push(`\u201C${tq9.text}\u201D qualifies a finance formula the engine does not have \u2014 only annual compound interest and monthly annuities are supported`);
+          break;
+        }
       }
     }
   }
@@ -37649,10 +37727,13 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (violations.length === 0) {
       if (tokens[idx + 1]?.kind === "lparen" && tokens[idx + 1].start === t2.end) {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
-      } else if (t2.rawText !== void 0 && [...t2.rawText].some((ch9) => UNIT_LIGATURES[ch9] !== void 0)) {
+      } else if (t2.rawText !== void 0 && [...t2.rawText].some((ch9) => (UNIT_LIGATURES[ch9]?.length ?? 0) > 1)) {
         violations.push(`\u201C${t2.rawText}\u201D fuses a unit ligature with prose \u2014 write them separately`);
+      } else if (t2.ligSplit9 === true && [1, 2, 3, 4].some((k9) => k9 <= t2.text.length && isUnitWord(t2.text.slice(0, k9)))) {
+        violations.push(`\u201C${t2.rawText ?? t2.text}\u201D fuses a unit ligature with prose \u2014 write them separately`);
       } else {
-        const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))));
+        const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))) || // a MULTI-WORD bound rate (« simple rate ») anchors too (audit BN)
+        tokens.some((t0, k0) => t0.kind === "word" && tokens[k0 + 1]?.kind === "word" && (env.has(`${t0.text} ${tokens[k0 + 1].text}`) || tokens[k0 + 2]?.kind === "word" && env.has(`${t0.text} ${tokens[k0 + 1].text} ${tokens[k0 + 2].text}`))));
         const reason = quarantineReason(t2.text);
         if (reason !== null) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
