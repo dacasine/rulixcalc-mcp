@@ -30163,6 +30163,7 @@ function factorial(n2) {
 var numRat = (rt2) => rt2.t === "f" ? rnorm({ n: rt2.n, d: rt2.d }) : rt2.vx ?? decToRat(rt2.v);
 function perfectRoot(n2, k2) {
   if (n2 === 0n || n2 === 1n) return n2;
+  if (k2 > BigInt(n2.toString(2).length)) return null;
   let lo = 1n;
   let hi = n2;
   while (lo < hi) {
@@ -31005,7 +31006,12 @@ function alignForAdd(l2, r3, ctx) {
           continue;
         }
         const dimOf9 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
-        if (dimOf9(curs9) !== dimOf9(lCur)) return termsOf(r3);
+        const lPos9 = lCur.filter((c9) => c9.exp > 0);
+        if (curs9.length === 0 && dimOf9(lPos9) === 0) {
+          out9.push({ x: t9.x, comps: t9.comps });
+          continue;
+        }
+        if (dimOf9(curs9) !== dimOf9(lPos9)) return termsOf(r3);
         let x9 = t9.x;
         let bad9 = false;
         for (const c9 of curs9) {
@@ -31016,7 +31022,7 @@ function alignForAdd(l2, r3, ctx) {
           }
           x9 = rMul(x9, rPowInt(k9, c9.exp));
         }
-        for (const c9 of lCur) {
+        for (const c9 of lPos9) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
@@ -31029,7 +31035,7 @@ function alignForAdd(l2, r3, ctx) {
           x: x9,
           comps: [
             ...t9.comps.filter((c9) => c9.def.currency === void 0),
-            ...lCur.map((c9) => ({ def: c9.def, exp: c9.exp }))
+            ...lPos9.map((c9) => ({ def: c9.def, exp: c9.exp }))
           ]
         });
       }
@@ -31069,7 +31075,12 @@ function alignForAdd(l2, r3, ctx) {
         }
         const curs8 = t9.comps.filter((c9) => c9.def.currency !== void 0);
         const dimOf8 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
-        if (dimOf8(curs8) !== -dimOf8(lCur)) return r3.termsDen;
+        const lNeg8 = lCur.filter((c9) => c9.exp < 0).map((c9) => ({ def: c9.def, exp: -c9.exp }));
+        if (curs8.length === 0 && dimOf8(lNeg8) === 0) {
+          out8.push({ x: t9.x, comps: t9.comps });
+          continue;
+        }
+        if (dimOf8(curs8) !== dimOf8(lNeg8)) return r3.termsDen;
         for (const c9 of curs8) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
@@ -31078,20 +31089,20 @@ function alignForAdd(l2, r3, ctx) {
           }
           x9 = rMul(x9, rPowInt(k9, c9.exp));
         }
-        for (const c9 of lCur) {
+        for (const c9 of lNeg8) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
             break;
           }
-          x9 = rMul(x9, rPowInt(k9, c9.exp));
+          x9 = rMul(x9, rPowInt(k9, -c9.exp));
         }
         if (bad9) return r3.termsDen;
         out8.push({
           x: x9,
           comps: [
             ...t9.comps.filter((c9) => c9.def.currency === void 0),
-            ...lCur.map((c9) => ({ def: c9.def, exp: -c9.exp }))
+            ...lNeg8.map((c9) => ({ def: c9.def, exp: c9.exp }))
           ]
         });
       }
@@ -32687,9 +32698,20 @@ function evalAst(ast, env, ctx = {}) {
       if (exact !== null) res9 = exact;
       else if (TRANSCENDENTAL_FNS.has(ast.fn)) {
         if (ast.fn === "tan" && rts[0] !== void 0) {
-          const cosH9 = toDecHi(rts[0]).cos();
-          if (cosH9.abs().lt(new DecC("1e-40"))) {
-            return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
+          try {
+            const xH9 = toDecHi(rts[0]);
+            const piH9 = DecHi.acos(-1);
+            const half9 = piH9.div(2);
+            const m9 = xH9.div(half9).toDecimalPlaces(0, 4);
+            const mAbs9 = m9.abs();
+            const dist9 = xH9.minus(m9.times(half9)).abs();
+            const tol9 = mAbs9.plus(1).times("1e-40");
+            const oddish9 = mAbs9.gt("9e15") || mAbs9.toNumber() % 2 === 1;
+            if (oddish9 && dist9.lt(tol9)) {
+              return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
+            }
+          } catch {
+            return err("inexact", "the argument is too large to place against tan\u2019s poles");
           }
         }
         const hi9 = applyFunction(ast.fn, rts.map(toDecHi));
@@ -32871,10 +32893,20 @@ function evalAst(ast, env, ctx = {}) {
       return { ...aligned, chosen: true, ...e.capped === true && { capped: true } };
     }
     case "bin": {
-      const l2 = evalAst(ast.l, env, ctx);
-      const r3 = evalAst(ast.r, env, ctx);
+      let l2 = evalAst(ast.l, env, ctx);
+      let r3 = evalAst(ast.r, env, ctx);
       if (l2.t === "e") return l2;
       if (r3.t === "e") return r3;
+      if (ast.op === "^" && l2.t === "q" && dimIsEmpty(l2.dim) && (r3.t === "d" || r3.t === "f") && numRat(r3).d !== 1n) {
+        const lF9 = carrierNum(foldIrrationalResidue(l2, ctx.monthToDays === "30"), ctx);
+        if (lF9.t === "e") return lF9;
+        if (lF9.t === "d" || lF9.t === "f") l2 = lF9;
+      }
+      if (ast.op === "^" && r3.t === "q" && dimIsEmpty(r3.dim)) {
+        const rF9 = carrierNum(foldIrrationalResidue(r3, ctx.monthToDays === "30"), ctx);
+        if (rF9.t === "e") return rF9;
+        if (rF9.t === "d" || rF9.t === "f") r3 = rF9;
+      }
       const bin9 = (() => {
         if (ast.op === "/" && r3.capped === true) {
           return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
@@ -33686,6 +33718,13 @@ function evalAst(ast, env, ctx = {}) {
               if (b2.abs().gt(MAX_POW_EXPONENT)) return err("inexact", "exponent magnitude too large");
               const rExact = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
               if (rExact && rExact.d === 1n) {
+                {
+                  const aP9 = numRat(l2);
+                  if (aP9.d === (aP9.n < 0n ? -aP9.n : aP9.n)) {
+                    const neg1 = aP9.n < 0n && (rExact.n < 0n ? -rExact.n : rExact.n) % 2n === 1n;
+                    return capOut9({ t: "d", ...qv({ n: neg1 ? -1n : 1n, d: 1n }) });
+                  }
+                }
                 return err("inexact", "integer exponents above 10000 exceed exact arithmetic");
               }
               if (rExact && rExact.d !== 1n && rExact.d % 2n === 0n && l2.capped === true) {
@@ -33704,6 +33743,9 @@ function evalAst(ast, env, ctx = {}) {
                   return err("inexact", "a negative base with an even-root exponent is undefined");
                 }
                 const sign9 = neg9 && rExact.n % 2n !== 0n ? -1n : 1n;
+                if (aR9.d === (neg9 ? -aR9.n : aR9.n)) {
+                  return capOut9({ t: "d", ...qv({ n: sign9, d: 1n }) });
+                }
                 const rootN9 = perfectRoot(neg9 ? -aR9.n : aR9.n, q9);
                 const rootD9 = perfectRoot(aR9.d, q9);
                 if (rootN9 !== null && rootD9 !== null && pAbs9 <= 10000n) {
@@ -36909,7 +36951,12 @@ function splitInterpuncts(tokens, lexicon, violations) {
               const ce0 = ci0 + segs0[k0].length;
               while (ci0 < ce0) {
                 if (ri0 >= raw0.length) return null;
-                const cp0 = String.fromCodePoint(raw0.codePointAt(ri0));
+                let cp0 = String.fromCodePoint(raw0.codePointAt(ri0));
+                while (ri0 + cp0.length < raw0.length) {
+                  const nx0 = String.fromCodePoint(raw0.codePointAt(ri0 + cp0.length));
+                  if (!new RegExp("^\\p{M}$", "u").test(nx0)) break;
+                  cp0 += nx0;
+                }
                 let exp0;
                 const lig0 = UNIT_LIGATURES[cp0];
                 if (lig0 !== void 0) {
@@ -36917,7 +36964,7 @@ function splitInterpuncts(tokens, lexicon, violations) {
                 } else if (INVIS0.test(cp0)) {
                   exp0 = "";
                 } else {
-                  exp0 = NFKC_PRESERVE.test(cp0) ? cp0 : cp0.normalize("NFKC");
+                  exp0 = NFKC_PRESERVE.test(cp0) ? cp0 : cp0.normalize("NFKC").normalize("NFC");
                 }
                 if (exp0 === "" || exp0 === "\u2063") {
                   ri0 += cp0.length;
@@ -36969,13 +37016,16 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   tokens = tokens.filter((t2) => t2.kind !== "comment");
   if (tokens.some((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text))) {
     const QUAL9 = /^(simples?|monthly|mensuel(le)?s?|daily|quotidien(ne)?s?|journali(er|ère|ere)s?|weekly|hebdomadaires?|annual|annuels?|annuelles?|yearly|quarterly|trimestriel(le)?s?|semestriel(le)?s?|semi-?annual(ly)?|biannual|continuous|continue?s?|bi-?weekly|bi-?monthly|fortnightly|hourly|horaires?|nominal(es?)?|nominaux|effectives?|effectifs?)$/iu;
+    const COMPOUNDISH9 = /^(compound(ed)?|composée?s?)$/iu;
     for (let iq9 = 0; iq9 < tokens.length; iq9++) {
       const tq9 = tokens[iq9];
       if (tq9.kind !== "word" || !QUAL9.test(tq9.text)) continue;
+      if (env.has(tq9.text)) continue;
+      const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text)));
       let a9 = iq9 + 1;
-      while (tokens[a9]?.kind === "rparen" || tokens[a9]?.kind === "lparen") a9++;
+      while (thru9(tokens[a9])) a9++;
       let b9 = iq9 - 1;
-      while (b9 >= 0 && (tokens[b9]?.kind === "rparen" || tokens[b9]?.kind === "lparen")) b9--;
+      while (b9 >= 0 && thru9(tokens[b9])) b9--;
       const adj9 = tokens[a9]?.kind === "word" && isFinanceAnchorWord(tokens[a9].text) || b9 >= 0 && tokens[b9]?.kind === "word" && isFinanceAnchorWord(tokens[b9].text);
       let depth9 = 0;
       for (let j9 = 0; j9 < iq9; j9++) {
@@ -37599,6 +37649,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (violations.length === 0) {
       if (tokens[idx + 1]?.kind === "lparen" && tokens[idx + 1].start === t2.end) {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
+      } else if (t2.rawText !== void 0 && [...t2.rawText].some((ch9) => UNIT_LIGATURES[ch9] !== void 0)) {
+        violations.push(`\u201C${t2.rawText}\u201D fuses a unit ligature with prose \u2014 write them separately`);
       } else {
         const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))));
         const reason = quarantineReason(t2.text);
@@ -38829,7 +38881,8 @@ function runSheet(text, context, cache2, initialCfg) {
             "annotate",
             true
           );
-          const div9 = probe9.rt === null || exactSemantic(probe9.rt, t309) !== chosenKey9 && !exactSame(probe9.rt, chosenRt9, t309);
+          const unCap9 = (s9) => s9.split("|C").join("");
+          const div9 = probe9.rt === null || unCap9(exactSemantic(probe9.rt, t309)) !== unCap9(chosenKey9) && !exactSame(probe9.rt, chosenRt9, t309);
           if (div9) {
             sensitive = true;
             for (const a9 of list9) {
