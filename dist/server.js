@@ -30890,8 +30890,36 @@ function alignForAdd(l2, r3, ctx) {
         }
       }
     };
-    addShadowCode9(r3.terms);
-    addShadowCode9(r3.termsDen);
+    const idMergeTop9 = (comps9) => {
+      const m9 = /* @__PURE__ */ new Map();
+      for (const c9 of comps9) {
+        const p9 = m9.get(c9.def.id);
+        if (p9) p9.exp += c9.exp;
+        else m9.set(c9.def.id, { def: c9.def, exp: c9.exp });
+      }
+      return [...m9.values()].filter((c9) => c9.exp !== 0);
+    };
+    const canceled9 = (() => {
+      const num0 = termsOf(r3).map((t9) => ({ x: t9.x, comps: idMergeTop9(t9.comps) }));
+      const den0 = r3.termsDen?.map((t9) => ({ x: t9.x, comps: idMergeTop9(t9.comps) }));
+      if (den0 === void 0 || num0.length === 0 || den0.length === 0) return { num: num0, den: den0 };
+      const codes0 = /* @__PURE__ */ new Set();
+      for (const t9 of [...num0, ...den0]) for (const c9 of t9.comps) if (c9.def.currency !== void 0) codes0.add(c9.def.currency);
+      for (const code0 of codes0) {
+        const expOf9 = (t9) => t9.comps.filter((c9) => c9.def.currency === code0).reduce((s9, c9) => s9 + c9.exp, 0);
+        const cut9 = Math.min(Math.min(...num0.map(expOf9)), Math.min(...den0.map(expOf9)));
+        if (cut9 <= 0) continue;
+        const strip9 = (t9) => {
+          const def9 = t9.comps.find((c9) => c9.def.currency === code0).def;
+          return { x: t9.x, comps: idMergeTop9([...t9.comps, { def: def9, exp: -cut9 }]) };
+        };
+        for (let k9 = 0; k9 < num0.length; k9++) num0[k9] = strip9(num0[k9]);
+        for (let k9 = 0; k9 < den0.length; k9++) den0[k9] = strip9(den0[k9]);
+      }
+      return { num: num0, den: den0 };
+    })();
+    addShadowCode9(canceled9.num);
+    addShadowCode9(canceled9.den);
     const needed = codes.filter((c9) => nets.get(c9).net !== 0);
     let ratio = { n: 1n, d: 1n };
     if (needed.length > 0) {
@@ -30985,7 +31013,17 @@ function alignForAdd(l2, r3, ctx) {
       if (!needShadow()) return void 0;
       const lCodes9 = [...new Set(lCur.map((c9) => c9.def.currency))];
       const out9 = [];
-      for (const t9 of termsOf(r3)) {
+      const idMerge9 = (comps9) => {
+        const m9 = /* @__PURE__ */ new Map();
+        for (const c9 of comps9) {
+          const p9 = m9.get(c9.def.id);
+          if (p9) p9.exp += c9.exp;
+          else m9.set(c9.def.id, { def: c9.def, exp: c9.exp });
+        }
+        return [...m9.values()].filter((c9) => c9.exp !== 0);
+      };
+      for (const t0 of canceled9.num) {
+        const t9 = { x: t0.x, comps: idMerge9(t0.comps) };
         const curs9 = t9.comps.filter((c9) => c9.def.currency !== void 0);
         if (curs9.length === 0 && lCur.length === 0) {
           out9.push({ x: t9.x, comps: t9.comps });
@@ -31059,8 +31097,18 @@ function alignForAdd(l2, r3, ctx) {
     const denShadow = (() => {
       if (r3.termsDen === void 0 || !needShadow()) return r3.termsDen;
       const lCodes8 = [...new Set(lCur.map((c9) => c9.def.currency))];
+      const idMerge8 = (comps9) => {
+        const m9 = /* @__PURE__ */ new Map();
+        for (const c9 of comps9) {
+          const p9 = m9.get(c9.def.id);
+          if (p9) p9.exp += c9.exp;
+          else m9.set(c9.def.id, { def: c9.def, exp: c9.exp });
+        }
+        return [...m9.values()].filter((c9) => c9.exp !== 0);
+      };
       const out8 = [];
-      for (const t9 of r3.termsDen) {
+      for (const t0 of canceled9.den ?? r3.termsDen) {
+        const t9 = { x: t0.x, comps: idMerge8(t0.comps) };
         let x9 = t9.x;
         let bad9 = false;
         if (lCodes8.length === 1) {
@@ -32710,18 +32758,34 @@ function evalAst(ast, env, ctx = {}) {
           const lift0 = (x0) => ({ t: "q", ...qv(x0), dim: {}, symbol: "", comps: [], terms: [{ x: x0, comps: [] }] });
           const t30d = ctx.monthToDays === "30";
           const cmp0 = (b0) => fracCmpRT(dq0, lift0(b0), t30d);
+          const structSign0 = (() => {
+            const num0 = dq0.terms ?? [];
+            const den0 = dq0.termsDen;
+            if (num0.length === 0) return null;
+            const denPos0 = den0 === void 0 || den0.length > 0 && den0.every((t9) => t9.x.n > 0n);
+            if (!denPos0) return null;
+            if (num0.every((t9) => t9.x.n > 0n)) return 1;
+            if (num0.every((t9) => t9.x.n < 0n)) return -1;
+            return null;
+          })();
           if (ast.fn === "asin" || ast.fn === "acos") {
             const hi0 = cmp0({ n: 1n, d: 1n });
             const lo0 = cmp0({ n: -1n, d: 1n });
             if (hi0 !== null && hi0 > 0 || lo0 !== null && lo0 < 0) {
               return err("inexact", `${ast.fn} needs an argument in [-1, 1]`);
             }
+            if (hi0 === null || lo0 === null) {
+              return err("inexact", "the domain cannot be proven for this value \u2014 its exact bound is undecided");
+            }
           } else {
-            const s0 = cmp0({ n: 0n, d: 1n });
+            const s0 = cmp0({ n: 0n, d: 1n }) ?? structSign0;
             if (s0 !== null && s0 < 0) {
               return err("inexact", ast.fn === "sqrt" || ast.fn === "racine" ? "square root of a negative number" : `${ast.fn} needs a positive argument`);
             }
-            if (s0 !== null && s0 === 0 && ast.fn !== "sqrt" && ast.fn !== "racine") return err("inexact", `${ast.fn} needs a positive argument`);
+            if (s0 === null) {
+              return err("inexact", "the sign of this value is not provable exactly \u2014 the domain would be decided from a rounded reading");
+            }
+            if (s0 === 0 && ast.fn !== "sqrt" && ast.fn !== "racine") return err("inexact", `${ast.fn} needs a positive argument`);
           }
         }
       }
@@ -32729,6 +32793,21 @@ function evalAst(ast, env, ctx = {}) {
       let fnCapped9 = false;
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
         let v2 = evaluated9[ai9];
+        if (ast.fn === "log" && ai9 === 1 && v2.t === "q" && dimIsEmpty(v2.dim)) {
+          const vc9 = isCarrier(v2) ? v2 : foldIrrationalResidue(v2, ctx.monthToDays === "30");
+          if (vc9.t === "q" && isCarrier(vc9)) {
+            const t30l = ctx.monthToDays === "30";
+            const exact9 = fracReduce(vc9, t30l) ?? (() => {
+              const n9 = vc9.terms === void 0 ? null : termsProject(vc9.terms, t30l);
+              const d9 = vc9.termsDen === void 0 ? { n: 1n, d: 1n } : termsProject(vc9.termsDen, t30l);
+              return n9 !== null && d9 !== null && d9.n !== 0n ? rDiv(n9, d9) : null;
+            })();
+            if (exact9 !== null) {
+              v2 = { t: "d", ...qv(exact9) };
+              evaluated9[ai9] = v2;
+            }
+          }
+        }
         if (v2.t === "q") v2 = carrierNum(foldIrrationalResidue(v2, ctx.monthToDays === "30"), ctx);
         if (v2.t !== "d" && v2.t !== "f") return err("unsupported-pair", `${ast.fn}() needs plain numbers`);
         if (v2.capped === true) fnCapped9 = true;
@@ -32746,7 +32825,7 @@ function evalAst(ast, env, ctx = {}) {
             const m9 = xH9.div(half9).toDecimalPlaces(0, 4);
             const mAbs9 = m9.abs();
             const dist9 = xH9.minus(m9.times(half9)).abs();
-            const tol9 = mAbs9.plus(1).times("1e-40");
+            const tol9 = mAbs9.plus(1).times("1e-38");
             const oddish9 = mAbs9.gt("9e15") || mAbs9.toNumber() % 2 === 1;
             if (oddish9 && dist9.lt(tol9)) {
               return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
@@ -32756,9 +32835,6 @@ function evalAst(ast, env, ctx = {}) {
           }
         }
         const hi9 = applyFunction(ast.fn, rts.map(toDecHi));
-        if (ast.fn === "tan" && hi9.t === "d" && hi9.v.abs().gte(new DecC("1e36"))) {
-          return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
-        }
         if (hi9.t === "d" && isRepresentable(hi9.v)) {
           res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), capped: true };
           ctx.capNotes?.push("function");
@@ -32952,6 +33028,9 @@ function evalAst(ast, env, ctx = {}) {
         const lF9 = carrierNum(foldIrrationalResidue(l2, ctx.monthToDays === "30"), ctx);
         if (lF9.t === "e") return lF9;
         if (lF9.t === "d" || lF9.t === "f") l2 = lF9;
+      }
+      if (ast.op === "^" && (l2.t === "d" || l2.t === "f") && numRat(l2).n <= 0n && r3.capped === true) {
+        return err("inexact", "a non-positive base needs an exactly-proven exponent \u2014 exactness was dropped upstream");
       }
       const bin9 = (() => {
         if (ast.op === "/" && r3.capped === true) {
@@ -36049,6 +36128,8 @@ var isTimeAnchorWord = (word) => TIME_WORDS.has(word.toLowerCase());
 var isPrepositionAnchorWord = (word) => isFunctionWord(word) || WORD_FRACTIONS[word.toLowerCase()] !== void 0;
 var isAggWord = (word) => AGG_WORDS[word.toLowerCase()] !== void 0;
 var isFinanceAnchorWord = (word) => INTEREST_WORDS.has(word.toLowerCase()) || PAYMENT_WORDS.has(word.toLowerCase());
+var isInterestAnchorWord = (word) => INTEREST_WORDS.has(word.toLowerCase());
+var isPaymentAnchorWord = (word) => PAYMENT_WORDS.has(word.toLowerCase());
 function parseSpanTokens(tokens) {
   const parts = [];
   let i2 = 0;
@@ -36992,7 +37073,9 @@ function splitInterpuncts(tokens, lexicon, violations) {
             const seg0 = { ...t0, text: s0, start: Math.min(off0, t0.end), end: Math.min(off0 + rl0, t0.end) };
             if (rawSegs0[k0] !== s0) seg0.rawText = rawSegs0[k0];
             else delete seg0.rawText;
-            if (hasLig0) seg0.ligSplit9 = true;
+            if ([...rawSegs0[k0]].some((ch9) => UNIT_LIGATURES[ch9] !== void 0)) {
+              seg0.ligSplit9 = true;
+            }
             out0.push(seg0);
             off0 += rl0;
           });
@@ -37085,15 +37168,15 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
   {
     const anchorIdx9 = tokens.findIndex((t9) => t9.kind === "word" && isFinanceAnchorWord(t9.text));
     if (anchorIdx9 >= 0) {
-      const QUAL9 = /^(simples?|monthly|mensuel(le)?s?|mensuellement|daily|quotidien(ne)?s?|quotidiennement|journali(er|ère|ere)s?|journellement|weekly|hebdomadaires?|hebdomadairement|annual|annuels?|annuelles?|annuellement|yearly|quarterly|trimestriel(le)?s?|trimestriellement|semestriel(le)?s?|semestriellement|semi-?annual(ly)?|biannual|continuous(ly)?|continue?s?|bi-?weekly|bi-?monthly|fortnightly|hourly|horaires?|nominal(es?)?|nominaux|effectives?|effectifs?)$/iu;
-      const COMPOUNDISH9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?)$/iu;
+      const QUAL9 = /^(simples?|monthly|mensuel(le)?s?|mensuellement|bimensuel(le)?s?|bimensuellement|daily|quotidien(ne)?s?|quotidiennement|journali(er|ère|ere)s?|journellement|weekly|hebdomadaires?|hebdomadairement|annual(ly)?|annuels?|annuelles?|annuellement|yearly|quarterly|trimestriel(le)?s?|trimestriellement|semestriel(le)?s?|semestriellement|semi-?annual(ly)?|biannual(ly)?|continuous(ly)?|continue?s?|continuellement|bi-?weekly|bi-?monthly|fortnightly|hourly|horaires?|nominal(es?)?|nominaux|effectives?|effectifs?|recurring|r[ée]current(e)?s?|(non|un)-?compound(ed|ing)?|(bi|semi|tri)[a-zé]*(?:ly|lement))$/iu;
+      const COMPOUNDISH9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?|calcul(é|ée|és|ées|ant))$/iu;
       for (let iq9 = 0; iq9 < tokens.length; iq9++) {
         const tq9 = tokens[iq9];
         if (tq9.kind !== "word" || !QUAL9.test(tq9.text)) continue;
         if (env.has(tq9.text)) continue;
         const boundWin9 = (() => {
-          for (let s9 = Math.max(0, iq9 - 3); s9 <= iq9; s9++) {
-            for (let e9 = iq9; e9 < Math.min(tokens.length, s9 + 4); e9++) {
+          for (let s9 = Math.max(0, iq9 - 15); s9 <= iq9; s9++) {
+            for (let e9 = iq9; e9 < Math.min(tokens.length, s9 + 16); e9++) {
               const win9 = tokens.slice(s9, e9 + 1);
               if (win9.length < 2 || !win9.every((t9) => t9.kind === "word")) continue;
               if (env.has(win9.map((t9) => t9.text).join(" "))) return true;
@@ -37102,12 +37185,25 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           return false;
         })();
         if (boundWin9) continue;
+        const allInterest9 = tokens.every((t9) => !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
+        const allPayment9 = tokens.every((t9) => !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
+        if (/^(annual|annuels?|annuelles?)$/iu.test(tq9.text) && allInterest9) continue;
+        if (/^(monthly|mensuel(le)?s?)$/iu.test(tq9.text) && allPayment9) continue;
         const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
+        const neutral9 = (t9) => t9?.kind === "word" && !env.has(t9.text) && !isComputableWord(t9.text) && !isReservedWord(t9.text) && !isUnitWord(t9.text) && !isFinanceAnchorWord(t9.text);
         let a9 = iq9 + 1;
         while (thru9(tokens[a9])) a9++;
+        if (!(tokens[a9]?.kind === "word" && isFinanceAnchorWord(tokens[a9].text)) && neutral9(tokens[a9])) {
+          a9++;
+          while (thru9(tokens[a9])) a9++;
+        }
         const adjA9 = tokens[a9]?.kind === "word" && isFinanceAnchorWord(tokens[a9].text);
         let b9 = iq9 - 1;
         while (b9 >= 0 && thru9(tokens[b9])) b9--;
+        if (!(b9 >= 0 && tokens[b9]?.kind === "word" && isFinanceAnchorWord(tokens[b9].text)) && b9 >= 0 && neutral9(tokens[b9])) {
+          b9--;
+          while (b9 >= 0 && thru9(tokens[b9])) b9--;
+        }
         const adjB9 = b9 >= 0 && tokens[b9]?.kind === "word" && isFinanceAnchorWord(tokens[b9].text);
         if (adjA9 || adjB9 || iq9 > anchorIdx9) {
           violations.push(`\u201C${tq9.text}\u201D qualifies a finance formula the engine does not have \u2014 only annual compound interest and monthly annuities are supported`);
@@ -37729,11 +37825,22 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         violations.push(`\u201C${t2.text}\u201D is not a known function`);
       } else if (t2.rawText !== void 0 && [...t2.rawText].some((ch9) => (UNIT_LIGATURES[ch9]?.length ?? 0) > 1)) {
         violations.push(`\u201C${t2.rawText}\u201D fuses a unit ligature with prose \u2014 write them separately`);
-      } else if (t2.ligSplit9 === true && [1, 2, 3, 4].some((k9) => k9 <= t2.text.length && isUnitWord(t2.text.slice(0, k9)))) {
+      } else if (t2.ligSplit9 === true && Array.from({ length: Math.min(t2.text.length, 24) }, (_9, k9) => k9 + 1).some((k9) => isUnitWord(t2.text.slice(0, k9)))) {
         violations.push(`\u201C${t2.rawText ?? t2.text}\u201D fuses a unit ligature with prose \u2014 write them separately`);
       } else {
-        const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))) || // a MULTI-WORD bound rate (« simple rate ») anchors too (audit BN)
-        tokens.some((t0, k0) => t0.kind === "word" && tokens[k0 + 1]?.kind === "word" && (env.has(`${t0.text} ${tokens[k0 + 1].text}`) || tokens[k0 + 2]?.kind === "word" && env.has(`${t0.text} ${tokens[k0 + 1].text} ${tokens[k0 + 2].text}`))));
+        const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))) || // a MULTI-WORD bound rate anchors too, up to the engine's own
+        // variable width (audits BN/BO)
+        tokens.some((t0, k0) => {
+          if (t0.kind !== "word") return false;
+          let j0 = t0.text;
+          for (let n0 = 1; n0 <= 4; n0++) {
+            const nx0 = tokens[k0 + n0];
+            if (nx0?.kind !== "word") break;
+            j0 += ` ${nx0.text}`;
+            if (env.has(j0)) return true;
+          }
+          return false;
+        }));
         const reason = quarantineReason(t2.text);
         if (reason !== null) {
           violations.push(`\u201C${t2.text}\u201D is not supported yet \u2014 ${reason}`);
