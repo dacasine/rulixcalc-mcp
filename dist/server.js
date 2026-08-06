@@ -30245,11 +30245,19 @@ function applyExactFunction(fn, rts) {
         if (b2.n > 0n && b2.n !== b2.d && a0.n > 0n) {
           const kEst9 = (() => {
             try {
-              const digsK9 = a0.n.toString().length + a0.d.toString().length + b2.n.toString().length + b2.d.toString().length;
-              const DecK9 = digsK9 > 60 ? DecC.clone({ precision: Math.min(12e3, digsK9 + 20) }) : DecC;
-              const lb9 = DecK9.ln(new DecK9(b2.n.toString()).div(b2.d.toString()));
-              if (lb9.isZero()) return null;
-              const la9 = DecK9.ln(new DecK9(a0.n.toString()).div(a0.d.toString()));
+              const lnCheap9 = (x9) => {
+                const d40 = new DecC(x9.n.toString()).div(x9.d.toString());
+                if (d40.lte(0)) return null;
+                if (d40.minus(1).abs().lt("1e-5")) {
+                  const ex9 = rSub(x9, { n: 1n, d: 1n });
+                  return ex9.n === 0n ? null : ratToDec(ex9);
+                }
+                return DecC.ln(d40);
+              };
+              const lb9 = lnCheap9(b2);
+              if (lb9 === null || lb9.isZero()) return null;
+              const la9 = lnCheap9(a0);
+              if (la9 === null) return null;
               const k9 = la9.div(lb9).toNearest(1);
               if (!k9.isFinite() || k9.abs().gt(1e5)) return null;
               return Number(k9.toString());
@@ -31347,7 +31355,16 @@ function combineQuantities(l2, r3, op, ctx) {
       if (s9.terms !== void 0 && s9.termsDen !== void 0 && mergeTerms(s9.terms, s9.termsDen, -1n, ctx.monthToDays === "30").length === 0) return false;
       return true;
     };
-    if (dirtySpan9(l2) || dirtySpan9(r3)) {
+    const monoPair9 = (() => {
+      if (!(l2.terms !== void 0 || r3.terms !== void 0)) return false;
+      const t30q = ctx.monthToDays === "30";
+      const fl9 = fracOf(l2);
+      const fr9 = fracOf(r3);
+      const n9 = distributeTerms(fl9.num, op === "/" ? fr9.den : fr9.num, t30q);
+      const d9 = distributeTerms(fl9.den, op === "/" ? fr9.num : fr9.den, t30q);
+      return n9 !== null && d9 !== null && n9.length === 1 && d9.length === 1 && n9[0].x.n !== 0n && d9[0].x.n !== 0n;
+    })();
+    if (!monoPair9 && (dirtySpan9(l2) || dirtySpan9(r3))) {
       return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
     }
     const inBase = rMul(x2, ratOfFactor(comps[0].def.factor));
@@ -31971,12 +31988,27 @@ function evalAst(ast, env, ctx = {}) {
             if (scal9.length % 2 === 1) {
               const f0 = values[0];
               const midSrc9 = scal9[mid9].rt;
+              if (midSrc9.def?.affine !== void 0 && (midSrc9.terms !== void 0 || midSrc9.termsDen !== void 0)) {
+                const convM9 = convertQuantity(midSrc9, lookupUnit("K"), ctx);
+                if (convM9.t === "e") return convM9;
+                const midKa9 = convM9;
+                return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midKa9, f0.def, ctx) : midKa9;
+              }
               const midTerms9 = midSrc9.def?.affine === void 0 ? termsOf(midSrc9) : void 0;
               const midK = { ...mkQ(scal9[mid9].x, lookupUnit("K")), ...midTerms9 && { terms: midTerms9 }, ...midTerms9 && midSrc9.termsDen && { termsDen: midSrc9.termsDen } };
               return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
             }
-            const lo8 = scal9[mid9 - 1].rt.def?.affine !== void 0 ? mkQ(scal9[mid9 - 1].x, K9) : scal9[mid9 - 1].rt;
-            const hi8 = scal9[mid9].rt.def?.affine !== void 0 ? mkQ(scal9[mid9].x, K9) : scal9[mid9].rt;
+            const toK8 = (s8, x8) => {
+              if (s8.def?.affine === void 0) return s8;
+              if (s8.terms !== void 0 || s8.termsDen !== void 0) return convertQuantity(s8, K9, ctx);
+              return mkQ(x8, K9);
+            };
+            const lo8c = toK8(scal9[mid9 - 1].rt, scal9[mid9 - 1].x);
+            if (lo8c.t === "e") return lo8c;
+            const hi8c = toK8(scal9[mid9].rt, scal9[mid9].x);
+            if (hi8c.t === "e") return hi8c;
+            const lo8 = lo8c;
+            const hi8 = hi8c;
             const t30m = ctx.monthToDays === "30";
             const meanBase8 = mkQ(rDiv(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), { n: 2n, d: 1n }), K9);
             let meanK9 = meanBase8;
@@ -32240,7 +32272,7 @@ function evalAst(ast, env, ctx = {}) {
       let kFin;
       if (ast.fn === "interest") {
         const gBase9 = rDiv(rAdd(cent, rate), cent);
-        if ((gBase9.n.toString(2).length + gBase9.d.toString(2).length) * Math.abs(y2) > 4e5) {
+        if ((gBase9.n.toString(2).length + gBase9.d.toString(2).length) * Math.abs(y2) > 1e5) {
           return err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget");
         }
         const growth = rPowInt(gBase9, y2);
@@ -32251,7 +32283,7 @@ function evalAst(ast, env, ctx = {}) {
         else {
           const base9 = rAdd({ n: 1n, d: 1n }, r3);
           if (base9.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
-          if ((base9.n.toString(2).length + base9.d.toString(2).length) * Math.abs(12 * y2) > 4e5) {
+          if ((base9.n.toString(2).length + base9.d.toString(2).length) * Math.abs(12 * y2) > 1e5) {
             return err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget");
           }
           const denom = rSub({ n: 1n, d: 1n }, rPowInt(base9, -12 * y2));
@@ -32378,11 +32410,24 @@ function evalAst(ast, env, ctx = {}) {
       return { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0, ...e.capped === true && { capped: true } };
     }
     case "scale": {
-      const e = evalAst(ast.e, env, ctx);
+      let e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (e.t === "f") {
         const fs9 = makeFrac(e.n * 10n ** BigInt(ast.pow10), e.d, "derived");
         return e.capped === true && fs9.t !== "e" ? { ...fs9, capped: true } : fs9;
+      }
+      if (e.t === "q" && dimIsEmpty(e.dim)) {
+        const f9 = foldIrrationalResidue(e, ctx.monthToDays === "30");
+        if (f9.t === "d" || f9.t === "f") e = f9;
+        else if (f9.t === "q" && dimIsEmpty(f9.dim) && (compsOf(f9) ?? []).length === 0) {
+          e = {
+            t: "d",
+            ...qv(qx(f9)),
+            ...f9.terms && { terms: f9.terms },
+            ...f9.termsDen && { termsDen: f9.termsDen },
+            ...f9.capped === true && { capped: true }
+          };
+        }
       }
       if (e.t !== "d" && e.t !== "p") return err("unsupported-pair");
       const sc9 = rPowInt({ n: 10n, d: 1n }, ast.pow10);
@@ -32953,11 +32998,13 @@ function evalAst(ast, env, ctx = {}) {
           }
           return a9.toString().length;
         };
-        for (const r9 of rts) {
-          if (r9.capped !== true) continue;
-          const x9 = numRat(r9);
-          if (toDec(r9).e >= 35 && sig9(x9.n) + sig9(x9.d) <= 45) {
-            return err("inexact", "a capped argument this large cannot certify any digit of a transcendental result");
+        if (!["cbrt", "atan", "tanh"].includes(ast.fn)) {
+          for (const r9 of rts) {
+            if (r9.capped !== true) continue;
+            const x9 = numRat(r9);
+            if (toDec(r9).e >= 35 && sig9(x9.n) + sig9(x9.d) <= 45) {
+              return err("inexact", "a capped argument this large cannot certify any digit of a transcendental result");
+            }
           }
         }
         const trig9 = ast.fn === "sin" || ast.fn === "cos" || ast.fn === "tan";
@@ -32968,7 +33015,12 @@ function evalAst(ast, env, ctx = {}) {
           const amp9 = ast.fn === "tan" ? 40 : 0;
           return mag9 + amp9 + sig9(x9.n) + sig9(x9.d) + 60;
         }));
-        const cap9 = ast.fn === "asin" || ast.fn === "acos" ? 1e3 : 12e3;
+        const logFam9 = ["log", "ln", "lb", "lg", "log10", "log2"].includes(ast.fn);
+        const logFar9 = logFam9 && rts.some((r9) => {
+          const d9 = toDec(r9);
+          return d9.isZero() || d9.sub(1).abs().gte("0.5");
+        });
+        const cap9 = ast.fn === "asin" || ast.fn === "acos" ? 1e3 : logFar9 ? 1e3 : 12e3;
         if (need9 > cap9) {
           return err("inexact", `${ast.fn} of this argument needs more internal precision than the engine can certify (${cap9} digits) \u2014 near its sensitive points the rounding would decide the result`);
         }
@@ -32995,7 +33047,8 @@ function evalAst(ast, env, ctx = {}) {
           return err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision");
         }
         if (hi9.t === "d" && isRepresentable(hi9.v)) {
-          res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), capped: true };
+          res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), vx: decToRat(hi9.v), capped: true };
+          res9.capD = prec9;
           ctx.capNotes?.push("function");
         } else {
           res9 = hi9;
@@ -33118,6 +33171,11 @@ function evalAst(ast, env, ctx = {}) {
           return capU9 && uq9.capped !== true ? { ...uq9, capped: true } : uq9;
         }
         return { t: "q", ...qv(x2), dim: def.dim, symbol: def.symbol, def, comps, ...capU9 && { capped: true } };
+      }
+      if (e.t === "q" && dimIsEmpty(e.dim)) {
+        const uq9 = { t: "q", v: new DecC(1), dim: def.dim, symbol: def.symbol, def, comps: unitComps(ast.word) ?? [{ def, exp: 1 }] };
+        const att9 = combineQuantities(e, uq9, "*", ctx);
+        return e.capped === true && att9.t !== "e" && att9.capped !== true ? { ...att9, capped: true } : att9;
       }
       return err("unsupported-pair", `cannot attach the unit \u201C${ast.word}\u201D here`);
     }
@@ -33993,13 +34051,36 @@ function evalAst(ast, env, ctx = {}) {
                 out = { n: a3.n * b3.d, d: a3.d * b3.n };
             }
             const capA9 = l2.capped === true || r3.capped === true;
+            const capDOf9 = (s9) => s9.capD ?? (s9.capped === true ? 40 : Infinity);
+            const capMin9 = Math.min(capDOf9(l2), capDOf9(r3));
+            let capDRes9 = capMin9;
+            if ((ast.op === "+" || ast.op === "-") && capA9 && capMin9 !== Infinity) {
+              const eOf9 = (x9) => x9.n === 0n ? null : ratToDec(x9).e;
+              const eA9 = eOf9(a3);
+              const eB9 = eOf9(b3);
+              const eMax9 = Math.max(eA9 ?? -Infinity, eB9 ?? -Infinity);
+              const outN9 = rnorm(out);
+              const eRes9 = eOf9(outN9);
+              const depth9 = eMax9 === -Infinity || eRes9 === null ? 0 : eMax9 - eRes9;
+              if (eRes9 !== null && depth9 > capMin9 - 40) {
+                return err("inexact", "this cancellation consumes every certified digit of a capped value \u2014 no digit of the result is provable");
+              }
+              capDRes9 = capMin9 - Math.max(0, depth9);
+            }
             if (l2.t === "f" || r3.t === "f") {
               const fr9 = makeFrac(out.n, out.d, "derived");
-              return capA9 && fr9.t !== "e" ? { ...fr9, capped: true } : fr9;
+              if (capA9 && fr9.t !== "e") {
+                const fc9 = { ...fr9, capped: true };
+                if (capMin9 !== Infinity) fc9.capD = capDRes9;
+                return fc9;
+              }
+              return fr9;
             }
             const fields = qv(out);
             if (!isRepresentable(fields.v)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
-            return { t: "d", ...fields, ...capA9 && { capped: true } };
+            const dres9 = { t: "d", ...fields, ...capA9 && { capped: true } };
+            if (capA9 && capMin9 !== Infinity) dres9.capD = capDRes9;
+            return dres9;
           }
         }
         const a2 = toDec(l2);
@@ -34999,12 +35080,15 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         i2 += String.fromCodePoint(cp).length;
         continue;
       }
-      if (c2 === "\xB7" && (isLetter(line[i2 + 1] ?? "") || line[i2 + 1] === "\xB0" || /[\u3371-\u33FF\u2103\u2109\u2113]/u.test(line[i2 + 1] ?? ""))) {
+      if (c2 === "\xB7" && (() => {
+        const n9 = line[invSkip9(i2 + 1)] ?? "";
+        return isLetter(n9) || n9 === "\xB0" || /[\u3371-\u33FF\u2103\u2109\u2113]/u.test(n9);
+      })()) {
         i2++;
         continue;
       }
-      if ((c2 === "'" || c2 === "\u2019") && isLetter(line[i2 + 1])) {
-        i2 += 2;
+      if ((c2 === "'" || c2 === "\u2019") && isLetter(line[invSkip9(i2 + 1)])) {
+        i2 = invSkip9(i2 + 1) + 1;
         continue;
       }
       break;
@@ -35034,7 +35118,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (/[\p{L}\u3371-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[i2 + 1] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[i2 + 1] ?? ""))) {
+    if (/[\p{L}\u3371-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(line[invSkip9(i2 + 1)] ?? "") || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(line[invSkip9(i2 + 1)] ?? ""))) {
       scanWord();
       continue;
     }
@@ -36945,14 +37029,13 @@ function confusableRole(text, rawText, lexicon) {
 }
 function unitCalendarFusion(text) {
   if (isUnitWord(text)) return false;
-  for (let k9 = 1; k9 <= Math.min(24, text.length - 1); k9++) {
+  for (let k9 = 1; k9 <= Math.min(200, text.length - 1); k9++) {
     const pre9 = text.slice(0, k9);
-    if (!isUnitWord(pre9) && !(k9 >= 2 && plausibleUnitReason(pre9) !== null)) continue;
+    if (!isUnitWord(pre9) && plausibleUnitReason(pre9) === null && !(k9 === 1 && /^[yzafpnµumcdhkMGTPEZY]$/u.test(pre9))) continue;
     const rest9 = text.slice(k9);
-    if (/^ans?$/iu.test(rest9)) continue;
     if (!isTimespanUnitWord(rest9)) continue;
-    if (k9 > 1) return true;
-    if (/^(days?|jours?|weeks?|semaines?|months?|mois|years?|ann[ée]es?|heures?|hours?|minutes?|secondes?|seconds?)$/iu.test(rest9)) return true;
+    if (/^ans?$/iu.test(rest9) && k9 === 1) continue;
+    return true;
   }
   return false;
 }
@@ -37469,6 +37552,27 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         const allInterest9 = tokens.every((t9) => !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
         const allPayment9 = tokens.every((t9) => !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
         const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
+        const noteTok9 = /* @__PURE__ */ new Set();
+        for (let i9 = 0; i9 < tokens.length; i9++) {
+          if (tokens[i9].kind !== "lparen") continue;
+          let d9 = 0;
+          let e9 = i9;
+          while (e9 < tokens.length) {
+            const kk9 = tokens[e9].kind;
+            if (kk9 === "lparen") d9++;
+            else if (kk9 === "rparen") {
+              d9--;
+              if (d9 === 0) break;
+            }
+            e9++;
+          }
+          if (e9 >= tokens.length) continue;
+          const inner9 = tokens.slice(i9 + 1, e9);
+          if (inner9.length > 0 && inner9.every((t9) => t9.kind === "word" || t9.kind === "comma" || t9.kind === "colon")) {
+            for (let j9 = i9; j9 <= e9; j9++) noteTok9.add(j9);
+          }
+        }
+        const thruIdx9 = (k9) => noteTok9.has(k9) || thru9(tokens[k9]);
         const PROOF9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?)$/iu;
         const boundAt9 = (k9) => {
           for (let s9 = Math.max(0, k9 - 15); s9 <= k9; s9++) {
@@ -37482,10 +37586,10 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         };
         const anchorThru9 = (k9) => {
           let a92 = k9 + 1;
-          while (thru9(tokens[a92])) a92++;
+          while (a92 < tokens.length && thruIdx9(a92)) a92++;
           if (tokens[a92]?.kind === "word" && isFinanceAnchorWord(tokens[a92].text)) return a92;
           let b92 = k9 - 1;
-          while (b92 >= 0 && thru9(tokens[b92])) b92--;
+          while (b92 >= 0 && thruIdx9(b92)) b92--;
           if (b92 >= 0 && tokens[b92]?.kind === "word" && isFinanceAnchorWord(tokens[b92].text)) return b92;
           return null;
         };
@@ -37526,10 +37630,10 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         if (/^(monthly|mensuel(le)?s?)$/iu.test(tq9.text) && allPayment9) continue;
         const neutral9 = (t9) => t9?.kind === "word" && !env.has(t9.text) && !isComputableWord(t9.text) && !isReservedWord(t9.text) && !isUnitWord(t9.text) && !isFinanceAnchorWord(t9.text);
         let a9 = iq9 + 1;
-        while (thru9(tokens[a9]) || neutral9(tokens[a9])) a9++;
+        while (a9 < tokens.length && (thruIdx9(a9) || neutral9(tokens[a9]))) a9++;
         const adjA9 = tokens[a9]?.kind === "word" && isFinanceAnchorWord(tokens[a9].text);
         let b9 = iq9 - 1;
-        while (b9 >= 0 && thru9(tokens[b9])) b9--;
+        while (b9 >= 0 && thruIdx9(b9)) b9--;
         const adjB9 = b9 >= 0 && tokens[b9]?.kind === "word" && isFinanceAnchorWord(tokens[b9].text);
         if (adjA9 || adjB9 || iq9 > anchorIdx9) {
           violations.push(`\u201C${tq9.text}\u201D qualifies a finance formula the engine does not have \u2014 only annual compound interest and monthly annuities are supported`);
@@ -38351,7 +38455,12 @@ function tokenAssumptions(tokens, dateOrder, lang) {
   }
   return out;
 }
-var exactOr = (rt2) => (rt2.vx && ratExactDecString(rt2.vx)) ?? canonDec(rt2.v);
+var exactOr = (rt2) => (
+  // a CAPPED value publishes its 40-digit approximation (audit BV): the
+  // high-precision vx is INTERNAL provenance for downstream arithmetic,
+  // never the public reading
+  rt2.capped === true ? canonDec(rt2.v) : (rt2.vx && ratExactDecString(rt2.vx)) ?? canonDec(rt2.v)
+);
 function toPublicValue(rt2) {
   switch (rt2.t) {
     case "d":
@@ -38715,7 +38824,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
       }
     }
-    const rtCapped9 = (rt2.t === "d" || rt2.t === "f" || rt2.t === "q" || rt2.t === "p") && rt2.capped === true;
+    const rtCapped9 = rt2.capped === true;
     if (capNotes.length > 0 || rtCapped9) {
       rawAssume.push({
         code: "exactness-capped",
