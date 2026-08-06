@@ -31340,7 +31340,13 @@ function combineQuantities(l2, r3, op, ctx) {
   }
   if (comps.length === 1 && comps[0].exp === 1 && Object.keys(comps[0].def.dim).every((k2) => k2 === "calmonths" || k2 === "caldays")) {
     if (capIn9) return err("inexact", "a timespan count built from a capped value is not exact");
-    const dirtySpan9 = (s9) => (s9.terms !== void 0 || s9.termsDen !== void 0) && fracReduce(s9, ctx.monthToDays === "30") === null && !(s9.terms !== void 0 && s9.terms.every((t9) => t9.x.n === 0n));
+    const dirtySpan9 = (s9) => {
+      if (s9.terms === void 0 && s9.termsDen === void 0) return false;
+      if (fracReduce(s9, ctx.monthToDays === "30") !== null) return false;
+      if (s9.terms !== void 0 && s9.terms.every((t9) => t9.x.n === 0n)) return false;
+      if (s9.terms !== void 0 && s9.termsDen !== void 0 && mergeTerms(s9.terms, s9.termsDen, -1n, ctx.monthToDays === "30").length === 0) return false;
+      return true;
+    };
     if (dirtySpan9(l2) || dirtySpan9(r3)) {
       return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
     }
@@ -32233,7 +32239,11 @@ function evalAst(ast, env, ctx = {}) {
       const cent = { n: 100n, d: 1n };
       let kFin;
       if (ast.fn === "interest") {
-        const growth = rPowInt(rDiv(rAdd(cent, rate), cent), y2);
+        const gBase9 = rDiv(rAdd(cent, rate), cent);
+        if ((gBase9.n.toString(2).length + gBase9.d.toString(2).length) * Math.abs(y2) > 4e5) {
+          return err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget");
+        }
+        const growth = rPowInt(gBase9, y2);
         kFin = rSub(growth, { n: 1n, d: 1n });
       } else {
         const r3 = rDiv(rate, { n: 1200n, d: 1n });
@@ -32241,6 +32251,9 @@ function evalAst(ast, env, ctx = {}) {
         else {
           const base9 = rAdd({ n: 1n, d: 1n }, r3);
           if (base9.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
+          if ((base9.n.toString(2).length + base9.d.toString(2).length) * Math.abs(12 * y2) > 4e5) {
+            return err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget");
+          }
           const denom = rSub({ n: 1n, d: 1n }, rPowInt(base9, -12 * y2));
           if (denom.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
           kFin = rDiv(r3, denom);
@@ -32940,6 +32953,13 @@ function evalAst(ast, env, ctx = {}) {
           }
           return a9.toString().length;
         };
+        for (const r9 of rts) {
+          if (r9.capped !== true) continue;
+          const x9 = numRat(r9);
+          if (toDec(r9).e >= 35 && sig9(x9.n) + sig9(x9.d) <= 45) {
+            return err("inexact", "a capped argument this large cannot certify any digit of a transcendental result");
+          }
+        }
         const trig9 = ast.fn === "sin" || ast.fn === "cos" || ast.fn === "tan";
         const sens9 = ["log", "ln", "lb", "lg", "log10", "log2", "asin", "acos", "sin", "cos", "tan"].includes(ast.fn);
         const need9 = !sens9 ? 100 : Math.max(100, ...rts.map((r9) => {
@@ -33664,6 +33684,10 @@ function evalAst(ast, env, ctx = {}) {
               const rq = r3.t === "ts" ? tq : r3;
               if (ast.op === "/" && qx(rq).n === 0n) return err("division-by-zero");
               let tres = combineQuantities(lq, rq, ast.op, ctx);
+              if ((tres.t === "d" || tres.t === "f") && (qSide.terms !== void 0 || qSide.termsDen !== void 0)) {
+                const x8 = tres.t === "d" ? tres.vx ?? decToRat(tres.v) : numRat(tres);
+                tres = { t: "q", ...qv(x8), dim: {}, symbol: "", comps: [] };
+              }
               if (tres.t === "q" && (qSide.terms !== void 0 || qSide.termsDen !== void 0)) {
                 const bridged0 = (d0) => rMul(ratOfFactor(d0.factor), rPowInt({ n: 30n, d: 1n }, d0.dim["calmonths"] ?? 0));
                 const applyCal0 = (t0, k0, dExp) => {
@@ -35025,7 +35049,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2 = st29 + 1;
       continue;
     }
-    if (c2 === "/" && line[i2 + 1] === "/") {
+    if (c2 === "/" && line[invSkip9(i2 + 1)] === "/") {
       tokens.push({ kind: "comment", text: line.slice(i2), start, end: line.length });
       break;
     }
@@ -36922,7 +36946,8 @@ function confusableRole(text, rawText, lexicon) {
 function unitCalendarFusion(text) {
   if (isUnitWord(text)) return false;
   for (let k9 = 1; k9 <= Math.min(24, text.length - 1); k9++) {
-    if (!isUnitWord(text.slice(0, k9))) continue;
+    const pre9 = text.slice(0, k9);
+    if (!isUnitWord(pre9) && !(k9 >= 2 && plausibleUnitReason(pre9) !== null)) continue;
     const rest9 = text.slice(k9);
     if (/^ans?$/iu.test(rest9)) continue;
     if (!isTimespanUnitWord(rest9)) continue;
@@ -37223,7 +37248,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
       };
       const temporalContext = () => out.slice(0, i2).some((t9, k9) => t9.kind === "date" || t9.kind === "clocktime" || t9.kind === "word" && env.has(t9.text) && ["ds", "ct", "wd", "ts"].includes(env.get(t9.text)?.t ?? "") || t9.kind === "word" && (isDateKeywordWord(t9.text) || isHolidayDateWord(t9.text)) || // a line(N) reference to a temporal line anchors the phrase too
       t9.kind === "word" && REF_WORDS.has(t9.text.toLowerCase()) && out[k9 + 1]?.kind === "lparen" && out[k9 + 2]?.kind === "number" && out[k9 + 3]?.kind === "rparen" && (() => {
-        const n9 = Number(out[k9 + 2].text);
+        const n9 = Number((out[k9 + 2].dec ?? out[k9 + 2].text).toString());
         const tg9 = Number.isInteger(n9) && n9 >= 1 && n9 <= rts.length ? rts[n9 - 1] : null;
         return tg9 !== null && (["ds", "ct", "wd", "ts"].includes(tg9.t) || tg9.t === "q" && tg9.dim["time"] === 1 && Object.keys(tg9.dim).filter((kk9) => tg9.dim[kk9] !== 0).length === 1);
       })());
@@ -37232,7 +37257,7 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
         const bi9 = out.indexOf(b2);
         const w9 = out[bi9 - 3];
         if (!(bi9 >= 3 && w9?.kind === "word" && REF_WORDS.has(w9.text.toLowerCase()) && out[bi9 - 2]?.kind === "lparen" && out[bi9 - 1]?.kind === "number")) return false;
-        const idx9 = Number(out[bi9 - 1].text);
+        const idx9 = Number((out[bi9 - 1].dec ?? out[bi9 - 1].text).toString());
         const target9 = Number.isInteger(idx9) && idx9 >= 1 && idx9 <= rts.length ? rts[idx9 - 1] : null;
         if (target9 !== null && (["ds", "ct", "wd", "ts"].includes(target9.t) || temporalContext())) return false;
         return true;
@@ -37464,10 +37489,37 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           if (b92 >= 0 && tokens[b92]?.kind === "word" && isFinanceAnchorWord(tokens[b92].text)) return b92;
           return null;
         };
+        const inNote9 = (k9) => {
+          let d9 = 0;
+          for (let j9 = k9 - 1; j9 >= 0; j9--) {
+            const tj9 = tokens[j9];
+            if (tj9.kind === "rparen") d9++;
+            else if (tj9.kind === "lparen") {
+              if (d9 === 0) {
+                let e9 = k9 + 1;
+                let dd9 = 0;
+                while (e9 < tokens.length) {
+                  const te9 = tokens[e9];
+                  if (te9.kind === "lparen") dd9++;
+                  else if (te9.kind === "rparen") {
+                    if (dd9 === 0) break;
+                    dd9--;
+                  }
+                  e9++;
+                }
+                if (e9 >= tokens.length) return false;
+                return tokens.slice(j9 + 1, e9).every((t9) => t9.kind === "word");
+              }
+              d9--;
+            }
+          }
+          return false;
+        };
         const qAnchor9 = anchorThru9(iq9);
         const hasCompoundish9 = qAnchor9 !== null && tokens.some((t9, k9) => {
           if (!(t9.kind === "word" && PROOF9.test(t9.text))) return false;
           if (boundAt9(k9)) return false;
+          if (inNote9(k9)) return false;
           return anchorThru9(k9) === qAnchor9;
         });
         if (/^(annual(ly)?|annuels?|annuelles?|annuellement)$/iu.test(tq9.text) && allInterest9 && hasCompoundish9) continue;
@@ -38663,7 +38715,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
       }
     }
-    if (capNotes.length > 0) {
+    const rtCapped9 = (rt2.t === "d" || rt2.t === "f" || rt2.t === "q" || rt2.t === "p") && rt2.capped === true;
+    if (capNotes.length > 0 || rtCapped9) {
       rawAssume.push({
         code: "exactness-capped",
         level: 2,
