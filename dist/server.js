@@ -29767,6 +29767,7 @@ var PREFIX_NAMES = [
   "quebi"
 ];
 var BYTEISH = /* @__PURE__ */ new Set(["byte", "bytes", "octet", "octets", "bit", "bits"]);
+var isSiPrefixName = (w9) => PREFIX_NAMES.includes(w9.toLowerCase());
 var PLAUSIBLE_SI = /* @__PURE__ */ new Set(["Bq", "Sv", "Gy", "Wb", "cd", "lm", "lx", "sr", "kat", "Np", "C"]);
 var SPELLED_UNITS = /* @__PURE__ */ new Set([
   "farad",
@@ -31356,6 +31357,7 @@ function combineQuantities(l2, r3, op, ctx) {
       return true;
     };
     const monoPair9 = (() => {
+      if (op === "/" && qx(l2).n === 0n && (l2.terms === void 0 || l2.terms.every((t9) => t9.x.n === 0n))) return true;
       if (!(l2.terms !== void 0 || r3.terms !== void 0)) return false;
       const t30q = ctx.monthToDays === "30";
       const fl9 = fracOf(l2);
@@ -31500,7 +31502,6 @@ var pctFigure = (p9, thirty) => {
 var TS_IRR_MSG = "scaling a timespan by this factor is not exact \u2014 the factor is irrational";
 var CAP_CANCEL_MSG = "this cancellation consumes every certified digit of a capped value \u2014 no digit of the result is provable";
 var rAbs9M = (x9) => ({ n: x9.n < 0n ? -x9.n : x9.n, d: x9.d });
-var rRound40 = (x9) => decToRat(ratToDec(x9));
 var capFOf9 = (s9) => s9.capF;
 var capFNorm9 = (list9) => {
   const m9 = /* @__PURE__ */ new Map();
@@ -31512,14 +31513,37 @@ var capFNorm9 = (list9) => {
   return [...m9.values()].filter((t9) => rnorm(t9.x).n !== 0n).sort((a9, b9) => a9.s < b9.s ? -1 : 1);
 };
 var capFAdd9 = (a9, b9, sign9) => capFNorm9([...a9 ?? [], ...(b9 ?? []).map((t9) => sign9 === 1n ? t9 : { s: t9.s, x: { n: -t9.x.n, d: t9.x.d }, b: t9.b })]);
-var capFScale9 = (f9, k9) => (f9 ?? []).map((t9) => ({ s: t9.s, x: rRound40(rMul(t9.x, k9)), b: t9.b })).filter((t9) => rnorm(t9.x).n !== 0n);
+var capFScale9 = (f9, k9) => (
+  // EXACT rational scaling (audit BY): (α/3)·3 − α must cancel symbol by
+  // symbol — the coefficients are jacobians, never rounded majorants
+  (f9 ?? []).map((t9) => ({ s: t9.s, x: rMul(t9.x, k9), b: t9.b })).filter((t9) => rnorm(t9.x).n !== 0n)
+);
+var capFnv9 = (s9) => {
+  let h9 = 0xcbf29ce484222325n;
+  for (let i9 = 0; i9 < s9.length; i9++) {
+    h9 ^= BigInt(s9.charCodeAt(i9));
+    h9 = h9 * 0x100000001b3n & 0xffffffffffffffffn;
+  }
+  return h9.toString(36);
+};
+var capFDig9 = (f9) => f9 === void 0 || f9.length === 0 ? "0" : capFnv9(f9.map((t9) => `${t9.s}*${t9.x.n}/${t9.x.d}`).join(";"));
+var capCoarse9 = (res9, parts9, key9) => {
+  if (res9.t !== "d" && res9.t !== "f" && res9.t !== "q" && res9.t !== "p") return res9;
+  if ((capFOf9(res9)?.length ?? 0) > 0) return res9;
+  const digs9 = parts9.map((p9) => capFDig9(capFOf9(p9)));
+  if (digs9.every((d9) => d9 === "0")) return res9;
+  const v9 = res9.t === "q" ? qx(res9) : res9.vx ?? decToRat(res9.v);
+  const b9 = rMul(rAdd(rAbs9M(v9), { n: 1n, d: 10n ** 30n }), { n: 1n, d: 10n ** 39n });
+  res9.capF = [{ s: `case:${key9}(${digs9.join(";")};${capFnv9(`${v9.n}/${v9.d}`)})`, x: { n: 1n, d: 1n }, b: b9 }];
+  return res9;
+};
 var capFBound9 = (f9) => f9.reduce((s9, t9) => rAdd(s9, rMul(rAbs9M(t9.x), t9.b)), { n: 0n, d: 1n });
 var R10P41 = { n: 10n ** 41n, d: 1n };
 var capAddGate9 = (l9, r9, out9, sign9) => {
   const capA9 = l9.capped === true || r9.capped === true;
   if (!capA9) return {};
   const f9 = capFAdd9(capFOf9(l9), capFOf9(r9), sign9);
-  if (f9.length === 0) return {};
+  if (f9.length === 0) return { capF: [] };
   const outN9 = rnorm(out9);
   if (outN9.n === 0n) return { err: err("inexact", CAP_CANCEL_MSG) };
   if (rCmp(rMul(capFBound9(f9), R10P41), rAbs9M(outN9)) > 0) return { err: err("inexact", CAP_CANCEL_MSG) };
@@ -31527,7 +31551,7 @@ var capAddGate9 = (l9, r9, out9, sign9) => {
 };
 var capStamp9 = (rt9, g9) => {
   if (rt9.t === "e") return rt9;
-  if (g9.capF !== void 0 && g9.capF.length > 0) rt9.capF = g9.capF;
+  if (g9.capF !== void 0) rt9.capF = g9.capF;
   else delete rt9.capF;
   return rt9;
 };
@@ -31546,10 +31570,18 @@ var capDeriv9 = (fn9, ai9, rts9) => {
         d9 = DecC.exp(x9);
         break;
       case "sin":
+        d9 = DecC.cos(x9);
+        break;
       case "cos":
-      case "tanh":
+        d9 = DecC.sin(x9).neg();
+        break;
+      case "tanh": {
+        const th9 = DecC.tanh(x9);
+        d9 = new DecC(1).minus(th9.times(th9));
+        break;
+      }
       case "atan":
-        d9 = new DecC(1);
+        d9 = new DecC(1).div(x9.times(x9).plus(1));
         break;
       case "tan": {
         const t9 = DecC.tan(x9);
@@ -31557,14 +31589,17 @@ var capDeriv9 = (fn9, ai9, rts9) => {
         break;
       }
       case "sinh":
+        d9 = DecC.cosh(x9);
+        break;
       case "cosh":
-        d9 = DecC.cosh(x9.abs());
+        d9 = DecC.sinh(x9);
         break;
       case "asin":
       case "acos": {
         const u9 = new DecC(1).minus(x9.times(x9));
         if (u9.lte(0)) return null;
         d9 = new DecC(1).div(u9.sqrt());
+        if (fn9 === "acos") d9 = d9.neg();
         break;
       }
       case "sqrt":
@@ -31580,20 +31615,20 @@ var capDeriv9 = (fn9, ai9, rts9) => {
         break;
       }
       case "ln": {
-        if (x9.isZero()) return null;
-        d9 = new DecC(1).div(x9.abs());
+        if (x9.lte(0)) return null;
+        d9 = new DecC(1).div(x9);
         break;
       }
       case "lb":
       case "log2": {
-        if (x9.isZero()) return null;
-        d9 = new DecC(1).div(x9.abs().times(DecC.ln(2)));
+        if (x9.lte(0)) return null;
+        d9 = new DecC(1).div(x9.times(DecC.ln(2)));
         break;
       }
       case "lg":
       case "log10": {
-        if (x9.isZero()) return null;
-        d9 = new DecC(1).div(x9.abs().times(DecC.ln(10)));
+        if (x9.lte(0)) return null;
+        d9 = new DecC(1).div(x9.times(DecC.ln(10)));
         break;
       }
       case "log": {
@@ -31607,14 +31642,74 @@ var capDeriv9 = (fn9, ai9, rts9) => {
         if (a9.lte(0) || b9.lte(0)) return null;
         const lnB9 = DecC.ln(b9);
         if (lnB9.isZero()) return null;
-        d9 = ai9 === 0 ? new DecC(1).div(a9.times(lnB9).abs()) : DecC.ln(a9).div(b9.times(lnB9).times(lnB9)).abs();
+        d9 = ai9 === 0 ? new DecC(1).div(a9.times(lnB9)) : DecC.ln(a9).div(b9.times(lnB9).times(lnB9)).neg();
         break;
       }
       default:
         return null;
     }
+    void two9;
     if (!d9.isFinite()) return null;
-    return decToRat(d9.times(two9).toSignificantDigits(40));
+    return decToRat(d9.toSignificantDigits(40));
+  } catch {
+    return null;
+  }
+};
+var capM2_9 = (fn9, ai9, rts9) => {
+  try {
+    const x9 = toDec(rts9[ai9]);
+    switch (fn9) {
+      case "exp":
+        return DecC.exp(x9).times(4);
+      case "sin":
+      case "cos":
+        return new DecC(2);
+      case "tan": {
+        const t9 = DecC.tan(x9);
+        return t9.abs().plus(1).times(t9.times(t9).plus(1)).times(4);
+      }
+      case "tanh":
+      case "atan":
+        return new DecC(2);
+      case "sinh":
+      case "cosh":
+        return DecC.cosh(x9).times(4);
+      case "asin":
+      case "acos": {
+        const u9 = new DecC(1).minus(x9.times(x9));
+        if (u9.lte(0)) return null;
+        return x9.abs().plus(1).div(u9.pow(2).times(u9.sqrt())).times(4);
+      }
+      case "sqrt":
+      case "racine": {
+        if (x9.lte(0)) return null;
+        return new DecC(1).div(x9.sqrt().times(x9)).times(2);
+      }
+      case "cbrt": {
+        if (x9.isZero()) return null;
+        const c9 = DecC.cbrt(x9.abs());
+        return new DecC(1).div(c9.times(c9).times(x9.abs())).times(2);
+      }
+      case "ln": {
+        if (x9.lte(0)) return null;
+        return new DecC(1).div(x9.times(x9)).times(2);
+      }
+      case "lb":
+      case "log2":
+      case "lg":
+      case "log10":
+      case "log": {
+        const m9 = rts9.reduce((acc9, r9) => {
+          const v9 = toDec(r9);
+          if (v9.lte(0)) return null;
+          return acc9 === null ? null : acc9.lt(v9) ? acc9 : v9;
+        }, new DecC("1e9999"));
+        if (m9 === null || m9.lte(0)) return null;
+        return new DecC(8).div(m9.times(m9));
+      }
+      default:
+        return null;
+    }
   } catch {
     return null;
   }
@@ -31626,15 +31721,33 @@ var capCompose9 = (fn9, rts9) => {
     if (fA9 === void 0 || fA9.length === 0) continue;
     const der9 = capDeriv9(fn9, ai9, rts9);
     if (der9 === null) return err("inexact", "the incoming uncertainty cannot be bounded through this function");
+    const bIn9 = capFBound9(fA9);
+    const m29 = capM2_9(fn9, ai9, rts9);
+    if (m29 === null) return err("inexact", "the incoming uncertainty cannot be bounded through this function");
+    const x9 = toDec(rts9[ai9]);
+    const bDec9 = ratToDec(bIn9);
+    if (bDec9.times(8).gt(x9.abs().plus(1))) {
+      return err("inexact", "the incoming uncertainty cannot be bounded through this function");
+    }
     inF9 = capFAdd9(inF9, capFScale9(fA9, der9), 1n);
+    const remB9 = rAdd(
+      decToRat(m29.times(bDec9).times(bDec9).toSignificantDigits(20)),
+      rMul(rMul(rAbs9M(der9), bIn9), { n: 1n, d: 10n ** 38n })
+    );
+    if (rnorm(remB9).n !== 0n) {
+      inF9 = capFAdd9(inF9, [{ s: `rem:${fn9}:${ai9}(${capFnv9(`${numRat(rts9[ai9]).n}/${numRat(rts9[ai9]).d}`)};${capFDig9(fA9)})`, x: { n: 1n, d: 1n }, b: remB9 }], 1n);
+    }
   }
   return inF9;
 };
-var capArgKey9 = (rts9) => rts9.map((r9) => {
-  const x9 = numRat(r9);
-  const tr9 = (s9) => s9.length > 512 ? `${s9.slice(0, 256)}~${s9.length}~${s9.slice(-256)}` : s9;
-  return `${tr9(x9.n.toString(36))}/${tr9(x9.d.toString(36))}`;
-}).join(";");
+var capArgKey9 = (rts9) => (
+  // the FULL canonical identity (audit BY): no truncatable window —
+  // cbrt(10^797) and cbrt(10^797 + 36^256) are different symbols
+  rts9.map((r9) => {
+    const x9 = numRat(r9);
+    return `${x9.n.toString(36)}/${x9.d.toString(36)}`;
+  }).join(";")
+);
 var projectStable = (list9, thirty) => {
   const total9 = termsProject(list9, thirty);
   if (total9 === null) return null;
@@ -32079,7 +32192,15 @@ function evalAst(ast, env, ctx = {}) {
               const order9 = scal.map((s9, k9) => ({ s9, c9: canons[k9] }));
               order9.sort((u9, v9) => cmp9(u9.c9, v9.c9));
               const midM = order9.length >> 1;
-              if (order9.length % 2 === 1) return order9[midM].s9.rt;
+              if (order9.length % 2 === 1) {
+                const mrt8 = order9[midM].s9.rt;
+                const mc8 = spanCanon(mrt8.c);
+                if (mc8.months === 0n && mc8.days === 0n) {
+                  const g8 = spanGroups(first.c);
+                  return { t: "ts", c: g8.hasM && !g8.hasD ? { months: 0 } : { days: 0 } };
+                }
+                return mrt8;
+              }
               const lo0 = order9[midM - 1].c9;
               const hi0 = order9[midM].c9;
               const gl0 = spanGroups(order9[midM - 1].s9.rt.c);
@@ -32097,7 +32218,15 @@ function evalAst(ast, env, ctx = {}) {
             }
             scal.sort((a9, b9) => a9.m < b9.m ? -1 : a9.m > b9.m ? 1 : a9.d < b9.d ? -1 : a9.d > b9.d ? 1 : 0);
             const mid9 = scal.length >> 1;
-            if (scal.length % 2 === 1) return scal[mid9].rt;
+            if (scal.length % 2 === 1) {
+              const mrt9 = scal[mid9].rt;
+              const mc9 = spanCanon(mrt9.c);
+              if (mc9.months === 0n && mc9.days === 0n) {
+                const g0 = spanGroups(first.c);
+                return { t: "ts", c: g0.hasM && !g0.hasD ? { months: 0 } : { days: 0 } };
+              }
+              return mrt9;
+            }
             const lo9 = spanCanon(scal[mid9 - 1].rt.c);
             const hi9 = spanCanon(scal[mid9].rt.c);
             const gl9 = spanGroups(scal[mid9 - 1].rt.c);
@@ -32500,34 +32629,37 @@ function evalAst(ast, env, ctx = {}) {
     case "pctOff": {
       const p2 = evalAst(ast.pct, env, ctx);
       const base = evalAst(ast.base, env, ctx);
-      if (p2.t === "e") return p2;
-      if (base.t === "e") return base;
-      if (p2.t !== "p") return err("unsupported-pair", "\u201Coff\u201D needs a percentage on its left");
-      const factor = HUNDRED.minus(p2.v).div(HUNDRED);
-      if (base.t === "q" && isOffsetScale(base)) {
-        return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
-      }
-      if (base.t === "q") {
-        const k9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
-        const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
-        if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), k9), ff9, ctx, p2.capped === true || base.capped === true);
-        return { ...base, ...qv(rMul(qx(base), k9)), ...scaleTerms(base, k9), ...(p2.capped === true || base.capped === true) && { capped: true } };
-      }
-      if (base.t === "ts") {
-        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
-        const pv9 = pctFigure(p2, ctx.monthToDays === "30");
-        if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-        const s9 = tsScale(base, rDiv(rSub({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
-        const capS9 = base.capped === true || p2.capped === true;
-        return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
-      }
-      if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "discount needs a plain number or quantity");
-      {
-        const kOff9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
-        const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
-        if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), kOff9), ff9, ctx, p2.capped === true || base.capped === true);
-        return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
-      }
+      const res$9 = (() => {
+        if (p2.t === "e") return p2;
+        if (base.t === "e") return base;
+        if (p2.t !== "p") return err("unsupported-pair", "\u201Coff\u201D needs a percentage on its left");
+        const factor = HUNDRED.minus(p2.v).div(HUNDRED);
+        if (base.t === "q" && isOffsetScale(base)) {
+          return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
+        }
+        if (base.t === "q") {
+          const k9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
+          const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
+          if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), k9), ff9, ctx, p2.capped === true || base.capped === true);
+          return { ...base, ...qv(rMul(qx(base), k9)), ...scaleTerms(base, k9), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        }
+        if (base.t === "ts") {
+          if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+          const pv9 = pctFigure(p2, ctx.monthToDays === "30");
+          if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
+          const s9 = tsScale(base, rDiv(rSub({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
+          const capS9 = base.capped === true || p2.capped === true;
+          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+        }
+        if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "discount needs a plain number or quantity");
+        {
+          const kOff9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
+          const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
+          if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), kOff9), ff9, ctx, p2.capped === true || base.capped === true);
+          return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        }
+      })();
+      return capCoarse9(res$9, [p2, base], "pctOff");
     }
     case "un": {
       const e = evalAst(ast.e, env, ctx);
@@ -32535,10 +32667,14 @@ function evalAst(ast, env, ctx = {}) {
       if (ast.op === "+") return e;
       if (e.t === "f") {
         const fr9 = makeFrac(-e.n, e.d, e.origin);
-        return e.capped === true && fr9.t !== "e" ? { ...fr9, capped: true } : fr9;
+        if (fr9.t === "e") return fr9;
+        const negF9 = e.capped === true ? { ...fr9, capped: true } : fr9;
+        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
+        if (fN9.length > 0 && negF9.t !== "e") negF9.capF = fN9;
+        return negF9;
       }
       if (e.t === "p") {
-        return {
+        const negP9 = {
           t: "p",
           v: e.v.neg(),
           vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0,
@@ -32546,18 +32682,30 @@ function evalAst(ast, env, ctx = {}) {
           ...e.termsDen && { termsDen: e.termsDen },
           ...e.capped === true && { capped: true }
         };
+        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
+        if (fN9.length > 0) negP9.capF = fN9;
+        return negP9;
       }
       if (e.t === "ts") return { t: "ts", c: addSpans({}, e.c, -1), ...e.capped === true && { capped: true } };
       if (e.t === "ds" || e.t === "wd" || e.t === "ct") return err("unsupported-pair", "this value cannot be negated");
       if (e.t === "q") {
-        return {
+        const negQ9 = {
           ...e,
           v: e.v.neg(),
           vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0,
           ...e.terms && { terms: e.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
         };
+        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
+        if (fN9.length > 0) negQ9.capF = fN9;
+        else delete negQ9.capF;
+        return negQ9;
       }
-      return { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0, ...e.capped === true && { capped: true } };
+      {
+        const negD9 = { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0, ...e.capped === true && { capped: true } };
+        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
+        if (fN9.length > 0) negD9.capF = fN9;
+        return negD9;
+      }
     }
     case "scale": {
       let e = evalAst(ast.e, env, ctx);
@@ -32611,81 +32759,87 @@ function evalAst(ast, env, ctx = {}) {
     case "pctOf": {
       const p2 = evalAst(ast.pct, env, ctx);
       const base = evalAst(ast.base, env, ctx);
-      if (p2.t === "e") return p2;
-      if (base.t === "e") return base;
-      if (p2.t !== "p") return err("unsupported-pair", "\u201Cde/of\u201D needs a percentage on its left");
-      const pf = rDiv(p2.vx ?? decToRat(p2.v), { n: 100n, d: 1n });
-      if (base.t === "p") {
-        const xP6 = rMul(base.vx ?? decToRat(base.v), pf);
-        const capP6 = p2.capped === true || base.capped === true;
-        if (p2.terms !== void 0 || p2.termsDen !== void 0 || base.terms !== void 0 || base.termsDen !== void 0) {
-          const t30p6 = ctx.monthToDays === "30";
-          const fb6 = { num: base.terms ?? [{ x: base.vx ?? decToRat(base.v), comps: [] }], den: base.termsDen ?? ONE_TERMS() };
-          const ff6 = pctFactorFrac(p2, "of", t30p6) ?? { num: [{ x: pf, comps: [] }], den: ONE_TERMS() };
-          const n6 = distributeTerms(fb6.num, ff6.num, t30p6);
-          const d6 = distributeTerms(fb6.den, ff6.den, t30p6);
-          if (n6 === null || d6 === null) {
-            ctx.capNotes?.push("product");
-            return { t: "p", ...qv(xP6), capped: true };
+      const res$9 = (() => {
+        if (p2.t === "e") return p2;
+        if (base.t === "e") return base;
+        if (p2.t !== "p") return err("unsupported-pair", "\u201Cde/of\u201D needs a percentage on its left");
+        const pf = rDiv(p2.vx ?? decToRat(p2.v), { n: 100n, d: 1n });
+        if (base.t === "p") {
+          const xP6 = rMul(base.vx ?? decToRat(base.v), pf);
+          const capP6 = p2.capped === true || base.capped === true;
+          if (p2.terms !== void 0 || p2.termsDen !== void 0 || base.terms !== void 0 || base.termsDen !== void 0) {
+            const t30p6 = ctx.monthToDays === "30";
+            const fb6 = { num: base.terms ?? [{ x: base.vx ?? decToRat(base.v), comps: [] }], den: base.termsDen ?? ONE_TERMS() };
+            const ff6 = pctFactorFrac(p2, "of", t30p6) ?? { num: [{ x: pf, comps: [] }], den: ONE_TERMS() };
+            const n6 = distributeTerms(fb6.num, ff6.num, t30p6);
+            const d6 = distributeTerms(fb6.den, ff6.den, t30p6);
+            if (n6 === null || d6 === null) {
+              ctx.capNotes?.push("product");
+              return { t: "p", ...qv(xP6), capped: true };
+            }
+            const q6 = attachFrac({ t: "q", ...qv(xP6), dim: {}, symbol: "", comps: [] }, n6, d6);
+            return { t: "p", ...qv(xP6), ...q6.terms && { terms: q6.terms }, ...q6.termsDen && { termsDen: q6.termsDen }, ...capP6 && { capped: true } };
           }
-          const q6 = attachFrac({ t: "q", ...qv(xP6), dim: {}, symbol: "", comps: [] }, n6, d6);
-          return { t: "p", ...qv(xP6), ...q6.terms && { terms: q6.terms }, ...q6.termsDen && { termsDen: q6.termsDen }, ...capP6 && { capped: true } };
+          return { t: "p", ...qv(xP6), ...capP6 && { capped: true } };
         }
-        return { t: "p", ...qv(xP6), ...capP6 && { capped: true } };
-      }
-      if (base.t === "q" && isOffsetScale(base)) {
-        return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
-      }
-      if (base.t === "q") {
-        const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
-        if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
-        return { ...base, ...qv(rMul(qx(base), pf)), ...scaleTerms(base, pf), ...(p2.capped === true || base.capped === true) && { capped: true } };
-      }
-      if (base.t === "ts") {
-        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
-        const pv9 = pctFigure(p2, ctx.monthToDays === "30");
-        if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-        const s9 = tsScale(base, rDiv(pv9, { n: 100n, d: 1n }), ctx);
-        const capS9 = base.capped === true || p2.capped === true;
-        return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
-      }
-      if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
-      {
-        const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
-        if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
-      }
-      return { t: "d", ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        if (base.t === "q" && isOffsetScale(base)) {
+          return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
+        }
+        if (base.t === "q") {
+          const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
+          if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
+          return { ...base, ...qv(rMul(qx(base), pf)), ...scaleTerms(base, pf), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        }
+        if (base.t === "ts") {
+          if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+          const pv9 = pctFigure(p2, ctx.monthToDays === "30");
+          if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
+          const s9 = tsScale(base, rDiv(pv9, { n: 100n, d: 1n }), ctx);
+          const capS9 = base.capped === true || p2.capped === true;
+          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+        }
+        if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
+        {
+          const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
+          if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
+        }
+        return { t: "d", ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+      })();
+      return capCoarse9(res$9, [p2, base], "pctOf");
     }
     case "pctOn": {
       const p2 = evalAst(ast.pct, env, ctx);
       const base = evalAst(ast.base, env, ctx);
-      if (p2.t === "e") return p2;
-      if (base.t === "e") return base;
-      if (p2.t !== "p") return err("unsupported-pair", "\u201Csur/on\u201D needs a percentage on its left");
-      if (base.t === "q" && isOffsetScale(base)) {
-        return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
-      }
-      if (base.t === "q") {
-        const kOn = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
-        const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
-        if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), kOn), ff9, ctx, p2.capped === true || base.capped === true);
-        return { ...base, ...qv(rMul(qx(base), kOn)), ...scaleTerms(base, kOn), ...(p2.capped === true || base.capped === true) && { capped: true } };
-      }
-      if (base.t === "ts") {
-        if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
-        const pv9 = pctFigure(p2, ctx.monthToDays === "30");
-        if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-        const s9 = tsScale(base, rDiv(rAdd({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
-        const capS9 = base.capped === true || p2.capped === true;
-        return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
-      }
-      if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "markup needs a plain number or quantity");
-      {
-        const kOn9 = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
-        const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
-        if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), kOn9), ff9, ctx, p2.capped === true || base.capped === true);
-        return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
-      }
+      const res$9 = (() => {
+        if (p2.t === "e") return p2;
+        if (base.t === "e") return base;
+        if (p2.t !== "p") return err("unsupported-pair", "\u201Csur/on\u201D needs a percentage on its left");
+        if (base.t === "q" && isOffsetScale(base)) {
+          return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
+        }
+        if (base.t === "q") {
+          const kOn = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
+          const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
+          if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), kOn), ff9, ctx, p2.capped === true || base.capped === true);
+          return { ...base, ...qv(rMul(qx(base), kOn)), ...scaleTerms(base, kOn), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        }
+        if (base.t === "ts") {
+          if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+          const pv9 = pctFigure(p2, ctx.monthToDays === "30");
+          if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
+          const s9 = tsScale(base, rDiv(rAdd({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
+          const capS9 = base.capped === true || p2.capped === true;
+          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+        }
+        if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "markup needs a plain number or quantity");
+        {
+          const kOn9 = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
+          const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
+          if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), kOn9), ff9, ctx, p2.capped === true || base.capped === true);
+          return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        }
+      })();
+      return capCoarse9(res$9, [p2, base], "pctOn");
     }
     case "isPctOfWhat": {
       const value = evalAst(ast.value, env, ctx);
@@ -33342,53 +33496,56 @@ function evalAst(ast, env, ctx = {}) {
     }
     case "convert": {
       const e = evalAst(ast.e, env, ctx);
-      if (e.t === "e") return e;
-      let tComps;
-      let symbol;
-      let def;
-      let rate;
-      if (ast.denWord !== void 0 || ast.denSpan !== void 0) {
-        const num = lookupUnit(ast.word);
-        const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.denWord);
-        if (num.affine || den.affine) {
-          return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate target`);
+      const res$9 = (() => {
+        if (e.t === "e") return e;
+        let tComps;
+        let symbol;
+        let def;
+        let rate;
+        if (ast.denWord !== void 0 || ast.denSpan !== void 0) {
+          const num = lookupUnit(ast.word);
+          const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.denWord);
+          if (num.affine || den.affine) {
+            return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate target`);
+          }
+          const numComps = unitComps(ast.word) ?? [{ def: num, exp: 1 }];
+          const denComps = ast.denSpan !== void 0 ? [{ def: den, exp: 1 }] : unitComps(ast.denWord) ?? [{ def: den, exp: 1 }];
+          tComps = [...numComps, ...denComps.map((c2) => ({ def: c2.def, exp: -c2.exp }))];
+          symbol = denComps.length > 1 ? `${num.symbol}/(${den.symbol})` : `${num.symbol}/${den.symbol}`;
+          def = {
+            id: `${num.id}/${den.id}`,
+            symbol,
+            dim: dimAdd(num.dim, den.dim, -1),
+            ...num.factor && den.factor && { factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n } }
+          };
+          rate = { num, den };
+        } else {
+          const target = lookupUnit(ast.word);
+          tComps = unitComps(ast.word)?.map((c2) => ({ ...c2 })) ?? [{ def: target, exp: 1 }];
+          symbol = target.symbol;
+          def = target;
+          const pos = tComps.filter((c2) => c2.exp === 1);
+          const neg = tComps.filter((c2) => c2.exp === -1);
+          if (tComps.length === 2 && pos.length === 1 && neg.length === 1) rate = { num: pos[0].def, den: neg[0].def };
         }
-        const numComps = unitComps(ast.word) ?? [{ def: num, exp: 1 }];
-        const denComps = ast.denSpan !== void 0 ? [{ def: den, exp: 1 }] : unitComps(ast.denWord) ?? [{ def: den, exp: 1 }];
-        tComps = [...numComps, ...denComps.map((c2) => ({ def: c2.def, exp: -c2.exp }))];
-        symbol = denComps.length > 1 ? `${num.symbol}/(${den.symbol})` : `${num.symbol}/${den.symbol}`;
-        def = {
-          id: `${num.id}/${den.id}`,
+        if (e.t !== "q") return err("unit-mismatch", `only a quantity can be converted to ${symbol}`);
+        const dim = dimOfComps(tComps);
+        if (!dimsCompatible(dim, e.dim, ctx)) return err("unit-mismatch", `cannot convert ${e.symbol} to ${symbol}`);
+        const template = {
+          t: "q",
+          v: new DecC(1),
+          dim,
           symbol,
-          dim: dimAdd(num.dim, den.dim, -1),
-          ...num.factor && den.factor && { factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n } }
+          ...def && { def },
+          ...rate && { rate },
+          comps: tComps
         };
-        rate = { num, den };
-      } else {
-        const target = lookupUnit(ast.word);
-        tComps = unitComps(ast.word)?.map((c2) => ({ ...c2 })) ?? [{ def: target, exp: 1 }];
-        symbol = target.symbol;
-        def = target;
-        const pos = tComps.filter((c2) => c2.exp === 1);
-        const neg = tComps.filter((c2) => c2.exp === -1);
-        if (tComps.length === 2 && pos.length === 1 && neg.length === 1) rate = { num: pos[0].def, den: neg[0].def };
-      }
-      if (e.t !== "q") return err("unit-mismatch", `only a quantity can be converted to ${symbol}`);
-      const dim = dimOfComps(tComps);
-      if (!dimsCompatible(dim, e.dim, ctx)) return err("unit-mismatch", `cannot convert ${e.symbol} to ${symbol}`);
-      const template = {
-        t: "q",
-        v: new DecC(1),
-        dim,
-        symbol,
-        ...def && { def },
-        ...rate && { rate },
-        comps: tComps
-      };
-      if (e.symbol === symbol) return { ...template, ...qv(qx(e)), ...e.terms && { terms: e.terms }, ...e.termsDen && { termsDen: e.termsDen }, chosen: true, ...e.capped === true && { capped: true } };
-      const aligned = alignForAdd(template, e, ctx);
-      if (aligned.t === "e") return aligned;
-      return { ...aligned, chosen: true, ...e.capped === true && { capped: true } };
+        if (e.symbol === symbol) return { ...template, ...qv(qx(e)), ...e.terms && { terms: e.terms }, ...e.termsDen && { termsDen: e.termsDen }, chosen: true, ...e.capped === true && { capped: true } };
+        const aligned = alignForAdd(template, e, ctx);
+        if (aligned.t === "e") return aligned;
+        return { ...aligned, chosen: true, ...e.capped === true && { capped: true } };
+      })();
+      return capCoarse9(res$9, [e], "convert");
     }
     case "bin": {
       let l2 = evalAst(ast.l, env, ctx);
@@ -34231,21 +34388,51 @@ function evalAst(ast, env, ctx = {}) {
               if (ast.op === "+" || ast.op === "-") return capAddGate9(l2, r3, out, ast.op === "+" ? 1n : -1n);
               const fL9 = capFOf9(l2);
               const fR9 = capFOf9(r3);
-              if ((fL9 === void 0 || fL9.length === 0) && (fR9 === void 0 || fR9.length === 0)) return {};
+              if ((fL9 === void 0 || fL9.length === 0) && (fR9 === void 0 || fR9.length === 0)) {
+                return fL9 !== void 0 || fR9 !== void 0 ? { capF: [] } : {};
+              }
               try {
+                const bL9 = capFBound9(fL9 ?? []);
+                const bR9 = capFBound9(fR9 ?? []);
+                const remKey9 = `rem:${ast.op}(${capFDig9(fL9)};${capFDig9(fR9)};${capFnv9(`${a3.n}/${a3.d}|${b3.n}/${b3.d}`)})`;
                 if (ast.op === "*") {
-                  return { capF: capFAdd9(capFScale9(fL9, rAbs9M(b3)), capFScale9(fR9, rAbs9M(a3)), 1n) };
+                  let f9 = capFAdd9(capFScale9(fL9, b3), capFScale9(fR9, a3), 1n);
+                  const cross9x = rMul(bL9, bR9);
+                  if (rnorm(cross9x).n !== 0n) f9 = capFAdd9(f9, [{ s: remKey9, x: { n: 1n, d: 1n }, b: cross9x }], 1n);
+                  return { capF: f9 };
                 }
                 if (ast.op === "/") {
-                  const inv9 = rDiv({ n: 1n, d: 1n }, rAbs9M(b3));
-                  return { capF: capFAdd9(capFScale9(fL9, inv9), capFScale9(fR9, rRound40(rMul(rAbs9M(a3), rMul(inv9, inv9)))), 1n) };
+                  if (rCmp(rMul(bR9, { n: 2n, d: 1n }), rAbs9M(b3)) > 0 && rnorm(bR9).n !== 0n) {
+                    return { err: err("inexact", CAP_CANCEL_MSG) };
+                  }
+                  const inv9 = rDiv({ n: 1n, d: 1n }, b3);
+                  let f9 = capFAdd9(capFScale9(fL9, inv9), capFScale9(fR9, rMul({ n: -1n, d: 1n }, rMul(a3, rMul(inv9, inv9)))), 1n);
+                  const rem9 = rAdd(
+                    rMul(rMul(bL9, bR9), rMul(rAbs9M(inv9), rAbs9M(inv9))),
+                    rMul(rMul(rAbs9M(a3), rMul(bR9, bR9)), rMul(rAbs9M(inv9), rMul(rAbs9M(inv9), rAbs9M(inv9))))
+                  );
+                  const rem29 = rMul(rem9, { n: 4n, d: 1n });
+                  let ff9 = f9;
+                  if (rnorm(rem29).n !== 0n) ff9 = capFAdd9(f9, [{ s: remKey9, x: { n: 1n, d: 1n }, b: rem29 }], 1n);
+                  return { capF: ff9 };
                 }
                 if (ast.op === "^") {
                   const k9 = Number(b3.n);
                   if (k9 === 0) return {};
-                  const scale9 = toDec(l2).abs().pow(k9 - 1).times(Math.abs(k9)).toSignificantDigits(40);
+                  const aD9 = toDec(l2);
+                  const scale9 = aD9.pow(k9 - 1).times(k9).toSignificantDigits(40);
                   if (!scale9.isFinite()) return { err: err("inexact", CAP_CANCEL_MSG) };
-                  return { capF: capFScale9(fL9, decToRat(scale9)) };
+                  let f9 = capFScale9(fL9, decToRat(scale9));
+                  if (Math.abs(k9) >= 2 && rnorm(bL9).n !== 0n) {
+                    const bDec9 = ratToDec(bL9);
+                    if (bDec9.times(2 * Math.abs(k9)).gt(aD9.abs().plus("1e-9999"))) {
+                      return { err: err("inexact", CAP_CANCEL_MSG) };
+                    }
+                    const rem9 = aD9.abs().pow(k9 - 2).times(k9 * k9).times(bDec9).times(bDec9).times(2).toSignificantDigits(20);
+                    if (!rem9.isFinite()) return { err: err("inexact", CAP_CANCEL_MSG) };
+                    f9 = capFAdd9(f9, [{ s: remKey9, x: { n: 1n, d: 1n }, b: decToRat(rem9) }], 1n);
+                  }
+                  return { capF: f9 };
                 }
                 return {};
               } catch {
@@ -34374,7 +34561,15 @@ function evalAst(ast, env, ctx = {}) {
         }
         return err("unsupported-pair", "this combination of operands is undefined");
       })();
-      return (l2.capped === true || r3.capped === true) && bin9.capped !== true ? { ...bin9, capped: true } : bin9;
+      const binJ9 = (l2.capped === true || r3.capped === true) && bin9.capped !== true ? { ...bin9, capped: true } : bin9;
+      if ((binJ9.t === "d" || binJ9.t === "f" || binJ9.t === "q" || binJ9.t === "p") && capFOf9(binJ9) === void 0 && ((capFOf9(l2)?.length ?? 0) > 0 || (capFOf9(r3)?.length ?? 0) > 0)) {
+        const v9 = binJ9.t === "q" ? qx(binJ9) : binJ9.vx ?? decToRat(binJ9.v);
+        if ((ast.op === "+" || ast.op === "-") && rnorm(v9).n === 0n) {
+          return err("inexact", CAP_CANCEL_MSG);
+        }
+        return capCoarse9(binJ9, [l2, r3], `bin:${ast.op}`);
+      }
+      return binJ9;
     }
   }
 }
@@ -37242,10 +37437,10 @@ function unitCalendarFusion(text) {
   if (isUnitWord(text)) return false;
   for (let k9 = 1; k9 <= text.length - 1; k9++) {
     const pre9 = text.slice(0, k9);
-    if (!isUnitWord(pre9) && plausibleUnitReason(pre9) === null && // the FULL SI registry (audit BX): quetta/ronna (Q/R), quecto/
-    // ronto (q/r) and deca (da) included; the canonical key is NFKC
-    // (µ folds to GREEK μ) — never a hand-trimmed list
-    !(k9 === 1 && /^[yzafpnµμumcdhkMGTPEZYQRqr]$/u.test(pre9)) && !(k9 === 2 && pre9 === "da")) continue;
+    if (!isUnitWord(pre9) && plausibleUnitReason(pre9) === null && // the FULL SI registry (audits BX/BY): letters, deca AND the
+    // prefix NAMES (quetta…quebi) from the shared units table —
+    // never a hand-trimmed list
+    !(k9 === 1 && /^[yzafpnµμumcdhkMGTPEZYQRqr]$/u.test(pre9)) && !(k9 === 2 && pre9 === "da") && !isSiPrefixName(pre9)) continue;
     const rest9 = text.slice(k9);
     if (!isTimespanUnitWord(rest9)) continue;
     if (/^ans?$/iu.test(rest9) && k9 === 1) continue;
@@ -37766,6 +37961,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         if (boundWin9) continue;
         const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
         const noteTok9 = /* @__PURE__ */ new Set();
+        const noteBare9 = /* @__PURE__ */ new Set();
+        const noteStart9 = /* @__PURE__ */ new Map();
         for (let i9 = 0; i9 < tokens.length; i9++) {
           if (tokens[i9].kind !== "lparen") continue;
           let d9 = 0;
@@ -37782,12 +37979,37 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           if (e9 >= tokens.length) continue;
           const inner9 = tokens.slice(i9 + 1, e9);
           if (inner9.length > 0 && inner9.every((t9) => !["number", "fraction", "percent", "date", "clocktime", "badnumber"].includes(t9.kind))) {
-            for (let j9 = i9; j9 <= e9; j9++) noteTok9.add(j9);
+            for (let j9 = i9; j9 <= e9; j9++) {
+              noteTok9.add(j9);
+              noteStart9.set(j9, i9);
+            }
+            if (inner9.every((t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)))) {
+              for (let j9 = i9 + 1; j9 < e9; j9++) noteBare9.add(j9);
+            }
+          }
+        }
+        const noteLabel9 = /* @__PURE__ */ new Set();
+        {
+          const colon9 = tokens.findIndex((t9) => t9.kind === "colon");
+          if (colon9 > 0 && tokens.slice(0, colon9).every((t9) => t9.kind === "word")) {
+            for (let j9 = 0; j9 <= colon9; j9++) {
+              noteTok9.add(j9);
+              noteLabel9.add(j9);
+            }
           }
         }
         const thruIdx9 = (k9) => noteTok9.has(k9) || thru9(tokens[k9]);
-        const allInterest9 = tokens.every((t9, k9) => noteTok9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
-        const allPayment9 = tokens.every((t9, k9) => noteTok9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
+        const lastAnchor9 = (() => {
+          let la9 = -1;
+          for (let k9 = 0; k9 < tokens.length; k9++) {
+            if (!noteTok9.has(k9) && !noteLabel9.has(k9) && tokens[k9].kind === "word" && isFinanceAnchorWord(tokens[k9].text)) la9 = k9;
+          }
+          return la9;
+        })();
+        const noteTrail9 = (k9) => noteTok9.has(k9) && lastAnchor9 >= 0 && (noteStart9.get(k9) ?? -1) > lastAnchor9;
+        if (noteLabel9.has(iq9) || noteTrail9(iq9) && !noteBare9.has(iq9)) continue;
+        const allInterest9 = tokens.every((t9, k9) => noteTrail9(k9) || noteLabel9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
+        const allPayment9 = tokens.every((t9, k9) => noteTrail9(k9) || noteLabel9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
         const PROOF9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?)$/iu;
         const boundAt9 = (k9) => {
           for (let s9 = Math.max(0, k9 - 15); s9 <= k9; s9++) {
@@ -38921,7 +39143,12 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       if (over9 !== void 0) {
         throw new ParseError("not-understood", `\u201C${over9.text.slice(0, 40)}\u2026\u201D is longer than a variable name can be (1024 characters)`);
       }
-      const fused9 = tokens.slice(0, eqIdx).find((t9) => unitCalendarFusion(t9.text));
+      if (tokens.slice(0, eqIdx).reduce((s9, t9) => s9 + t9.text.length, 0) > 1024) {
+        throw new ParseError("not-understood", "variable names are limited to 1024 characters in total");
+      }
+      const fused9 = tokens.slice(0, eqIdx).find((t9) => unitCalendarFusion(t9.text) || // no length CLIFF (audit BY): an oversized word with a calendar
+      // tail refuses like its short form
+      t9.text.length > 200 && /(days?|jours?|weeks?|semaines?|months?|mois|years?|ann[ée]es?|heures?|hours?|tag|woche|monat|jahr)$/iu.test(t9.text));
       if (fused9 !== void 0) {
         throw new ParseError("not-understood", `\u201C${fused9.text}\u201D reads as a unit\u2013calendar compound and cannot be a variable name`);
       }
