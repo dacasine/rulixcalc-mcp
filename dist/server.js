@@ -30245,9 +30245,11 @@ function applyExactFunction(fn, rts) {
         if (b2.n > 0n && b2.n !== b2.d && a0.n > 0n) {
           const kEst9 = (() => {
             try {
-              const lb9 = DecC.ln(new DecC(b2.n.toString()).div(b2.d.toString()));
+              const digsK9 = a0.n.toString().length + a0.d.toString().length + b2.n.toString().length + b2.d.toString().length;
+              const DecK9 = digsK9 > 60 ? DecC.clone({ precision: Math.min(12e3, digsK9 + 20) }) : DecC;
+              const lb9 = DecK9.ln(new DecK9(b2.n.toString()).div(b2.d.toString()));
               if (lb9.isZero()) return null;
-              const la9 = DecC.ln(new DecC(a0.n.toString()).div(a0.d.toString()));
+              const la9 = DecK9.ln(new DecK9(a0.n.toString()).div(a0.d.toString()));
               const k9 = la9.div(lb9).toNearest(1);
               if (!k9.isFinite() || k9.abs().gt(1e5)) return null;
               return Number(k9.toString());
@@ -32883,9 +32885,15 @@ function evalAst(ast, env, ctx = {}) {
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
         let v2 = evaluated9[ai9];
         if (v2.t === "q" && dimIsEmpty(v2.dim)) {
-          const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidue(v2, ctx.monthToDays === "30");
-          if (vFold9.t === "q" && isCarrier(vFold9) && !carrierFaithful(vFold9, ctx.monthToDays === "30")) {
-            return err("inexact", "this value\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
+          const t30v9 = ctx.monthToDays === "30";
+          const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidue(v2, t30v9);
+          if (vFold9.t === "q" && isCarrier(vFold9)) {
+            const exV9 = engineExactRat(vFold9, t30v9);
+            if (exV9 !== null) {
+              v2 = { t: "d", ...qv(exV9), capped: true };
+            } else if (!carrierFaithful(vFold9, t30v9)) {
+              return err("inexact", "this value\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
+            }
           }
         }
         if (v2.t === "q") v2 = carrierNum(foldIrrationalResidue(v2, ctx.monthToDays === "30"), ctx);
@@ -32919,16 +32927,28 @@ function evalAst(ast, env, ctx = {}) {
           const x9 = numRat(r9);
           return x9.n.toString().length + x9.d.toString().length + 60;
         }));
-        if (need9 > 12e3) {
-          return err("inexact", `${ast.fn} of this argument needs more internal precision than the engine can certify (12000 digits) \u2014 near its sensitive points the rounding would decide the result`);
+        const cap9 = ast.fn === "asin" || ast.fn === "acos" ? 1e3 : 12e3;
+        if (need9 > cap9) {
+          return err("inexact", `${ast.fn} of this argument needs more internal precision than the engine can certify (${cap9} digits) \u2014 near its sensitive points the rounding would decide the result`);
         }
         const prec9 = need9;
+        if ((ast.fn === "sin" || ast.fn === "cos" || ast.fn === "tan") && rts[0] !== void 0) {
+          const eMag9 = toDec(rts[0]).e;
+          if (eMag9 + prec9 > 1e3) {
+            return err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision");
+          }
+        }
         const DecP9 = prec9 <= 100 ? DecHi : DecC.clone({ precision: prec9 });
         const toHiP9 = (rt9) => {
           const x9 = numRat(rt9);
           return new DecP9(x9.n.toString()).div(x9.d.toString());
         };
-        const hi9 = applyFunction(ast.fn, rts.map(toHiP9));
+        let hi9;
+        try {
+          hi9 = applyFunction(ast.fn, rts.map(toHiP9));
+        } catch {
+          return err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision");
+        }
         if (hi9.t === "d" && isRepresentable(hi9.v)) {
           res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), capped: true };
           ctx.capNotes?.push("function");
@@ -33591,7 +33611,7 @@ function evalAst(ast, env, ctx = {}) {
                   ...qSide.terms && { terms: qSide.terms },
                   ...qSide.termsDen && { termsDen: qSide.termsDen }
                 } : qSide;
-                if (isCarrier(qF8) && dimIsEmpty(qF8.dim) && (ast.op === "*" || l2.t === "ts")) {
+                if (isCarrier(qF8) && dimIsEmpty(qF8.dim) && (compsOf(qF8) ?? []).every((c9) => c9.def.currency === void 0) && [...qF8.terms ?? [], ...qF8.termsDen ?? []].every((t9) => t9.comps.every((c9) => c9.def.currency === void 0)) && (ast.op === "*" || l2.t === "ts")) {
                   if (qF8.capped === true || qSide.capped === true) return err("inexact", TS_IRR_MSG);
                   const zero8 = qx(qF8).n === 0n && (qF8.terms === void 0 || qF8.terms.every((t9) => t9.x.n === 0n));
                   const k8 = (zero8 ? { n: 0n, d: 1n } : null) ?? fracReduce(qF8, ctx.monthToDays === "30") ?? (qF8.terms === void 0 && qF8.termsDen === void 0 && (compsOf(qF8) ?? []).every((c9) => c9.def.factorDec === void 0) ? qx(qF8) : null);
@@ -34673,12 +34693,20 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     };
     const intDigits = readDigits();
     if (intDigits === "0" && /^[xXbBoO]/.test(line[i2] ?? "")) {
-      const run = /^[xXbBoO][0-9a-zA-Z]*/.exec(line.slice(i2))[0];
-      const isHex2 = run[0] === "x" || run[0] === "X";
-      const isOct = run[0] === "o" || run[0] === "O";
-      const body = run.slice(1);
+      const baseCh9 = line[i2];
+      let bj9 = i2 + 1;
+      let body = "";
+      for (; ; ) {
+        const k9 = invSkip9(bj9);
+        const c9 = line[k9];
+        if (c9 === void 0 || !/[0-9a-zA-Z]/.test(c9)) break;
+        body += c9;
+        bj9 = k9 + 1;
+      }
+      i2 = bj9;
+      const isHex2 = baseCh9 === "x" || baseCh9 === "X";
+      const isOct = baseCh9 === "o" || baseCh9 === "O";
       const valid = body.length > 0 && (isHex2 ? /^[0-9a-fA-F]+$/.test(body) : isOct ? /^[0-7]+$/.test(body) : /^[01]+$/.test(body));
-      i2 += run.length;
       const text2 = line.slice(start, i2);
       if (valid) {
         const value = BigInt((isHex2 ? "0x" : isOct ? "0o" : "0b") + body);
@@ -34749,7 +34777,10 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         return;
       }
     }
-    if (!eDone9 && /^[eE]($|[^\p{L}\d])/u.test(line.slice(i2)) && segs.length === 0 && intDigits.length > 0) {
+    if (!eDone9 && eAt9 === i2 && (eCh9 === "e" || eCh9 === "E") && (() => {
+      const n9 = line[invSkip9(i2 + 1)];
+      return n9 === void 0 || !/[\p{L}\d]/u.test(n9);
+    })() && segs.length === 0 && intDigits.length > 0) {
       i2 += 1;
       tokens.push({ kind: "number", text: line.slice(start, i2), start, end: i2, dec: new DecC(intDigits), plainInt: true, ordinalOf: intDigits });
       return;
@@ -34780,6 +34811,9 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       for (const idx of groupIdxs) {
         if (segs[idx].digits.length !== 3) error2 = "misplaced-group-separator";
       }
+    }
+    if (!error2 && segs.some((seg) => !g2.decimal.has(seg.sep) && !g2.group.has(seg.sep))) {
+      error2 = "misplaced-group-separator";
     }
     const text = line.slice(start, i2);
     if (error2) {
@@ -34820,12 +34854,26 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     {
       const last2 = tokens[tokens.length - 1];
       if (last2.plainInt) {
-        const hm = /^h([0-5]\d|\d)(?![\d\p{L}])/u.exec(line.slice(i2));
+        const hm = (() => {
+          const hAt9 = invSkip9(i2);
+          if (line[hAt9] !== "h") return null;
+          let j9 = invSkip9(hAt9 + 1);
+          let mins = "";
+          while (mins.length < 2 && isDigit(line[j9])) {
+            mins += line[j9];
+            j9++;
+            if (mins.length < 2) j9 = invSkip9(j9);
+          }
+          if (mins.length === 0) return null;
+          if (mins.length === 2 && !/^[0-5]/.test(mins)) return null;
+          const nx9 = line[invSkip9(j9)];
+          if (nx9 !== void 0 && /[\d\p{L}]/u.test(nx9)) return null;
+          return { mins, end: j9 };
+        })();
         if (hm) {
-          const hStart = i2;
-          i2 += hm[0].length;
+          i2 = hm.end;
           tokens.pop();
-          const num = BigInt(last2.text) * 60n + BigInt(hm[1]);
+          const num = BigInt(last2.text) * 60n + BigInt(hm.mins);
           tokens.push({ kind: "fraction", text: line.slice(start, i2), start, end: i2, num, den: 60n });
           tokens.push({ kind: "word", text: "h", start: i2, end: i2 });
           return;
@@ -34841,10 +34889,12 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
     if (last.plainInt && !prevBindsTighter && line[i2] === "/") {
       const fm = /^\/(\d+)/.exec(line.slice(i2));
       if (fm) {
-        const after = line[i2 + fm[0].length];
+        const aftAt9 = invSkip9(i2 + fm[0].length);
+        const after = line[aftAt9];
+        const aft29 = line[invSkip9(aftAt9 + 1)];
         const blocked = after !== void 0 && (isDigit(after) || after === "/" || after === "." || after === "," || after === "'" || after === "^" || after === "\u02C6" || after === "!" || // the denominator CONTINUES numerically: "1/2e3" is 1/(2e3),
         // "1/0x10" is 1/(0x10) — but "1/2kg" is HALF A KILO (audit M)
-        (after === "e" || after === "E") && /^[0-9+\-−–]/.test(line[i2 + fm[0].length + 1] ?? "") || fm[1] === "0" && /^[xXoObB]/.test(after) || after === "*" && line[i2 + fm[0].length + 1] === "*");
+        (after === "e" || after === "E") && /^[0-9+\-−–]/.test(aft29 ?? "") || fm[1] === "0" && /^[xXoObB]/.test(after) || after === "*" && aft29 === "*");
         if (!blocked) {
           i2 += fm[0].length;
           tokens.pop();
@@ -37226,7 +37276,7 @@ function splitInterpuncts(tokens, lexicon, violations) {
         const raw0 = t0.rawText ?? t0.text;
         if (raw0 !== t0.text && raw0.length > 256) {
           violations.push(`\u201C${t0.text.slice(0, 40)}\u2026\u201D is longer than the engine can map to its source faithfully \u2014 split it around the interpunct`);
-          out0.push(t0);
+          out0.push({ kind: "badnumber", text: t0.text, start: t0.start, end: t0.end });
           continue;
         }
         const lens0 = [0];
@@ -37330,10 +37380,29 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         if (boundWin9) continue;
         const allInterest9 = tokens.every((t9) => !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
         const allPayment9 = tokens.every((t9) => !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
-        const hasCompoundish9 = tokens.some((t9) => t9.kind === "word" && COMPOUNDISH9.test(t9.text));
+        const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
+        const boundAt9 = (k9) => {
+          for (let s9 = Math.max(0, k9 - 15); s9 <= k9; s9++) {
+            for (let e9 = k9; e9 < Math.min(tokens.length, s9 + 16); e9++) {
+              const win9 = tokens.slice(s9, e9 + 1);
+              if (win9.length < 2 || !win9.every((t9) => t9.kind === "word")) continue;
+              if (env.has(win9.map((t9) => t9.text).join(" "))) return true;
+            }
+          }
+          return false;
+        };
+        const hasCompoundish9 = tokens.some((t9, k9) => {
+          if (!(t9.kind === "word" && COMPOUNDISH9.test(t9.text))) return false;
+          if (boundAt9(k9)) return false;
+          let a92 = k9 + 1;
+          while (thru9(tokens[a92])) a92++;
+          if (tokens[a92]?.kind === "word" && isFinanceAnchorWord(tokens[a92].text)) return true;
+          let b92 = k9 - 1;
+          while (b92 >= 0 && thru9(tokens[b92])) b92--;
+          return b92 >= 0 && tokens[b92]?.kind === "word" && isFinanceAnchorWord(tokens[b92].text);
+        });
         if (/^(annual(ly)?|annuels?|annuelles?|annuellement)$/iu.test(tq9.text) && allInterest9 && hasCompoundish9) continue;
         if (/^(monthly|mensuel(le)?s?)$/iu.test(tq9.text) && allPayment9) continue;
-        const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
         const neutral9 = (t9) => t9?.kind === "word" && !env.has(t9.text) && !isComputableWord(t9.text) && !isReservedWord(t9.text) && !isUnitWord(t9.text) && !isFinanceAnchorWord(t9.text);
         let a9 = iq9 + 1;
         while (thru9(tokens[a9]) || neutral9(tokens[a9])) a9++;
@@ -37963,14 +38032,36 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         violations.push(`\u201C${t2.rawText}\u201D fuses a unit ligature with prose \u2014 write them separately`);
       } else if (t2.ligSplit9 === true && Array.from({ length: Math.min(t2.text.length, 24) }, (_9, k9) => k9 + 1).some((k9) => isUnitWord(t2.text.slice(0, k9)) || isTimespanUnitWord(t2.text.slice(0, k9)))) {
         violations.push(`\u201C${t2.rawText ?? t2.text}\u201D fuses a unit ligature with prose \u2014 write them separately`);
-      } else if (t2.dotSplit9 === true && (Array.from({ length: Math.max(0, Math.min(t2.text.length - 1, 23)) }, (_9, k9) => k9 + 2).some((k9) => isUnitWord(t2.text.slice(0, k9)) || isTimespanUnitWord(t2.text.slice(0, k9))) || // a 1..4-char UNIT prefix whose remainder is itself a unit or a
-      // calendar pseudo-unit is a compound, never prose (audit BQ):
-      // kg·sday, kg·hmonth, kg·myear all refuse — and the calendar
-      // part is found ANYWHERE in the remainder (audit BR):
-      // kg·sdayfoo is a lost factor too, a tail never reopens the door
-      [1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && (isUnitWord(t2.text.slice(k9)) || isTimespanUnitWord(t2.text.slice(k9)) || Array.from({ length: Math.min(t2.text.length - k9, 12) }, (_9, j9) => j9 + 2).some((j9) => isTimespanUnitWord(t2.text.slice(k9, k9 + j9))))))) {
+      } else if (t2.dotSplit9 === true && (() => {
+        const w9 = t2.text;
+        for (let k9 = 2; k9 <= Math.min(24, w9.length - 1); k9++) {
+          if (isUnitWord(w9.slice(0, k9)) || isTimespanUnitWord(w9.slice(0, k9))) return true;
+        }
+        for (let k9 = 1; k9 <= Math.min(24, w9.length - 1); k9++) {
+          if (!isUnitWord(w9.slice(0, k9))) continue;
+          const rest9 = w9.slice(k9);
+          if (isUnitWord(rest9) || isTimespanUnitWord(rest9)) return true;
+          for (let j9 = 2; j9 <= Math.min(12, rest9.length - 1); j9++) {
+            if (isTimespanUnitWord(rest9.slice(0, j9))) return true;
+          }
+        }
+        return false;
+      })()) {
         violations.push(`\u201C${t2.rawText ?? t2.text}\u201D fuses a unit with prose across an interpunct \u2014 write them separately`);
-      } else if ([1, 2, 3, 4].some((k9) => k9 < t2.text.length && isUnitWord(t2.text.slice(0, k9)) && isTimespanUnitWord(t2.text.slice(k9)) && !/^ans?$/iu.test(t2.text.slice(k9)))) {
+      } else if ((() => {
+        const w9 = t2.text;
+        for (let k9 = 1; k9 <= Math.min(24, w9.length - 1); k9++) {
+          if (!isUnitWord(w9.slice(0, k9))) continue;
+          const rest9 = w9.slice(k9);
+          if (/^ans?$/iu.test(rest9)) continue;
+          if (isTimespanUnitWord(rest9)) return true;
+          for (let j9 = 3; j9 <= Math.min(12, rest9.length - 1); j9++) {
+            const part9 = rest9.slice(0, j9);
+            if (!/^ans?$/iu.test(part9) && isTimespanUnitWord(part9)) return true;
+          }
+        }
+        return false;
+      })()) {
         violations.push(`\u201C${t2.text}\u201D looks like a unit\u2013calendar compound \u2014 write the factors separately`);
       } else {
         const financeGlue9 = ["at", "\xE0", "a", "zu", "au", "for", "over", "sur", "pour", "pendant", "durant", "f\xFCr", "fuer", "on"].includes(lower) && tokens.slice(0, idx).some((t0) => t0.kind === "word" && isFinanceAnchorWord(t0.text)) && (tokens.some((t0) => t0.kind === "percent") || tokens.some((t0) => t0.kind === "word" && !isFinanceAnchorWord(t0.text) && (env.has(t0.text) || REF_WORDS.has(t0.text.toLowerCase()))) || // a MULTI-WORD bound rate anchors too, up to the engine's own
