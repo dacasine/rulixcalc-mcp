@@ -31558,6 +31558,40 @@ var capFnv9 = (s9) => {
   return h9.toString(36);
 };
 var capFDig9 = (f9) => f9 === void 0 || f9.length === 0 ? "0" : capFnv9(f9.map((t9) => `${t9.s}*${t9.x.n}/${t9.x.d}`).join(";"));
+var capScaleByValue9 = (res9, src9) => {
+  const f9 = capFOf9(src9);
+  if (f9 === void 0 || f9.length === 0 || res9.t === "e") return res9;
+  const rv9 = res9.t === "q" ? qx(res9) : res9.t === "d" || res9.t === "f" || res9.t === "p" ? numRat(res9) : null;
+  const sv9 = src9.t === "q" ? qx(src9) : src9.t === "d" || src9.t === "f" || src9.t === "p" ? numRat(src9) : null;
+  if (rv9 === null || sv9 === null || sv9.n === 0n) return capCoarse9(res9, [src9], "scaleByValue");
+  const sc9 = capFScale9(f9, rDiv(rv9, sv9));
+  if (sc9.length > 0) res9.capF = sc9;
+  else delete res9.capF;
+  return res9;
+};
+var capForceCoarse9 = (res9, parts9, key9) => {
+  if (res9.t !== "d" && res9.t !== "f" && res9.t !== "q" && res9.t !== "p") return res9;
+  if (!parts9.some((p9) => p9.capped === true || (capFOf9(p9)?.length ?? 0) > 0)) return res9;
+  delete res9.capF;
+  return capCoarse9(res9, parts9, key9);
+};
+var capPctOnOff9 = (res9, base9, p9, sign9) => {
+  if (res9.t !== "d" && res9.t !== "f" && res9.t !== "q") return res9;
+  const bv9 = base9.t === "q" ? qx(base9) : base9.t === "d" || base9.t === "f" ? numRat(base9) : null;
+  const pv9 = p9.t === "p" || p9.t === "d" || p9.t === "f" ? numRat(p9) : null;
+  if (bv9 === null || pv9 === null) return capForceCoarse9(res9, [base9, p9], "pctOnOff");
+  const jacP9 = rMul({ n: BigInt(sign9), d: 1n }, rDiv(bv9, { n: 100n, d: 1n }));
+  const jacB9 = rAdd({ n: 1n, d: 1n }, rMul({ n: BigInt(sign9), d: 1n }, rDiv(pv9, { n: 100n, d: 1n })));
+  const f9 = capFAdd9(capFScale9(capFOf9(p9), jacP9), capFScale9(capFOf9(base9), jacB9), 1n);
+  if (f9.length === 0) {
+    delete res9.capF;
+    return res9;
+  }
+  const rv$9 = res9.t === "q" ? qx(res9) : numRat(res9);
+  if (rCmp(capFBound9(f9), rAbs9M(rv$9)) > 0) return err("inexact", CAP_CANCEL_MSG);
+  res9.capF = f9;
+  return res9;
+};
 var capCoarse9 = (res9, parts9, key9) => {
   if (res9.t !== "d" && res9.t !== "f" && res9.t !== "q" && res9.t !== "p") return res9;
   const digs9 = parts9.map((p9) => capFDig9(capFOf9(p9)));
@@ -31949,6 +31983,11 @@ function addSummable(acc, v2, ctx) {
     if (s9.t === "e") return s9;
     if ((acc.t === "d" || acc.t === "f") && (v2.t === "d" || v2.t === "f") && (s9.t === "d" || s9.t === "f")) {
       const g9 = capAddGate9(acc, v2, numRat(s9), 1n);
+      if (g9.err) return g9.err;
+      return capStamp9({ ...s9, capped: true }, g9);
+    }
+    if (acc.t === "q" && v2.t === "q" && s9.t === "q") {
+      const g9 = capAddGate9(acc, v2, qx(s9), 1n);
       if (g9.err) return g9.err;
       return capStamp9({ ...s9, capped: true }, g9);
     }
@@ -32719,7 +32758,7 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "q", ...qv(x2), dim, symbol: def.symbol, def, rate: { num, den }, comps, ...capUC9 && { capped: true } };
       })();
-      return res$9.t === "e" ? res$9 : capCopy9(res$9, e);
+      return res$9.t === "e" ? res$9 : capScaleByValue9(res$9, e);
     }
     case "pctOff": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -32754,7 +32793,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capCoarse9(res$9, [p2, base], "pctOff");
+      return capPctOnOff9(res$9, base, p2, -1);
     }
     case "un": {
       const e = evalAst(ast.e, env, ctx);
@@ -32835,7 +32874,10 @@ function evalAst(ast, env, ctx = {}) {
         ...e.termsDen && { termsDen: e.termsDen }
       };
       if (!isRepresentable(fields.v)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
-      return capCopy9(e.t === "p" ? { t: "p", ...fields, ...e.capped === true && { capped: true } } : { t: "d", ...fields, ...e.capped === true && { capped: true } }, e);
+      const scRes9 = e.t === "p" ? { t: "p", ...fields, ...e.capped === true && { capped: true } } : { t: "d", ...fields, ...e.capped === true && { capped: true } };
+      const scF9 = capFScale9(capFOf9(e), sc9);
+      if (scF9.length > 0) scRes9.capF = scF9;
+      return scRes9;
     }
     case "pct": {
       let e = evalAst(ast.e, env, ctx);
@@ -32938,7 +32980,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capCoarse9(res$9, [p2, base], "pctOn");
+      return capPctOnOff9(res$9, base, p2, 1);
     }
     case "isPctOfWhat": {
       const value = evalAst(ast.value, env, ctx);
@@ -33982,6 +34024,26 @@ function evalAst(ast, env, ctx = {}) {
               }
               if ((l2.capped === true || r3.capped === true) && prod9.t !== "e") {
                 prod9 = { ...prod9, capped: true };
+              }
+              if ((prod9.t === "q" || prod9.t === "d" || prod9.t === "f") && ((capFOf9(l2)?.length ?? 0) > 0 || (capFOf9(r3)?.length ?? 0) > 0)) {
+                try {
+                  const xl$9 = qx(l2);
+                  const xr$9 = qx(r3);
+                  let pf$9;
+                  if (ast.op === "*") {
+                    pf$9 = capFAdd9(capFScale9(capFOf9(l2), xr$9), capFScale9(capFOf9(r3), xl$9), 1n);
+                    const cross$9 = rMul(capFBound9(capFOf9(l2) ?? []), capFBound9(capFOf9(r3) ?? []));
+                    if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:qmul(${capFDig9(capFOf9(l2))};${capFDig9(capFOf9(r3))};${capFnv9(`${xl$9.n}/${xl$9.d}|${xr$9.n}/${xr$9.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
+                  } else {
+                    if (xr$9.n === 0n) pf$9 = capFOf9(prod9) ?? [];
+                    else {
+                      const inv$9 = rDiv({ n: 1n, d: 1n }, xr$9);
+                      pf$9 = capFAdd9(capFScale9(capFOf9(l2), inv$9), capFScale9(capFOf9(r3), rMul({ n: -1n, d: 1n }, rMul(xl$9, rMul(inv$9, inv$9)))), 1n);
+                    }
+                  }
+                  if (pf$9.length > 0) prod9.capF = pf$9;
+                } catch {
+                }
               }
               const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
               const overlap9 = (a9, b9) => Object.keys(a9.dim).some((k9) => (b9.dim[k9] ?? 0) !== 0);
@@ -35665,6 +35727,11 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       }
     }
   };
+  const isCanonLetter9 = (ch9) => {
+    if (/^[\p{L}\u3371-\u33FF\u2103\u2109\u2113]$/u.test(ch9)) return true;
+    const k9 = ch9.normalize("NFKC");
+    return k9.length > 0 && new RegExp("^\\p{L}+$", "u").test(k9);
+  };
   const scanWord = () => {
     const start = i2;
     i2 += String.fromCodePoint(line.codePointAt(i2)).length;
@@ -35675,7 +35742,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         continue;
       }
       const cp = line.codePointAt(i2);
-      if (/[\p{L}\p{M}\u3371-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(cp))) {
+      if (/[\p{M}]/u.test(String.fromCodePoint(cp)) || isCanonLetter9(String.fromCodePoint(cp))) {
         i2 += String.fromCodePoint(cp).length;
         continue;
       }
@@ -35726,7 +35793,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       i2++;
       continue;
     }
-    if (/[\p{L}\u3371-\u33FF\u2103\u2109\u2113]/u.test(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(cpAt9(invSkip9(i2 + 1))) || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(cpAt9(invSkip9(i2 + 1))))) {
+    if (isCanonLetter9(String.fromCodePoint(line.codePointAt(i2))) || c2 === "\xB0" && (isLetter(cpAt9(invSkip9(i2 + 1))) || "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079\u207B\xB7".includes(cpAt9(invSkip9(i2 + 1))))) {
       scanWord();
       continue;
     }
@@ -38213,8 +38280,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         })();
         const noteTrail9 = (k9) => noteTok9.has(k9) && lastAnchor9 >= 0 && (noteStart9.get(k9) ?? -1) > lastAnchor9;
         if (noteLabel9.has(iq9) || noteTrail9(iq9) && !noteBare9.has(iq9)) continue;
-        const allInterest9 = tokens.every((t9, k9) => noteTrail9(k9) || noteLabel9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
-        const allPayment9 = tokens.every((t9, k9) => noteTrail9(k9) || noteLabel9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
+        const allInterest9 = tokens.every((t9, k9) => noteTok9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isInterestAnchorWord(t9.text));
+        const allPayment9 = tokens.every((t9, k9) => noteTok9.has(k9) || !(t9.kind === "word" && isFinanceAnchorWord(t9.text)) || isPaymentAnchorWord(t9.text));
         const PROOF9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?)$/iu;
         const boundAt9 = (k9) => {
           for (let s9 = Math.max(0, k9 - 15); s9 <= k9; s9++) {
