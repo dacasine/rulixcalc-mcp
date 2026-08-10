@@ -30919,8 +30919,13 @@ function alignForAdd(l2, r3, ctx) {
       const ratio2 = rDiv(rBase.rat, lBase.rat);
       const alF9 = capFScale9(capFOf9(r3), ratio2);
       const alSet9 = (q9) => {
-        if (alF9.length > 0) q9.capF = alF9;
-        else delete q9.capF;
+        if (alF9.length > 0) {
+          q9.capF = alF9;
+          q9.capped = true;
+        } else {
+          delete q9.capF;
+          if (r3.capped === true) q9.capped = true;
+        }
         return q9;
       };
       if (lBase.dec === null && rBase.dec === null) return alSet9({ ...l2, ...qv(rMul(qx(r3), ratio2)), terms: keepShadow(), termsDen: r3.termsDen });
@@ -31582,7 +31587,11 @@ var capPctOnOff9 = (res9, base9, p9, sign9) => {
   if (bv9 === null || pv9 === null) return capForceCoarse9(res9, [base9, p9], "pctOnOff");
   const jacP9 = rMul({ n: BigInt(sign9), d: 1n }, rDiv(bv9, { n: 100n, d: 1n }));
   const jacB9 = rAdd({ n: 1n, d: 1n }, rMul({ n: BigInt(sign9), d: 1n }, rDiv(pv9, { n: 100n, d: 1n })));
-  const f9 = capFAdd9(capFScale9(capFOf9(p9), jacP9), capFScale9(capFOf9(base9), jacB9), 1n);
+  let f9 = capFAdd9(capFScale9(capFOf9(p9), jacP9), capFScale9(capFOf9(base9), jacB9), 1n);
+  const crossPB9 = rMul({ n: 1n, d: 100n }, rMul(capFBound9(capFOf9(p9) ?? []), capFBound9(capFOf9(base9) ?? [])));
+  if (rnorm(crossPB9).n !== 0n) {
+    f9 = capFAdd9(f9, [{ s: `rem:pctOnOff(${capFDig9(capFOf9(p9))};${capFDig9(capFOf9(base9))};${capFnv9(`${bv9.n}/${bv9.d}|${pv9.n}/${pv9.d}`)})`, x: { n: 1n, d: 1n }, b: crossPB9 }], 1n);
+  }
   if (f9.length === 0) {
     delete res9.capF;
     return res9;
@@ -31617,7 +31626,7 @@ var capCovered9 = (res9, parts9) => {
 };
 var R10P41 = { n: 10n ** 41n, d: 1n };
 var capAddGate9 = (l9, r9, out9, sign9) => {
-  const capA9 = l9.capped === true || r9.capped === true;
+  const capA9 = l9.capped === true || r9.capped === true || (capFOf9(l9)?.length ?? 0) > 0 || (capFOf9(r9)?.length ?? 0) > 0;
   if (!capA9) return {};
   const f9 = capFAdd9(capFOf9(l9), capFOf9(r9), sign9);
   if (f9.length === 0) return { capF: [] };
@@ -32059,6 +32068,20 @@ function addSummableInner(acc, v2, ctx) {
   return { t: "d", ...qv(sum2) };
 }
 function foldIrrationalResidue(rt2, thirty) {
+  const out9 = foldIrrationalResidueRaw(rt2, thirty);
+  const prov9 = capFOf9(rt2);
+  if (prov9 === void 0 || prov9.length === 0) return out9;
+  if (out9.t !== "d" && out9.t !== "f" && out9.t !== "q") return out9;
+  const xOld9 = qx(rt2);
+  const xNew9 = out9.t === "q" ? qx(out9) : numRat(out9);
+  const sc9 = xOld9.n !== 0n ? capFScale9(prov9, rDiv(xNew9, xOld9)) : xNew9.n === 0n ? prov9 : null;
+  if (sc9 === null || sc9.length === 0) return out9;
+  const stamped9 = { ...out9 };
+  stamped9.capF = sc9;
+  stamped9.capped = true;
+  return stamped9;
+}
+function foldIrrationalResidueRaw(rt2, thirty) {
   const dimZero9 = dimIsEmpty(rt2.dim) || thirty === true && Object.entries(rt2.dim).every(([k9, v9]) => v9 === 0 || k9 === "calmonths" || k9 === "caldays") && (rt2.dim["calmonths"] ?? 0) + (rt2.dim["caldays"] ?? 0) === 0;
   if (dimZero9 && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
     const k0 = fracReduce(rt2, thirty);
@@ -32507,11 +32530,13 @@ function evalAst(ast, env, ctx = {}) {
           let fnum9 = [];
           let fden9 = ONE_TERMS();
           let fdrop9 = false;
+          let sumCapF9 = [];
           for (const val of values) {
             const q9 = val;
             const cK = q9.def && (q9.def.affine || q9.def.factor) ? convertQuantity(q9, K9, ctx) : alignForAdd(mkQ({ n: 1n, d: 1n }, K9), q9, ctx);
             if (cK.t !== "q") return cK;
             sumK = rAdd(sumK, qx(cK));
+            sumCapF9 = capFAdd9(sumCapF9, capFOf9(cK) ?? [], 1n);
             const src9 = q9.def?.affine !== void 0 ? cK : q9;
             if (!fdrop9) {
               const fd9 = src9.termsDen ?? ONE_TERMS();
@@ -32531,7 +32556,13 @@ function evalAst(ast, env, ctx = {}) {
           const meanBase9 = mkQ(rDiv(sumK, { n: BigInt(values.length), d: 1n }), K9);
           const capT9 = values.some((v9) => v9.capped === true);
           const meanK0 = fdrop9 ? meanBase9 : attachFrac(meanBase9, fnum9.map((t9) => ({ x: rMul(t9.x, nK9), comps: t9.comps })), fden9);
-          const meanK = capT9 ? { ...meanK0, capped: true } : meanK0;
+          const meanCapF9 = capFScale9(sumCapF9, nK9);
+          const meanK = capT9 || meanCapF9.length > 0 ? { ...meanK0, capped: true } : meanK0;
+          if (meanCapF9.length > 0) {
+            const mv9 = qx(meanK);
+            if (mv9.n === 0n || rCmp(rMul(capFBound9(meanCapF9), R10P41), rAbs9M(mv9)) > 0) return err("inexact", CAP_CANCEL_MSG);
+            meanK.capF = meanCapF9;
+          }
           const firstQ = values[0];
           return firstQ.def !== void 0 && firstQ.def.id !== "kelvin" && (firstQ.def.affine !== void 0 || firstQ.def.factor !== void 0) ? convertQuantity(meanK, firstQ.def, ctx) : meanK;
         }
@@ -33405,12 +33436,21 @@ function evalAst(ast, env, ctx = {}) {
         let v2 = evaluated9[ai9];
         if (v2.t === "q" && dimIsEmpty(v2.dim)) {
           const t30v9 = ctx.monthToDays === "30";
-          const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidue(v2, t30v9);
+          const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidueRaw(v2, t30v9);
           if (vFold9.t === "q" && isCarrier(vFold9)) {
             const exV9 = engineExactRat(vFold9, t30v9);
             if (exV9 !== null) {
               const trivial9 = fracReduce(vFold9, t30v9) !== null || [...vFold9.terms ?? [], ...vFold9.termsDen ?? []].every((t9) => t9.comps.length === 0 || t9.x.n === 0n);
+              const prov$9 = capFOf9(v2);
+              const xOld$9 = qx(v2);
               v2 = { t: "d", ...qv(exV9), ...!trivial9 && { capped: true } };
+              if (!trivial9 && prov$9 !== void 0 && prov$9.length > 0 && xOld$9.n !== 0n) {
+                const sc$9 = capFScale9(prov$9, rDiv(exV9, xOld$9));
+                if (sc$9.length > 0) {
+                  v2.capF = sc$9;
+                  v2.capped = true;
+                }
+              }
             } else if (!carrierFaithful(vFold9, t30v9)) {
               return err("inexact", "this value\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
             }
@@ -33420,7 +33460,7 @@ function evalAst(ast, env, ctx = {}) {
           const vOld$9 = v2;
           const fOld$9 = capFOf9(v2);
           const xOld$9 = qx(v2);
-          v2 = carrierNum(foldIrrationalResidue(v2, ctx.monthToDays === "30"), ctx);
+          v2 = carrierNum(foldIrrationalResidueRaw(v2, ctx.monthToDays === "30"), ctx);
           if ((v2.t === "d" || v2.t === "f") && fOld$9 !== void 0 && fOld$9.length > 0 && xOld$9.n !== 0n) {
             const foldK$9 = rDiv(numRat(v2), xOld$9);
             const scF$9 = capFScale9(fOld$9, foldK$9);
@@ -33658,7 +33698,9 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "q" && dimIsEmpty(e.dim)) {
         const uq9 = { t: "q", v: new DecC(1), dim: def.dim, symbol: def.symbol, def, comps: unitComps(ast.word) ?? [{ def, exp: 1 }] };
         const att9 = combineQuantities(e, uq9, "*", ctx);
-        return e.capped === true && att9.t !== "e" && att9.capped !== true ? { ...att9, capped: true } : att9;
+        if (att9.t === "e") return att9;
+        const att8 = e.capped === true && att9.capped !== true ? { ...att9, capped: true } : att9;
+        return capCopy9(att8, e);
       }
       return err("unsupported-pair", `cannot attach the unit \u201C${ast.word}\u201D here`);
     }
@@ -34081,11 +34123,30 @@ function evalAst(ast, env, ctx = {}) {
               return err("unit-mismatch", "scaling offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
             }
             const b3 = r3.t === "f" ? rnorm({ n: r3.n, d: r3.d }) : r3.vx ?? decToRat(r3.v);
-            if (ast.op === "*") return { ...l2, ...qv(rMul(qx(l2), b3)), ...scaleTerms(l2, b3), ...r3.capped === true && { capped: true } };
+            if (ast.op === "*") {
+              const qsRes9 = { ...l2, ...qv(rMul(qx(l2), b3)), ...scaleTerms(l2, b3), ...r3.capped === true && { capped: true } };
+              const fl$9 = capFOf9(l2);
+              const fr$9 = capFOf9(r3);
+              if ((fl$9?.length ?? 0) > 0 || (fr$9?.length ?? 0) > 0) {
+                let pf$9 = capFAdd9(capFScale9(fl$9, b3), capFScale9(fr$9, qx(l2)), 1n);
+                const cross$9 = rMul(capFBound9(fl$9 ?? []), capFBound9(fr$9 ?? []));
+                if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:qdmul(${capFDig9(fl$9)};${capFDig9(fr$9)};${capFnv9(`${b3.n}/${b3.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
+                if (pf$9.length > 0) qsRes9.capF = pf$9;
+                else delete qsRes9.capF;
+              } else delete qsRes9.capF;
+              return qsRes9;
+            }
             if (ast.op === "/") {
               if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (b3.n === 0n) return err("division-by-zero");
-              return { ...l2, ...qv(rDiv(qx(l2), b3)), ...scaleTerms(l2, rDiv({ n: 1n, d: 1n }, b3)) };
+              const qdRes9 = { ...l2, ...qv(rDiv(qx(l2), b3)), ...scaleTerms(l2, rDiv({ n: 1n, d: 1n }, b3)) };
+              const fl$9 = capFOf9(l2);
+              if ((fl$9?.length ?? 0) > 0) {
+                const pf$9 = capFScale9(fl$9, rDiv({ n: 1n, d: 1n }, b3));
+                if (pf$9.length > 0) qdRes9.capF = pf$9;
+                else delete qdRes9.capF;
+              } else delete qdRes9.capF;
+              return qdRes9;
             }
             if (ast.op === "^") {
               if (r3.capped === true) return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
@@ -35269,7 +35330,7 @@ function matchDate(slice, order) {
 }
 var isDigit = (ch) => ch !== void 0 && ch >= "0" && ch <= "9";
 var isLetter = (ch) => ch !== void 0 && new RegExp("\\p{L}", "u").test(ch);
-var NFKC_PRESERVE = /[\u00B2\u00B3\u00B9\u00B5\u00B7\u00BC-\u00BE\u2070-\u209F\u2150-\u215F\u2212]/u;
+var NFKC_PRESERVE = /[\u00B2\u00B3\u00B9\u00B5\u00B7\u00BC-\u00BE\u2070\u2074-\u207E\u2080-\u208E\u2150-\u215F\u2212]/u;
 var UNIT_LIGATURES = {
   "\u338F": "kg",
   "\u338E": "mg",
@@ -37850,6 +37911,10 @@ function matchMultiWordVariable(tokens, idx, env) {
   return null;
 }
 var startsValue = (t2) => t2 !== void 0 && (t2.kind === "number" || t2.kind === "fraction" || t2.kind === "date" || t2.kind === "clocktime" || t2.kind === "lparen");
+var disguisedAtom9 = (t2) => {
+  const nf9 = (t2.text ?? "").normalize("NFKC");
+  return nf9 !== (t2.text ?? "") && /[0-9+\-*/%^=×÷]/u.test(nf9);
+};
 function resolveGrammar(context) {
   if (context.numberGrammar) return context.numberGrammar;
   const locale = context.locale ?? "";
@@ -37961,6 +38026,8 @@ function stripParentheticalComments(tokens, env, lexicon, violations, ignored, r
     const isUnitExpr = unitExpr9(meaningful) || unitExpr9(foldDot9(meaningful));
     if (inner.length === 0) continue;
     if (meaningful.some((t2) => t2.kind === "op" || t2.kind === "percent" || t2.kind === "equals")) continue;
+    if (meaningful.some((t2) => disguisedAtom9(t2))) continue;
+    if (inner.some((t2) => t2.kind === "unknown" && (t2.text === "\u2063" || t2.text === "\u2064"))) continue;
     if (meaningful.some((t2) => t2.kind === "word" && (() => {
       let w0 = t2.text.toLowerCase();
       for (; ; ) {
@@ -38279,7 +38346,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           }
           if (e9 >= tokens.length) continue;
           const inner9 = tokens.slice(i9 + 1, e9);
-          if (inner9.length > 0 && inner9.every((t9) => !["number", "fraction", "percent", "date", "clocktime", "badnumber"].includes(t9.kind))) {
+          if (inner9.length > 0 && inner9.every((t9) => !["number", "fraction", "percent", "date", "clocktime", "badnumber"].includes(t9.kind) && !disguisedAtom9(t9))) {
             for (let j9 = i9; j9 <= e9; j9++) {
               noteTok9.add(j9);
               noteStart9.set(j9, i9);
@@ -39062,6 +39129,9 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           violations.push(`dropping \u201C${t2.text}\u201D would change the arity of a neighbouring operator \u2014 remove it or bind it`);
         }
       }
+    }
+    if (disguisedAtom9(t2)) {
+      violations.push(`\u201C${stripPub9(t2.rawText ?? t2.text)}\u201D is a disguised ${/[0-9]/u.test((t2.text ?? "").normalize("NFKC")) ? "number" : "operator"} and cannot be silently ignored \u2014 remove it or write it plainly`);
     }
     ignored.push({ text: stripPub9(t2.rawText ?? t2.text), range: { start: t2.start, end: t2.end } });
   }
