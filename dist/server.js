@@ -30665,10 +30665,20 @@ function convertQuantity(rt2, to, ctx) {
   const x2 = convertRat(qx(rt2), from, to);
   if (x2 === null) {
     const shadow9 = rt2.terms ?? [{ x: qx(rt2), comps: (compsOf(rt2) ?? [{ def: from, exp: 1 }]).map((c9) => ({ ...c9 })) }];
-    return { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, terms: shadow9, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+    const cvOut9 = { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, terms: shadow9, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+    return capScaleConv9(cvOut9, rt2, decToRat(convertExact(new DecC(1), from, to)));
   }
-  return { ...mkQ(x2, to), ...rt2.terms && { terms: rt2.terms }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+  const cvOut8 = { ...mkQ(x2, to), ...rt2.terms && { terms: rt2.terms }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+  return capScaleConv9(cvOut8, rt2, qx(rt2).n === 0n ? null : rDiv(x2, qx(rt2)));
 }
+var capScaleConv9 = (out9, in9, ratio9) => {
+  const f9 = capFOf9(in9);
+  if (f9 === void 0 || f9.length === 0 || out9.t === "e") return out9;
+  if (ratio9 === null) return capCoarse9(out9, [in9], "convert");
+  const sc9 = capFScale9(f9, ratio9);
+  if (sc9.length > 0) out9.capF = sc9;
+  return out9;
+};
 var calDim = (d2) => {
   if (d2["calmonths"] === void 0) return d2;
   const out = { ...d2 };
@@ -30907,9 +30917,15 @@ function alignForAdd(l2, r3, ctx) {
     const rBase = basePartOf(rc, ctx);
     if (lBase && rBase) {
       const ratio2 = rDiv(rBase.rat, lBase.rat);
-      if (lBase.dec === null && rBase.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio2)), terms: keepShadow(), termsDen: r3.termsDen };
+      const alF9 = capFScale9(capFOf9(r3), ratio2);
+      const alSet9 = (q9) => {
+        if (alF9.length > 0) q9.capF = alF9;
+        else delete q9.capF;
+        return q9;
+      };
+      if (lBase.dec === null && rBase.dec === null) return alSet9({ ...l2, ...qv(rMul(qx(r3), ratio2)), terms: keepShadow(), termsDen: r3.termsDen });
       const dec2 = (rBase.dec ?? new DecC(1)).div(lBase.dec ?? new DecC(1));
-      return { ...l2, v: ratToDec(rMul(qx(r3), ratio2)).times(dec2), vx: void 0, terms: keepShadow(), termsDen: r3.termsDen };
+      return alSet9({ ...l2, v: ratToDec(rMul(qx(r3), ratio2)).times(dec2), vx: void 0, terms: keepShadow(), termsDen: r3.termsDen });
     }
     const lCur = lc.filter((c2) => c2.def.currency);
     const rRest = rc.map((c2) => ({ ...c2 })).filter((c2) => !c2.def.currency);
@@ -32640,9 +32656,20 @@ function evalAst(ast, env, ctx = {}) {
         if (isOffsetScale(amount) || dimEquals(amount.dim, { temperature: 1 })) {
           return err("unit-mismatch", "financial formulas need amounts, not absolute temperatures");
         }
-        return { ...amount, ...qv(out), ...scaleTerms(amount, kFin) };
+        const finQ9 = { ...amount, ...qv(out), ...scaleTerms(amount, kFin) };
+        const rcCap9 = rateRT.capped === true || yearsRT.capped === true;
+        if (rcCap9) return capCoarse9({ ...finQ9, capped: true }, [amount, rateRT, yearsRT], "finance");
+        const fFinQ9 = capFScale9(capFOf9(amount), kFin);
+        if (fFinQ9.length > 0) finQ9.capF = fFinQ9;
+        else delete finQ9.capF;
+        return finQ9;
       }
-      return { t: "d", ...qv(out), ...amount.capped === true && { capped: true } };
+      const finD9 = { t: "d", ...qv(out), ...amount.capped === true && { capped: true } };
+      const rcCapD9 = rateRT.capped === true || yearsRT.capped === true;
+      if (rcCapD9) return capCoarse9(finD9, [amount, rateRT, yearsRT], "finance");
+      const fFinD9 = capFScale9(capFOf9(amount), kFin);
+      if (fFinD9.length > 0) finD9.capF = fFinD9;
+      return finD9;
     }
     case "unitCompound": {
       const e = evalAst(ast.e, env, ctx);
@@ -32780,7 +32807,11 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "e") return e;
       if (e.t === "f") {
         const fs9 = makeFrac(e.n * 10n ** BigInt(ast.pow10), e.d, "derived");
-        return e.capped === true && fs9.t !== "e" ? { ...fs9, capped: true } : fs9;
+        if (fs9.t === "e") return fs9;
+        const sfN9 = capFScale9(capFOf9(e), rPowInt({ n: 10n, d: 1n }, ast.pow10));
+        const fsr9 = e.capped === true ? { ...fs9, capped: true } : fs9;
+        if (fsr9.t !== "e" && sfN9.length > 0) fsr9.capF = sfN9;
+        return fsr9;
       }
       if (e.t === "q" && dimIsEmpty(e.dim)) {
         const f9 = foldIrrationalResidue(e, ctx.monthToDays === "30");
@@ -33343,7 +33374,21 @@ function evalAst(ast, env, ctx = {}) {
             }
           }
         }
-        if (v2.t === "q") v2 = carrierNum(foldIrrationalResidue(v2, ctx.monthToDays === "30"), ctx);
+        if (v2.t === "q") {
+          const vOld$9 = v2;
+          const fOld$9 = capFOf9(v2);
+          const xOld$9 = qx(v2);
+          v2 = carrierNum(foldIrrationalResidue(v2, ctx.monthToDays === "30"), ctx);
+          if ((v2.t === "d" || v2.t === "f") && fOld$9 !== void 0 && fOld$9.length > 0 && xOld$9.n !== 0n) {
+            const foldK$9 = rDiv(numRat(v2), xOld$9);
+            const scF$9 = capFScale9(fOld$9, foldK$9);
+            if (scF$9.length > 0) {
+              v2.capF = scF$9;
+              if (v2.capped !== true) v2.capped = true;
+            }
+          }
+          void vOld$9;
+        }
         if (v2.t !== "d" && v2.t !== "f") return err("unsupported-pair", `${ast.fn}() needs plain numbers`);
         if (v2.capped === true) fnCapped9 = true;
         rts.push(v2);
@@ -33871,7 +33916,8 @@ function evalAst(ast, env, ctx = {}) {
               }
               {
                 const dec8 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
-                const g8 = capAddGate9(l2, r3, dec8, ast.op === "+" ? 1n : -1n);
+                const rGate8 = rhs.t === "q" ? rhs : r3;
+                const g8 = capAddGate9(l2, rGate8, dec8, ast.op === "+" ? 1n : -1n);
                 if (g8.err) return g8.err;
                 return capStamp9({
                   ...l2,
@@ -34537,6 +34583,13 @@ function evalAst(ast, env, ctx = {}) {
                     const bBr9 = capFBound9(fR9);
                     const rem9 = decToRat(dB9.abs().times(aD9e.constructor.ln(aD9e).abs()).times(ratToDec(bBr9)).times(ratToDec(bBr9)).times(4).toSignificantDigits(20));
                     if (rnorm(rem9).n !== 0n) f9 = capFAdd9(f9, [{ s: `${remKey9}exp`, x: { n: 1n, d: 1n }, b: rem9 }], 1n);
+                    if (rnorm(bL9).n !== 0n) {
+                      const dAB9e = aD9e.pow(k9 - 1).times(new DecC(1).plus(new DecC(k9).times(aD9e.constructor.ln(aD9e))));
+                      if (dAB9e.isFinite()) {
+                        const mix9e = decToRat(dAB9e.abs().times(ratToDec(bL9)).times(ratToDec(bBr9)).times(2).toSignificantDigits(20));
+                        if (rnorm(mix9e).n !== 0n) f9 = capFAdd9(f9, [{ s: `${remKey9}mix`, x: { n: 1n, d: 1n }, b: mix9e }], 1n);
+                      }
+                    }
                   }
                   if (Math.abs(k9) >= 2 && rnorm(bL9).n !== 0n) {
                     const aD9 = toDecP9(l2, capPrec9([l2]));
@@ -34675,6 +34728,13 @@ function evalAst(ast, env, ctx = {}) {
                     const bBr9 = capFBound9(fRp9);
                     const rem9 = decToRat(dB9.abs().times(DecPw9.ln(aDp9).abs()).times(ratToDec(bBr9)).times(ratToDec(bBr9)).times(4).toSignificantDigits(20));
                     if (rnorm(rem9).n !== 0n) acc9 = capFAdd9(acc9, [{ s: `${remKey9R9}`, x: { n: 1n, d: 1n }, b: rem9 }], 1n);
+                  }
+                  if (fLp9 !== void 0 && fLp9.length > 0 && fRp9 !== void 0 && fRp9.length > 0 && aDp9.gt(0)) {
+                    const dAB9 = aDp9.pow(Number(rExact.n) / Number(rExact.d) - 1).times(new DecPw9(1).plus(bH9.times(DecPw9.ln(aDp9))));
+                    if (dAB9.isFinite()) {
+                      const mix9 = decToRat(dAB9.abs().times(ratToDec(capFBound9(fLp9))).times(ratToDec(capFBound9(fRp9))).times(2).toSignificantDigits(20));
+                      if (rnorm(mix9).n !== 0n) acc9 = capFAdd9(acc9, [{ s: `rempowAB(${capArgKey9([l2, r3])})@${precP9}`, x: { n: 1n, d: 1n }, b: mix9 }], 1n);
+                    }
                   }
                   powRes9.capF = capFNorm9(acc9);
                 } catch {
@@ -38128,9 +38188,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
               noteTok9.add(j9);
               noteStart9.set(j9, i9);
             }
-            const NOTE_FILLER9 = /^(strictly|purely|simply|really|just|only|exactly|truly|actually|basically|no|non|not|without|sans|pas|aucune?|please|thanks?|kindly|this|that|is|are|be|method|methods|basis)$/iu;
-            const bareWord9 = (t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text) || isFinanceAnchorWord(t9.text) || NOTE_FILLER9.test(t9.text));
-            if (inner9.some((t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text))) && inner9.every((t9) => bareWord9(t9) || t9.kind === "comma" || t9.kind === "colon" || t9.kind === "unknown" || t9.kind === "op" || t9.kind === "bang" || t9.kind === "lparen" || t9.kind === "rparen")) {
+            if (inner9.some((t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text)))) {
               for (let j9 = i9 + 1; j9 < e9; j9++) noteBare9.add(j9);
             }
           }
