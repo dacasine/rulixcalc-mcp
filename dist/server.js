@@ -33293,7 +33293,7 @@ function evalAst(ast, env, ctx = {}) {
           if (vx0.t !== "q" || !dimIsEmpty(vx0.dim)) continue;
           const vc0 = isCarrier(vx0) ? vx0 : foldIrrationalResidue(vx0, ctx.monthToDays === "30");
           if (vc0.t !== "q" || !isCarrier(vc0)) continue;
-          const e0 = engineExactRat(vc0, ctx.monthToDays === "30");
+          const e0 = (capFOf9(vx0)?.length ?? 0) > 0 ? null : engineExactRat(vc0, ctx.monthToDays === "30");
           if (e0 !== null) evaluated9[ax9] = { t: "d", ...qv(e0) };
         }
       }
@@ -33929,7 +33929,11 @@ function evalAst(ast, env, ctx = {}) {
                 const dd9 = distributeTerms(fl9.den, fr9.den, t30);
                 if (a9 !== null && b9 !== null && dd9 !== null) {
                   const nn9 = mergeTerms(a9, b9, ast.op === "+" ? 1n : -1n, t30);
-                  if (nn9.length === 0) return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+                  if (nn9.length === 0) {
+                    const gz9 = capAddGate9(l2, rr9, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
+                    if (gz9.err !== void 0) return gz9.err;
+                    return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+                  }
                   const xr9 = qx(rhs);
                   const dec9 = ast.op === "+" ? rAdd(qx(l2), xr9) : rSub(qx(l2), xr9);
                   return attachFrac({ ...l2, ...qv(dec9) }, nn9, dd9);
@@ -33940,7 +33944,12 @@ function evalAst(ast, env, ctx = {}) {
               }
               if (irr(l2) || irr(r3) || rhs.terms !== void 0) {
                 const merged = mergeTerms(termsOf(l2), termsOf(rhs.terms !== void 0 ? rhs : r3), ast.op === "+" ? 1n : -1n, ctx.monthToDays === "30");
-                if (merged.length === 0) return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0 };
+                if (merged.length === 0) {
+                  const rSide9 = rhs.terms !== void 0 ? rhs : r3;
+                  const gz9 = capAddGate9(l2, rSide9, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
+                  if (gz9.err !== void 0) return gz9.err;
+                  return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0 };
+                }
                 if (merged.length === 1 && !merged[0].comps.some((c9) => c9.def.currency !== void 0)) {
                   const t9 = merged[0];
                   const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
@@ -34164,7 +34173,11 @@ function evalAst(ast, env, ctx = {}) {
                 return { t: "d", ...qv(decC9) };
               }
               const nn9 = mergeTerms(fc9.num, bd9, ast.op === "+" ? 1n : -1n, t30c);
-              if (nn9.length === 0) return { t: "d", ...qv({ n: 0n, d: 1n }) };
+              if (nn9.length === 0) {
+                const gz9 = capAddGate9(l2, r3, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
+                if (gz9.err !== void 0) return gz9.err;
+                return { t: "d", ...qv({ n: 0n, d: 1n }) };
+              }
               return attachFrac({ t: "q", ...qv(decC9), dim: {}, symbol: "", comps: [] }, nn9, fc9.den);
             }
             return err("unit-mismatch", `\u201C${l2.symbol} ${ast.op} ${toDec(r3).toString()}\u201D mixes a quantity with a bare number`);
@@ -34181,7 +34194,11 @@ function evalAst(ast, env, ctx = {}) {
               return { t: "d", ...qv(decC9) };
             }
             const nn9 = mergeTerms(bd9, fc9.num, ast.op === "+" ? 1n : -1n, t30c);
-            if (nn9.length === 0) return { t: "d", ...qv({ n: 0n, d: 1n }) };
+            if (nn9.length === 0) {
+              const gz9 = capAddGate9(l2, r3, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
+              if (gz9.err !== void 0) return gz9.err;
+              return { t: "d", ...qv({ n: 0n, d: 1n }) };
+            }
             return attachFrac({ t: "q", ...qv(decC9), dim: {}, symbol: "", comps: [] }, nn9, fc9.den);
           }
           if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && (ast.op === "*" || ast.op === "/")) {
@@ -34189,7 +34206,19 @@ function evalAst(ast, env, ctx = {}) {
               return err("unit-mismatch", "scaling offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
             }
             const b3 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : l2.vx ?? decToRat(l2.v);
-            if (ast.op === "*") return { ...r3, ...qv(rMul(qx(r3), b3)), ...scaleTerms(r3, b3), ...l2.capped === true && { capped: true } };
+            if (ast.op === "*") {
+              const dqRes9 = { ...r3, ...qv(rMul(qx(r3), b3)), ...scaleTerms(r3, b3), ...l2.capped === true && { capped: true } };
+              const fl$9 = capFOf9(l2);
+              const fr$9 = capFOf9(r3);
+              if ((fl$9?.length ?? 0) > 0 || (fr$9?.length ?? 0) > 0) {
+                let pf$9 = capFAdd9(capFScale9(fl$9, qx(r3)), capFScale9(fr$9, b3), 1n);
+                const cross$9 = rMul(capFBound9(fl$9 ?? []), capFBound9(fr$9 ?? []));
+                if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:dqmul(${capFDig9(fl$9)};${capFDig9(fr$9)};${capFnv9(`${b3.n}/${b3.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
+                if (pf$9.length > 0) dqRes9.capF = pf$9;
+                else delete dqRes9.capF;
+              }
+              return dqRes9;
+            }
             if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
             if (qx(r3).n === 0n) {
               const t30z = ctx.monthToDays === "30";
