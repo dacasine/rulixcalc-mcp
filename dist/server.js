@@ -31239,14 +31239,34 @@ function alignForAdd(l2, r3, ctx) {
       }
       return out8;
     })();
-    if (lBase2.dec === null && rBase2.dec === null) return { ...l2, ...qv(rMul(qx(r3), ratio)), terms: termShadow, termsDen: denShadow };
+    const alStampC9 = (obj9, factor9) => {
+      const rf9 = capFScale9(capFOf9(r3), factor9);
+      if (rf9.length > 0) {
+        obj9.capF = rf9;
+        obj9.capped = true;
+      } else {
+        delete obj9.capF;
+        if (r3.capped !== true) delete obj9.capped;
+      }
+      return obj9;
+    };
+    if (lBase2.dec === null && rBase2.dec === null) return alStampC9({ ...l2, ...qv(rMul(qx(r3), ratio)), terms: termShadow, termsDen: denShadow }, ratio);
     const decR = (rBase2.dec ?? new DecC(1)).div(lBase2.dec ?? new DecC(1));
-    return { ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0, terms: termShadow, termsDen: denShadow };
+    return alStampC9({ ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0, terms: termShadow, termsDen: denShadow }, decToRat(ratToDec(ratio).times(decR)));
   }
   if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
   const conv = convertQuantity(r3, l2.def, ctx);
   if (conv.t === "e") return conv;
-  return { ...l2, ...qv(qx(conv)), terms: conv.terms, termsDen: conv.termsDen };
+  const alR9 = { ...l2, ...qv(qx(conv)), terms: conv.terms, termsDen: conv.termsDen };
+  const cfR9 = capFOf9(conv);
+  if (cfR9 !== void 0 && cfR9.length > 0) {
+    alR9.capF = cfR9;
+    alR9.capped = true;
+  } else {
+    delete alR9.capF;
+    if (conv.capped !== true) delete alR9.capped;
+  }
+  return alR9;
 }
 var isOffsetScale = (q2) => q2.def?.affine !== void 0 && q2.def.affine.b !== 0n;
 var isPureLinear = (u2) => u2.factor !== void 0 && !u2.affine && !u2.currency && !u2.factorDec;
@@ -31996,7 +32016,9 @@ function addSummable(acc, v2, ctx) {
       return capStamp9({ ...s9, capped: true }, g9);
     }
     if (acc.t === "q" && v2.t === "q" && s9.t === "q") {
-      const g9 = capAddGate9(acc, v2, qx(s9), 1n);
+      const vAl9 = alignForAdd(acc, v2, ctx);
+      const vGate9 = vAl9.t === "q" ? vAl9 : v2;
+      const g9 = capAddGate9(acc, vGate9, qx(s9), 1n);
       if (g9.err) return g9.err;
       return capStamp9({ ...s9, capped: true }, g9);
     }
@@ -32887,13 +32909,19 @@ function evalAst(ast, env, ctx = {}) {
         const f9 = foldIrrationalResidue(e, ctx.monthToDays === "30");
         if (f9.t === "d" || f9.t === "f") e = f9;
         else if (f9.t === "q" && dimIsEmpty(f9.dim) && (compsOf(f9) ?? []).length === 0) {
-          e = {
+          const eSc9 = {
             t: "d",
             ...qv(qx(f9)),
             ...f9.terms && { terms: f9.terms },
             ...f9.termsDen && { termsDen: f9.termsDen },
             ...f9.capped === true && { capped: true }
           };
+          const ff9 = capFOf9(f9);
+          if (ff9 !== void 0 && ff9.length > 0) {
+            eSc9.capF = ff9;
+            eSc9.capped = true;
+          }
+          e = eSc9;
         }
       }
       if (e.t !== "d" && e.t !== "p") return err("unsupported-pair");
@@ -33765,7 +33793,9 @@ function evalAst(ast, env, ctx = {}) {
       const lPreCap9 = l2.capped === true;
       const rPreCap9 = r3.capped === true;
       if (ast.op === "^" && r3.t === "q" && dimIsEmpty(r3.dim)) {
-        const rQ9 = foldIrrationalResidue(r3, ctx.monthToDays === "30");
+        const rProv$9 = capFOf9(r3);
+        const rxOld$9 = qx(r3);
+        const rQ9 = foldIrrationalResidueRaw(r3, ctx.monthToDays === "30");
         const rE9 = rQ9.t === "q" && isCarrier(rQ9) ? engineExactRat(rQ9, ctx.monthToDays === "30") : null;
         if (rQ9.t === "q" && isCarrier(rQ9) && rE9 === null && !carrierFaithful(rQ9, ctx.monthToDays === "30")) {
           return err("inexact", "this exponent\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
@@ -33776,6 +33806,13 @@ function evalAst(ast, env, ctx = {}) {
           const rF9 = carrierNum(rQ9.t === "q" ? rQ9 : r3, ctx);
           if (rF9.t === "e") return rF9;
           if (rF9.t === "d" || rF9.t === "f") r3 = rF9;
+        }
+        if ((r3.t === "d" || r3.t === "f") && rProv$9 !== void 0 && rProv$9.length > 0 && rxOld$9.n !== 0n) {
+          const scE$9 = capFScale9(rProv$9, rDiv(numRat(r3), rxOld$9));
+          if (scE$9.length > 0) {
+            r3.capF = scE$9;
+            r3.capped = true;
+          }
         }
       }
       if (ast.op === "^" && l2.t === "q" && dimIsEmpty(l2.dim) && (r3.t === "d" || r3.t === "f") && numRat(r3).d !== 1n) {
@@ -33909,6 +33946,17 @@ function evalAst(ast, env, ctx = {}) {
                 const nn9 = mergeTerms(a9, b9, sign9, t30);
                 return nn9.length === 0 ? { z: true } : { z: false, terms: nn9, termsDen: dd9 };
               };
+              const tempStamp9 = (out9, f9) => {
+                if (out9.t !== "q" || f9.length === 0) return out9;
+                const q9 = out9;
+                if (q9.terms === void 0 && q9.termsDen === void 0) {
+                  const ov9 = qx(q9);
+                  if (ov9.n === 0n || rCmp(rMul(capFBound9(f9), R10P41), rAbs9M(ov9)) > 0) return err("inexact", CAP_CANCEL_MSG);
+                }
+                q9.capF = f9;
+                q9.capped = true;
+                return q9;
+              };
               if (isAbsTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
                 if (ast.op === "+") {
                   return err("unit-mismatch", "adding two absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for an offset");
@@ -33922,12 +33970,14 @@ function evalAst(ast, env, ctx = {}) {
                   lT.def.id === "fahrenheit" || lT.def.id === "rankine" ? "\u0394\xB0F" : lT.def.id === "celsius" ? "\u0394\xB0C" : "\u0394K"
                 );
                 const base9 = mkQ(rDiv(dK, ratOfFactor(dDef.factor)), dDef);
+                const jacAA9 = rDiv({ n: triL.a, d: triL.c }, ratOfFactor(dDef.factor));
+                const fAA9 = capFAdd9(capFScale9(capFOf9(lT), jacAA9), capFScale9(capFOf9(conv), jacAA9), -1n);
                 const fs9 = tempFrac9(-1n);
-                if (fs9 === "dropped") return base9;
-                if (fs9 !== null) return fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen };
+                if (fs9 === "dropped") return tempStamp9(base9, fAA9);
+                if (fs9 !== null) return tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAA9);
                 const sh9 = tempShadow(-1n);
-                if (sh9 !== null && sh9.length === 0) return { ...base9, ...qv({ n: 0n, d: 1n }) };
-                return sh9 === null ? base9 : { ...base9, terms: sh9 };
+                if (sh9 !== null && sh9.length === 0) return tempStamp9({ ...base9, ...qv({ n: 0n, d: 1n }) }, fAA9);
+                return tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAA9);
               }
               if (isDeltaTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
                 if (ast.op !== "+") {
@@ -33936,11 +33986,13 @@ function evalAst(ast, env, ctx = {}) {
                 const dK = rMul(qx(lT), ratOfFactor(lT.def.factor));
                 const tri = rT.def.affine ?? { a: rT.def.factor.n, b: 0n, c: rT.def.factor.d };
                 const base9 = { ...rT, ...qv(rAdd(qx(rT), rMul(dK, { n: tri.c, d: tri.a }))) };
+                const jacDA9 = rMul(ratOfFactor(lT.def.factor), { n: tri.c, d: tri.a });
+                const fDA9 = capFAdd9(capFOf9(rT) ?? [], capFScale9(capFOf9(lT), jacDA9), 1n);
                 const fs9 = tempFrac9(1n);
-                if (fs9 === "dropped") return base9;
-                if (fs9 !== null) return fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen };
+                if (fs9 === "dropped") return tempStamp9(base9, fDA9);
+                if (fs9 !== null) return tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fDA9);
                 const sh9 = tempShadow(1n);
-                return sh9 === null ? base9 : { ...base9, terms: sh9 };
+                return tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fDA9);
               }
               if (isAbsTemp(lT) && isDeltaTemp(rT) && lT.def && rT.def) {
                 const dK = rMul(qx(rT), ratOfFactor(rT.def.factor));
@@ -33948,11 +34000,13 @@ function evalAst(ast, env, ctx = {}) {
                 const inUnit = rMul(dK, { n: tri.c, d: tri.a });
                 const x2 = ast.op === "+" ? rAdd(qx(lT), inUnit) : rSub(qx(lT), inUnit);
                 const base9 = { ...lT, ...qv(x2) };
+                const jacAD9 = rMul(ratOfFactor(rT.def.factor), { n: tri.c, d: tri.a });
+                const fAD9 = capFAdd9(capFOf9(lT) ?? [], capFScale9(capFOf9(rT), jacAD9), ast.op === "+" ? 1n : -1n);
                 const fs9 = tempFrac9(ast.op === "+" ? 1n : -1n);
-                if (fs9 === "dropped") return base9;
-                if (fs9 !== null) return fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen };
+                if (fs9 === "dropped") return tempStamp9(base9, fAD9);
+                if (fs9 !== null) return tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAD9);
                 const sh9 = tempShadow(ast.op === "+" ? 1n : -1n);
-                return sh9 === null ? base9 : { ...base9, terms: sh9 };
+                return tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAD9);
               }
               if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
                 return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
@@ -35853,7 +35907,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       }
       break;
     }
-    const canon0 = nfkcWord(line.slice(start, i2).replace(LEX_INVISIBLES, "")).replace(LEX_INVISIBLES, "");
+    const canon0 = nfkcWord(line.slice(start, i2).replace(LEX_INVISIBLES, "")).replace(LEX_INVISIBLES, "").replace(/_/gu, "");
     const raw0 = line.slice(start, i2);
     if (canon0 !== "") tokens.push({ kind: "word", text: canon0, start, end: i2, ...raw0 !== canon0 && { rawText: raw0 } });
   };
@@ -37762,6 +37816,7 @@ var skeletonM = (w2) => {
   }
   return out.normalize("NFC");
 };
+var skeletonD = (w2) => [...w2.normalize("NFD")].filter((ch) => !new RegExp("\\p{M}", "u").test(ch)).join("").normalize("NFC");
 function roleSpelling(w9, lexicon) {
   const s9 = w9.toLowerCase();
   return isUnitWord(w9) || isUnitWord(s9) || isTimespanUnitWord(s9) || isReservedWord(s9) || isComputableWord(s9) || isDateKeywordWord(s9) || isAnyPackWord(s9) || allPackBridges().words.has(s9) || CORE_OP_WORDS.has(s9) || isPercentPreposition(s9) || /^(of|off|increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(s9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === s9 || g9.words.join("\xB7") === s9) || allPackBridges().groups.some((g9) => g9.join("") === s9 || g9.join("\xB7") === s9);
@@ -37785,6 +37840,8 @@ function confusableRole(text, rawText, lexicon) {
     }
     if (twinHits9(text) && !roleSpelling(text, lexicon)) return true;
   }
+  const sD9 = skeletonD(text);
+  if (sD9 !== text.normalize("NFC") && sD9.length >= 3 && twinHits9(sD9)) return true;
   if (!nonLatin9(text)) return false;
   const sM9 = skeletonM(text);
   if (sM9 !== text && twinHits9(sM9)) return true;
@@ -37912,8 +37969,10 @@ function matchMultiWordVariable(tokens, idx, env) {
 }
 var startsValue = (t2) => t2 !== void 0 && (t2.kind === "number" || t2.kind === "fraction" || t2.kind === "date" || t2.kind === "clocktime" || t2.kind === "lparen");
 var disguisedAtom9 = (t2) => {
-  const nf9 = (t2.text ?? "").normalize("NFKC");
-  return nf9 !== (t2.text ?? "") && /[0-9+\-*/%^=×÷]/u.test(nf9);
+  const raw9 = t2.text ?? "";
+  const nf9 = raw9.normalize("NFKC");
+  if (nf9 === raw9) return false;
+  return lex(nf9).some((tk9) => ["number", "fraction", "percent", "date", "clocktime", "badnumber", "op", "equals", "bang"].includes(tk9.kind) || tk9.kind === "word" && (isUnitWord(tk9.text) || /[€$£¥₣₤]/u.test(tk9.text)));
 };
 function resolveGrammar(context) {
   if (context.numberGrammar) return context.numberGrammar;
@@ -38312,9 +38371,11 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
     if (anchorIdx9 >= 0) {
       const QUAL9 = /^(simples?|monthly|mensuel(le)?s?|mensuellement|bimensuel(le)?s?|bimensuellement|daily|quotidien(ne)?s?|quotidiennement|journali(er|ère|ere)s?|journellement|weekly|hebdomadaires?|hebdomadairement|annual(ly)?|annuels?|annuelles?|annuellement|yearly|quarterly|trimestriel(le)?s?|trimestriellement|semestriel(le)?s?|semestriellement|semi-?annual(ly)?|biannual(ly)?|continuous(ly)?|continue?s?|continuellement|bi-?weekly|bi-?monthly|fortnightly|hourly|horaires?|nominal(es?)?|nominaux|nominally|effectives?|effectifs?|effectively|simply|simplement|recurring|r[ée]current(e)?s?|(non|un)-?compound(ed|ing)?|(non|un)-?capitali[sz][a-zé]*|(bi|semi|tri)[a-zé]*(?:ly|lement))$/iu;
       const COMPOUNDISH9 = /^(compound(ed|ing)?|composée?s?|capitalisée?s?|calcul(é|ée|és|ées|ant))$/iu;
+      const qualHit9 = (w9) => QUAL9.test(w9) || QUAL9.test(skeletonD(w9));
+      const compHit9 = (w9) => COMPOUNDISH9.test(w9) || COMPOUNDISH9.test(skeletonD(w9));
       for (let iq9 = 0; iq9 < tokens.length; iq9++) {
         const tq9 = tokens[iq9];
-        if (tq9.kind !== "word" || !QUAL9.test(tq9.text)) continue;
+        if (tq9.kind !== "word" || !qualHit9(tq9.text)) continue;
         if (env.has(tq9.text)) continue;
         const boundWin9 = (() => {
           for (let s9 = Math.max(0, iq9 - 15); s9 <= iq9; s9++) {
@@ -38327,7 +38388,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
           return false;
         })();
         if (boundWin9) continue;
-        const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
+        const thru9 = (t9) => t9 !== void 0 && (t9.kind === "rparen" || t9.kind === "lparen" || t9.kind === "word" && (qualHit9(t9.text) || compHit9(t9.text) || /^(rates?|taux)$/iu.test(t9.text)));
         const noteTok9 = /* @__PURE__ */ new Set();
         const noteBare9 = /* @__PURE__ */ new Set();
         const noteStart9 = /* @__PURE__ */ new Map();
@@ -38351,7 +38412,7 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
               noteTok9.add(j9);
               noteStart9.set(j9, i9);
             }
-            if (inner9.some((t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text)))) {
+            if (inner9.some((t9) => t9.kind === "word" && (qualHit9(t9.text) || compHit9(t9.text)))) {
               for (let j9 = i9 + 1; j9 < e9; j9++) noteBare9.add(j9);
             }
           }
@@ -40450,9 +40511,8 @@ function runSheet(text, context, cache2, initialCfg) {
     });
     return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache, usedNow, nowSnap, cfgCap };
   };
-  const initialWasPreVerified = initialCfg !== void 0 && initialCfg.cap !== null && initialCfg.preVerified === true;
   let out = attempt();
-  const cfgVerify = initialWasPreVerified ? out.cfgCap : captureConfig(context);
+  const cfgVerify = captureConfig(context);
   const ratesRef = safeGet(() => context.rates, { rate: () => {
     throw new Error("context.rates getter failed");
   } });
