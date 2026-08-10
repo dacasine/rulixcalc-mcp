@@ -31323,12 +31323,14 @@ function combineQuantities(l2, r3, op, ctx) {
     if (curLeft.length > 0) {
       const xPre9 = x2;
       let decScale2 = null;
+      let decScaleR9 = { n: 1n, d: 1n };
       for (const c2 of comps) {
         if (c2.def.currency) continue;
         if (isPureLinear(c2.def)) x2 = rMul(x2, effFactor(c2, ctx));
         else if (c2.def.factorDec) {
           const f2 = new DecC(c2.def.factorDec).pow(c2.exp);
           decScale2 = decScale2 === null ? f2 : decScale2.times(f2);
+          decScaleR9 = rMul(decScaleR9, rPowInt(decToRat(new DecC(c2.def.factorDec)), c2.exp));
         } else return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       }
       const pos2 = curLeft.filter((c2) => c2.exp === 1);
@@ -31339,7 +31341,8 @@ function combineQuantities(l2, r3, op, ctx) {
       if (decScale2 !== null) {
         const sym9 = comps.filter((c9) => !c9.def.currency).map((c9) => ({ ...c9 }));
         const shadow9 = [{ x: xPre9, comps: [...ordered.map((c9) => ({ ...c9 })), ...sym9] }];
-        return { ...base2, v: ratToDec(x2).times(decScale2), terms: shadow9 };
+        const exactV9 = rMul(x2, decScaleR9);
+        return { ...base2, ...qv(exactV9), terms: shadow9 };
       }
       return { ...base2, ...qv(x2) };
     }
@@ -34429,6 +34432,31 @@ function evalAst(ast, env, ctx = {}) {
           if (ast.op === "^" && (rPreCap9 && (a3.n === 0n || a3.n < 0n) || lPreCap9 && b3.n < 0n)) {
             return err("inexact", "a power whose domain depends on a capped value is not decidable");
           }
+          const capIP9 = l2.capped === true || r3.capped === true;
+          if (ast.op === "^" && b3.d === 1n && capIP9 && (b3.n < 0n ? -b3.n : b3.n) * BigInt(a3.n.toString().length + a3.d.toString().length) > 4000n && (b3.n < 0n ? -b3.n : b3.n) <= 10000n) {
+            const k9 = Number(b3.n);
+            if (k9 < 0 && a3.n === 0n) return err("division-by-zero");
+            const Pip9 = 160;
+            const Dip9 = DecC.clone({ precision: Pip9 });
+            const aip9 = toDecP9(l2, Pip9);
+            const rip9 = aip9.pow(k9);
+            if (rip9.isNaN() || !isRepresentable(rip9)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
+            const powIP9 = { t: "d", v: new DecC(rip9.toSignificantDigits(40).toString()), vx: decToRat(rip9), capped: true };
+            const fLip9 = capFOf9(l2);
+            const powK9 = `powK(${capArgKey9([l2])};${k9})`;
+            let accIP9 = [{ s: powK9, x: { n: 1n, d: 1n }, b: rPowInt({ n: 10n, d: 1n }, (rip9.e ?? 0) + 1 - Pip9) }];
+            if (fLip9 !== void 0 && fLip9.length > 0 && a3.n !== 0n) {
+              const jac9 = aip9.pow(k9 - 1).times(k9);
+              if (jac9.isFinite()) accIP9 = capFAdd9(accIP9, capFScale9(fLip9, decToRat(jac9.toSignificantDigits(40))), 1n);
+              else return err("inexact", CAP_CANCEL_MSG);
+              const bBip9 = capFBound9(fLip9);
+              const remIP9 = decToRat(aip9.abs().pow(k9 - 2).times(k9 * k9).abs().times(ratToDec(bBip9)).times(ratToDec(bBip9)).times(4).toSignificantDigits(20));
+              if (rnorm(remIP9).n !== 0n) accIP9 = capFAdd9(accIP9, [{ s: `${powK9}rem`, x: { n: 1n, d: 1n }, b: remIP9 }], 1n);
+            }
+            powIP9.capF = capFNorm9(accIP9);
+            ctx.capNotes?.push("function");
+            return powIP9;
+          }
           const intPow2 = ast.op === "^" && b3.d === 1n && (b3.n < 0n ? -b3.n : b3.n) <= 10000n;
           if (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/" || ast.op === "mod" || intPow2) {
             let out;
@@ -34613,7 +34641,8 @@ function evalAst(ast, env, ctx = {}) {
                   while (s9 % 10n === 0n) s9 /= 10n;
                   return s9.toString().length;
                 };
-                const precP9 = Math.min(12e3, Math.max(100, sigP9(aR9.n) + sigP9(aR9.d) + 60));
+                const capBase9 = (capFOf9(l2)?.length ?? 0) > 0;
+                const precP9 = Math.min(capBase9 ? 400 : 12e3, Math.max(100, sigP9(aR9.n) + sigP9(aR9.d) + 60));
                 const DecPw9 = precP9 <= 100 ? DecHi : DecC.clone({ precision: precP9 });
                 const aH9 = new DecPw9(aR9.n < 0n ? (-aR9.n).toString() : aR9.n.toString()).div(aR9.d.toString());
                 const bH9 = new DecPw9(rExact.n.toString()).div(rExact.d.toString());
@@ -38099,7 +38128,8 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
               noteTok9.add(j9);
               noteStart9.set(j9, i9);
             }
-            const bareWord9 = (t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text) || isFinanceAnchorWord(t9.text));
+            const NOTE_FILLER9 = /^(strictly|purely|simply|really|just|only|exactly|truly|actually|basically|no|non|not|without|sans|pas|aucune?|please|thanks?|kindly|this|that|is|are|be|method|methods|basis)$/iu;
+            const bareWord9 = (t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text) || /^(rates?|taux)$/iu.test(t9.text) || isFinanceAnchorWord(t9.text) || NOTE_FILLER9.test(t9.text));
             if (inner9.some((t9) => t9.kind === "word" && (QUAL9.test(t9.text) || COMPOUNDISH9.test(t9.text))) && inner9.every((t9) => bareWord9(t9) || t9.kind === "comma" || t9.kind === "colon" || t9.kind === "unknown" || t9.kind === "op" || t9.kind === "bang" || t9.kind === "lparen" || t9.kind === "rparen")) {
               for (let j9 = i9 + 1; j9 < e9; j9++) noteBare9.add(j9);
             }
