@@ -30927,6 +30927,16 @@ var pctScale9 = (base9, factor9, cap9) => {
   else delete out9.capF;
   return out9;
 };
+var reemitFromShadow9 = (rt2, thirty) => {
+  if (rt2.t !== "d" && rt2.t !== "p" && rt2.t !== "q") return rt2;
+  const terms = rt2.terms;
+  const termsDen = rt2.termsDen;
+  if (terms === void 0 && termsDen === void 0) return rt2;
+  const nP = termsProject(terms ?? ONE_TERMS(), thirty);
+  const dP = termsProject(termsDen ?? ONE_TERMS(), thirty);
+  if (nP === null || dP === null || dP.n === 0n) return rt2;
+  return { ...rt2, ...qv(rDiv(nP, dP)) };
+};
 var promoteShadowScalar9 = (o2) => {
   if (o2.t !== "d" && o2.t !== "f") return o2;
   const o9 = o2;
@@ -31673,6 +31683,34 @@ var capCoarse9 = (res9, parts9, key9) => {
   return res9;
 };
 var capFBound9 = (f9) => f9.reduce((s9, t9) => rAdd(s9, rMul(rAbs9M(t9.x), t9.b)), { n: 0n, d: 1n });
+var capProdTransport9 = (res9, ops9, key9) => {
+  if (res9.t !== "d" && res9.t !== "f" && res9.t !== "q" && res9.t !== "p") return res9;
+  const capped9 = ops9.filter((o9) => (capFOf9(o9)?.length ?? 0) > 0);
+  if (capped9.length === 0) return res9;
+  const opVal9 = (o9) => o9.t === "q" ? qx(o9) : o9.t === "d" || o9.t === "f" || o9.t === "p" ? numRat(o9) : null;
+  const vals9 = capped9.map((o9) => opVal9(o9));
+  if (vals9.some((v9) => v9 === null || v9.n === 0n)) return capCoarse9(res9, ops9, key9);
+  const rv9 = res9.t === "q" ? qx(res9) : numRat(res9);
+  let f9 = [];
+  capped9.forEach((o9, i9) => {
+    f9 = capFAdd9(f9, capFScale9(capFOf9(o9), rDiv(rv9, vals9[i9])), 1n);
+  });
+  if (capped9.length >= 2) {
+    const boundProd9 = capped9.reduce((s9, o9) => rMul(s9, capFBound9(capFOf9(o9) ?? [])), { n: 1n, d: 1n });
+    const denomProd9 = vals9.reduce((s9, v9) => rMul(s9, v9), { n: 1n, d: 1n });
+    if (rnorm(boundProd9).n !== 0n && denomProd9.n !== 0n) {
+      const cross9 = rMul(rAbs9M(rDiv(rv9, denomProd9)), boundProd9);
+      f9 = capFAdd9(f9, [{ s: `rem:${key9}(${capped9.map((o9) => capFDig9(capFOf9(o9))).join(";")})`, x: { n: 1n, d: 1n }, b: cross9 }], 1n);
+    }
+  }
+  if (f9.length === 0) {
+    delete res9.capF;
+    return res9;
+  }
+  if (rCmp(capFBound9(f9), rAbs9M(rv9)) > 0) return err("inexact", CAP_CANCEL_MSG);
+  res9.capF = f9;
+  return res9;
+};
 var toDecP9 = (rt9, prec9) => {
   const x9 = numRat(rt9);
   const D9 = DecC.clone({ precision: Math.max(100, Math.min(13e3, prec9)) });
@@ -32899,7 +32937,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capPctOnOff9(res$9, base, p2, -1);
+      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), base, p2, -1);
     }
     case "un": {
       const e = evalAst(ast.e, env, ctx);
@@ -32997,13 +33035,13 @@ function evalAst(ast, env, ctx = {}) {
       if (e.t === "p") return err("unsupported-pair", "percentage of a percentage needs \u201Cde/of\u201D");
       if (e.t === "q") e = foldIrrationalResidue(e, ctx.monthToDays === "30");
       if (isCarrier(e)) {
-        return capCopy9({
+        return reemitFromShadow9(capCopy9({
           t: "p",
           ...qv(qx(e)),
           ...e.terms && { terms: e.terms },
           ...e.termsDen && { termsDen: e.termsDen },
           ...e.capped === true && { capped: true }
-        }, e);
+        }, e), ctx.monthToDays === "30");
       }
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
       const px = numRat(e);
@@ -33058,7 +33096,7 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "d", ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } };
       })();
-      return capCoarse9(res$9, [p2, base], "pctOf");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), [p2, base], "pctOf");
     }
     case "pctOn": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -33092,7 +33130,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capPctOnOff9(res$9, base, p2, 1);
+      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), base, p2, 1);
     }
     case "isPctOfWhat": {
       const value = promoteShadowScalar9(evalAst(ast.value, env, ctx));
@@ -33141,7 +33179,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } };
         }
       })();
-      return capCoarse9(res$9, [value, p2], "isPctOfWhat");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), [value], "isPctOfWhat");
     }
     case "whatPctOf": {
       const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
@@ -33245,7 +33283,7 @@ function evalAst(ast, env, ctx = {}) {
         if (br2.n === 0n) return err("division-by-zero");
         return { t: "p", ...qv(rMul(rDiv(numRat(part), br2), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
       })();
-      return capCoarse9(wpRes$9, [base, part], "whatPctOf");
+      return capCoarse9(reemitFromShadow9(wpRes$9, ctx.monthToDays === "30"), [base, part], "whatPctOf");
     }
     case "date": {
       let year = ast.year;
@@ -33334,7 +33372,7 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "d", ...qv(rMul(numRat(value), factor)), ...(p2.capped === true || value.capped === true) && { capped: true } };
       })();
-      return capCoarse9(res$9, [value, p2], "pctMoreWhat");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), [value], "pctMoreWhat");
     }
     case "weekday": {
       const ref = referencePlainDate(ctx);
@@ -35049,6 +35087,7 @@ function evalAst(ast, env, ctx = {}) {
         if ((ast.op === "+" || ast.op === "-") && rnorm(v9).n === 0n) {
           return err("inexact", CAP_CANCEL_MSG);
         }
+        if (ast.op === "*") return capProdTransport9(binJ9, [l2, r3], `bin:${ast.op}`);
         return capCoarse9(binJ9, [l2, r3], `bin:${ast.op}`);
       }
       return binJ9;
