@@ -35255,6 +35255,15 @@ function isAnyPackWord(word) {
   }
   return anyPackWords.has(word);
 }
+var anyPackBlockerWords = /* @__PURE__ */ new Set();
+function isAnyPackBlockerWord(word) {
+  if (anyPackBlockerWords.size === 0) {
+    for (const pack of Object.values(PACKS)) {
+      for (const w2 of Object.keys(pack.blockers ?? {})) anyPackBlockerWords.add(w2.toLowerCase());
+    }
+  }
+  return anyPackBlockerWords.has(word);
+}
 var anyPackBridges = null;
 function allPackBridges() {
   if (anyPackBridges === null) {
@@ -37817,16 +37826,19 @@ var skeletonM = (w2) => {
   return out.normalize("NFC");
 };
 var skeletonD = (w2) => [...w2.normalize("NFD")].filter((ch) => !new RegExp("\\p{M}", "u").test(ch)).join("").normalize("NFC");
-function roleSpelling(w9, lexicon) {
+function roleSpelling(w9, lexicon, dangerousOnly = false) {
   const s9 = w9.toLowerCase();
-  return isUnitWord(w9) || isUnitWord(s9) || isTimespanUnitWord(s9) || isReservedWord(s9) || isComputableWord(s9) || isDateKeywordWord(s9) || isAnyPackWord(s9) || allPackBridges().words.has(s9) || CORE_OP_WORDS.has(s9) || isPercentPreposition(s9) || /^(of|off|increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(s9) || [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === s9 || g9.words.join("\xB7") === s9) || allPackBridges().groups.some((g9) => g9.join("") === s9 || g9.join("\xB7") === s9);
+  if (isUnitWord(w9) || isUnitWord(s9) || isTimespanUnitWord(s9) || isReservedWord(s9) || isComputableWord(s9) || isDateKeywordWord(s9) || allPackBridges().words.has(s9) || CORE_OP_WORDS.has(s9) || isPercentPreposition(s9) || /^(of|off|increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(s9) || allPackBridges().groups.some((g9) => g9.join("") === s9 || g9.join("\xB7") === s9)) return true;
+  if (isAnyPackWord(s9) && (!dangerousOnly || !isAnyPackBlockerWord(s9))) return true;
+  if (!dangerousOnly && [...lexicon.blockerGroups, ...allPackBlockerGroups()].some((g9) => g9.words.join("") === s9 || g9.words.join("\xB7") === s9)) return true;
+  return false;
 }
 function confusableRole(text, rawText, lexicon) {
   if (roleSpelling(text, lexicon)) return false;
   const nonLatin9 = (w9) => [...w9].some((ch9) => new RegExp("\\p{L}", "u").test(ch9) && !/[\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(ch9));
-  const twinHits9 = (w9) => {
+  const twinHits9 = (w9, dangerousOnly = false) => {
     const flat9 = w9.replace(/\s+/gu, "");
-    return [flat9, flat9.replace(/I/gu, "l"), flat9.replace(/I/gu, "i"), flat9.replace(/[ι\u0345]/gu, "i"), flat9.replace(/[ι\u0345]/gu, "l")].some((tw9) => roleSpelling(tw9, lexicon) || // a PLAUSIBLE unit spelling (KiB, CHFF) closes the same way
+    return [flat9, flat9.replace(/I/gu, "l"), flat9.replace(/I/gu, "i"), flat9.replace(/[ι\u0345]/gu, "i"), flat9.replace(/[ι\u0345]/gu, "l")].some((tw9) => roleSpelling(tw9, lexicon, dangerousOnly) || // a PLAUSIBLE unit spelling (KiB, CHFF) closes the same way
     // (audit BE): KͺB folds to KiB and must refuse, never drop
     plausibleUnitReason(tw9) !== null);
   };
@@ -37841,7 +37853,7 @@ function confusableRole(text, rawText, lexicon) {
     if (twinHits9(text) && !roleSpelling(text, lexicon)) return true;
   }
   const sD9 = skeletonD(text);
-  if (sD9 !== text.normalize("NFC") && sD9.length >= 3 && twinHits9(sD9)) return true;
+  if (sD9 !== text.normalize("NFC") && sD9.length >= 3 && twinHits9(sD9, true)) return true;
   if (!nonLatin9(text)) return false;
   const sM9 = skeletonM(text);
   if (sM9 !== text && twinHits9(sM9)) return true;
@@ -37991,6 +38003,27 @@ var realDateStr = (s9) => {
   return dt9.getUTCFullYear() === y9 && dt9.getUTCMonth() === m9 - 1 && dt9.getUTCDate() === d9;
 };
 var REF_WORDS = /* @__PURE__ */ new Set(["line", "ligne"]);
+var DELTA_VERBS9 = /* @__PURE__ */ new Set([
+  "increase",
+  "increases",
+  "increased",
+  "decrease",
+  "decreases",
+  "decreased",
+  "reduce",
+  "reduces",
+  "reduced",
+  "grow",
+  "grows",
+  "raise",
+  "raises",
+  "raised",
+  "lower",
+  "lowers",
+  "lowered",
+  "cut",
+  "cuts"
+]);
 function extractReferences(tokens, rts, formatting) {
   const refs = [];
   for (let i2 = 0; i2 < tokens.length - 3; i2++) {
@@ -38981,6 +39014,19 @@ function prepareTokens(tokens, env, lexicon, violations, ignored, rts) {
         }
       }
     }
+    if (DELTA_VERBS9.has(lower9) && !env.has(tb9.text) && !isUnitWord(tb9.text)) {
+      const operandNext9 = operandAhead9(ib9 + 1);
+      if (operandNext9) {
+        let lb9 = ib9 - 1;
+        while (lb9 >= 0 && tokens[lb9].kind === "word" && !env.has(tokens[lb9].text) && !multiVarEnd9(lb9) && !isUnitWord(tokens[lb9].text) && !isComputableWord(tokens[lb9].text)) lb9--;
+        const lt9 = lb9 >= 0 ? tokens[lb9] : void 0;
+        const hasLeft9 = lt9 !== void 0 && lt9.kind !== "op" && lt9.kind !== "lparen" && lt9.kind !== "equals";
+        if (!hasLeft9) {
+          violations.push(`\u201C${tb9.text}\u201D as a leading verb is not supported \u2014 write the value first, e.g. \u201C100 increased by 10%\u201D`);
+          continue;
+        }
+      }
+    }
     if ((lower9 === "of" || lower9 === "off" ? operandAt9(ib9 + 1) : /^(increased|decreased|reduced|r[ée]duite?s?|diminu[ée]e?s?|augment[ée]e?s?)$/u.test(lower9) && operandAhead9(ib9 + 1)) && tokens[ib9 - 1]?.kind !== "percent" && tokens[ib9 - 1]?.kind !== "number" && tokens[ib9 - 1]?.kind !== "rparen" && !(tokens[ib9 - 1]?.kind === "word" && (env.has(tokens[ib9 - 1].text) || multiVarEnd9(ib9 - 1))) && !(tokens[ib9 - 1]?.kind === "word" && isPrepositionAnchorWord(tokens[ib9 - 1].text))) {
       violations.push(`\u201C${tb9.text}\u201D is a percent operator without its percentage`);
       continue;
@@ -39242,6 +39288,8 @@ function assumptionMessage(a2, lang) {
     }
     case "ordinal-suffix":
       return fr ? `\xAB ${a2.data["text"]} \xBB lu comme l'ordinal ${a2.data["n"]} \u2014 pour la notation scientifique, \xE9crire ${a2.data["n"]}e0` : `\u201C${a2.data["text"]}\u201D read as the ordinal ${a2.data["n"]} \u2014 write ${a2.data["n"]}e0 for scientific notation`;
+    case "interest-convention":
+      return fr ? `int\xE9r\xEAt compos\xE9 annuel suppos\xE9 \u2014 la valeur suit la capitalisation annuelle, pas l'int\xE9r\xEAt simple` : `annual compound interest assumed \u2014 the value uses annual compounding, not simple interest`;
   }
 }
 function tokenAssumptions(tokens, dateOrder, lang) {
@@ -39679,6 +39727,9 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     rt2 = finalizeCurrencies(rt2, ctx);
+    if (ast.k === "finance" && ast.fn === "interest" && rt2.t !== "e" && !/(compound(ed|ing)?|compos[ée]e?s?|capitalis[ée]e?s?)/iu.test(line)) {
+      rawAssume.push({ code: "interest-convention", level: 2, impact: "money", data: {} });
+    }
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && !rt2.v.isZero() && Math.abs(rt2.v.e) > 9999) {
       rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
     }
@@ -39994,10 +40045,18 @@ function captureConfig(context) {
       return void 0;
     }
   };
-  const polSrc = one(() => context.policies);
+  let polThrew9 = false;
+  const polSrc = (() => {
+    try {
+      return context.policies;
+    } catch {
+      polThrew9 = true;
+      return void 0;
+    }
+  })();
   const finSrc = one(() => context.financial);
   const fmtSrc = one(() => context.formatting);
-  const policies = polSrc == null ? void 0 : (() => {
+  const policies = polSrc == null ? polThrew9 ? { ambiguity: "strict" } : void 0 : (() => {
     const o9 = {};
     const put = (k2) => {
       const v9 = one(() => polSrc[k2]);
@@ -40008,7 +40067,19 @@ function captureConfig(context) {
     put("preferFutureForAmbiguousDates");
     put("anchorTimeForBareDates");
     put("monthToDays");
-    put("ambiguity");
+    {
+      let ambThrew9 = false;
+      const amb9 = (() => {
+        try {
+          return polSrc.ambiguity;
+        } catch {
+          ambThrew9 = true;
+          return void 0;
+        }
+      })();
+      if (amb9 !== void 0) o9.ambiguity = amb9;
+      else if (ambThrew9) o9.ambiguity = "strict";
+    }
     put("preferSomethingToNothing");
     put("ambiguousTimezoneCodesRequireUppercase");
     return o9;
