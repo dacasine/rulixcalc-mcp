@@ -29089,6 +29089,10 @@ var termCanon = (t2, thirty) => {
       sym.push(`C:${d2.currency}^${c2.exp}`);
       continue;
     }
+    if (d2.constSym !== void 0) {
+      sym.push(`P:${d2.constSym}^${c2.exp}`);
+      continue;
+    }
     if (d2.factorDec !== void 0) {
       sym.push(`D:${d2.factorDec}^${c2.exp}`);
       continue;
@@ -29153,6 +29157,10 @@ var termVecInner = (t2, thirty) => {
     const d2 = c2.def;
     if (d2.currency !== void 0) {
       bump(`C:${d2.currency}`, c2.exp);
+      continue;
+    }
+    if (d2.constSym !== void 0) {
+      bump(`P:${d2.constSym}`, c2.exp);
       continue;
     }
     if (d2.factorDec !== void 0) {
@@ -29289,6 +29297,13 @@ var termsProject = (list9, thirty) => {
 
 // ../textual-calculator/core/packages/engine/src/units.ts
 var r2 = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
+var PI_ATOM = {
+  id: "const:pi",
+  symbol: "\u03A0",
+  dim: {},
+  constSym: "\u03A0",
+  factorDec: "3.141592653589793238462643383279502884197"
+};
 var DEFS = [
   // length (base m)
   { id: "m", symbol: "m", dim: { length: 1 }, factor: r2(1) },
@@ -30905,6 +30920,23 @@ var carrierNum = (rt2, ctx) => {
   return { t: "d", v: rt2.v, capped: true };
 };
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
+var promoteShadowScalar9 = (o2) => {
+  if (o2.t !== "d" && o2.t !== "f") return o2;
+  const o9 = o2;
+  if (o9.terms === void 0 && o9.termsDen === void 0) return o2;
+  const base9 = o2.t === "d" ? { v: o9.v, ...o9.vx && { vx: o9.vx } } : qv(numRat(o2));
+  return {
+    t: "q",
+    ...base9,
+    dim: {},
+    symbol: "",
+    comps: [],
+    ...o9.terms && { terms: o9.terms },
+    ...o9.termsDen && { termsDen: o9.termsDen },
+    ...o9.capF && { capF: o9.capF },
+    ...o9.capped === true && { capped: true }
+  };
+};
 function alignForAdd(l2, r3, ctx) {
   if (l2.symbol === r3.symbol) return r3;
   const lc = compsOf(l2);
@@ -32243,6 +32275,10 @@ function evalAst(ast, env, ctx = {}) {
   switch (ast.k) {
     case "num":
       return { t: "d", v: ast.dec };
+    case "mathConst": {
+      const piDec$ = new DecC(PI_ATOM.factorDec);
+      return { t: "d", v: ast.name === "pi" ? piDec$ : piDec$.times(2) };
+    }
     case "frac":
       return makeFrac(ast.num, ast.den, "literal");
     case "var": {
@@ -32815,7 +32851,7 @@ function evalAst(ast, env, ctx = {}) {
     }
     case "pctOff": {
       const p2 = evalAst(ast.pct, env, ctx);
-      const base = evalAst(ast.base, env, ctx);
+      const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
       const res$9 = (() => {
         if (p2.t === "e") return p2;
         if (base.t === "e") return base;
@@ -32958,7 +32994,7 @@ function evalAst(ast, env, ctx = {}) {
     }
     case "pctOf": {
       const p2 = evalAst(ast.pct, env, ctx);
-      const base = evalAst(ast.base, env, ctx);
+      const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
       const res$9 = (() => {
         if (p2.t === "e") return p2;
         if (base.t === "e") return base;
@@ -33009,7 +33045,7 @@ function evalAst(ast, env, ctx = {}) {
     }
     case "pctOn": {
       const p2 = evalAst(ast.pct, env, ctx);
-      const base = evalAst(ast.base, env, ctx);
+      const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
       const res$9 = (() => {
         if (p2.t === "e") return p2;
         if (base.t === "e") return base;
@@ -33091,7 +33127,7 @@ function evalAst(ast, env, ctx = {}) {
       return capCoarse9(res$9, [value, p2], "isPctOfWhat");
     }
     case "whatPctOf": {
-      const base = evalAst(ast.base, env, ctx);
+      const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
       const part = evalAst(ast.part, env, ctx);
       if (base.t === "e") return base;
       if (part.t === "e") return part;
@@ -36858,6 +36894,8 @@ function parse3(tokens) {
         const lower = t2.text.toLowerCase();
         const kw = DATE_KEYWORDS[lower];
         if (kw) return { k: "dateKw", kw };
+        if (lower === "pi" || lower === "\u03C0") return { k: "mathConst", name: "pi" };
+        if (lower === "tau") return { k: "mathConst", name: "tau" };
         const constant = CONSTANTS[lower];
         if (constant !== void 0) return { k: "num", dec: new DecC(constant) };
         const fnDef = FUNCTION_DEFS[lower];
@@ -37917,6 +37955,7 @@ var INVISIBLES_RE = /[­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮⁠-⁢⁥-⁯ㅤ�
 function classify(ast) {
   switch (ast.k) {
     case "num":
+    case "mathConst":
     case "frac":
     case "call":
     case "fact":
@@ -37955,6 +37994,7 @@ function wrapLastPureFactor(node, currency) {
 function monetize(ast, currency) {
   switch (ast.k) {
     case "num":
+    case "mathConst":
     case "frac":
     case "call":
     case "fact":
@@ -39419,9 +39459,9 @@ var asCarrierQ = (p9) => ({
 function exactSame(a2, b2, thirty) {
   if (exactSemantic(a2, thirty) === exactSemantic(b2, thirty)) return true;
   if (a2 === null || b2 === null || a2.t !== b2.t) return false;
-  if (a2.t !== "q" && a2.t !== "p") return false;
-  const a9 = a2.t === "p" ? asCarrierQ(a2) : a2;
-  const b9 = b2.t === "p" ? asCarrierQ(b2) : b2;
+  if (a2.t !== "q" && a2.t !== "p" && a2.t !== "d") return false;
+  const a9 = a2.t === "q" ? a2 : asCarrierQ(a2);
+  const b9 = b2.t === "q" ? b2 : asCarrierQ(b2);
   if (a9.termsDen === void 0 && b9.termsDen === void 0) return false;
   if (a9.symbol !== b9.symbol || a9.capped === true !== (b9.capped === true)) return false;
   const x9 = distributeTerms(termsOf(a9), b9.termsDen ?? ONE_TERMS(), thirty);
@@ -39450,12 +39490,12 @@ function exactSemantic(rt2, thirty) {
     const x9 = rt2.vx ?? decToRat(rt2.v);
     exact = `|x:${x9.n}/${x9.d}`;
   }
-  if ((rt2.t === "q" || rt2.t === "p") && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
+  if ((rt2.t === "q" || rt2.t === "p" || rt2.t === "d") && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
     const q9 = rt2.t === "q" ? rt2 : asCarrierQ(rt2);
     const k9 = fracReduceKey(q9, thirty);
     if (k9 !== null) return JSON.stringify(v2) + `|k:${k9}` + capW;
   }
-  if ((rt2.t === "q" || rt2.t === "p") && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
+  if ((rt2.t === "q" || rt2.t === "p" || rt2.t === "d") && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
     const gcd9 = (a9, b9) => {
       a9 = a9 < 0n ? -a9 : a9;
       b9 = b9 < 0n ? -b9 : b9;
@@ -39509,8 +39549,10 @@ var serialize = (rt2) => {
   if (rt2 === null || rt2 === void 0) return "\u2205";
   const cap = rt2.capped === true ? ":C" + capFDigest9(rt2.capF) : "";
   switch (rt2.t) {
-    case "d":
-      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}${cap}`;
+    case "d": {
+      const serD = (list) => list === void 0 ? "" : list.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+");
+      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${serD(rt2.terms)}:${serD(rt2.termsDen)}${cap}`;
+    }
     case "f":
       return `f:${rt2.n}/${rt2.d}:${rt2.origin}${cap}`;
     case "p": {
