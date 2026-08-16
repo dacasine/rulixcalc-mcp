@@ -33790,6 +33790,29 @@ function evalAst(ast, env, ctx = {}) {
       let r3 = evalAst(ast.r, env, ctx);
       if (l2.t === "e") return l2;
       if (r3.t === "e") return r3;
+      {
+        const hasShadow$ = (o2) => (o2.t === "d" || o2.t === "f") && (o2.terms !== void 0 || o2.termsDen !== void 0);
+        if ((ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/") && (hasShadow$(l2) || hasShadow$(r3))) {
+          const toCarrier$ = (o2) => {
+            if (o2.t !== "d" && o2.t !== "f") return o2;
+            const o9 = o2;
+            const base9 = o2.t === "d" ? { v: o9.v, ...o9.vx && { vx: o9.vx } } : qv(numRat(o2));
+            return {
+              t: "q",
+              ...base9,
+              dim: {},
+              symbol: "",
+              comps: [],
+              ...o9.terms && { terms: o9.terms },
+              ...o9.termsDen && { termsDen: o9.termsDen },
+              ...o9.capF && { capF: o9.capF },
+              ...o9.capped === true && { capped: true }
+            };
+          };
+          l2 = toCarrier$(l2);
+          r3 = toCarrier$(r3);
+        }
+      }
       const lPreCap9 = l2.capped === true;
       const rPreCap9 = r3.capped === true;
       if (ast.op === "^" && r3.t === "q" && dimIsEmpty(r3.dim)) {
@@ -34681,47 +34704,6 @@ function evalAst(ast, env, ctx = {}) {
         if ((l2.t === "f" || l2.t === "d") && (r3.t === "f" || r3.t === "d")) {
           const a3 = numRat(l2);
           const b3 = numRat(r3);
-          {
-            const lSh$ = l2;
-            const rSh$ = r3;
-            const hasSh$ = lSh$.terms !== void 0 || lSh$.termsDen !== void 0 || rSh$.terms !== void 0 || rSh$.termsDen !== void 0;
-            if (hasSh$ && (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/")) {
-              const t30$ = ctx.monthToDays === "30";
-              const fl$ = fracOf(l2);
-              const fr$ = fracOf(r3);
-              const cap$ = l2.capped === true || r3.capped === true;
-              const build$ = (val9, num9, den9) => {
-                if (num9 === null || den9 === null) {
-                  ctx.capNotes?.push("product");
-                  return { t: "d", ...qv(val9), capped: true };
-                }
-                const q9 = attachFrac({ t: "q", ...qv(val9), dim: {}, symbol: "", comps: [] }, num9, den9);
-                return { t: "d", ...qv(val9), ...q9.terms && { terms: q9.terms }, ...q9.termsDen && { termsDen: q9.termsDen }, ...cap$ && { capped: true } };
-              };
-              if (ast.op === "*" || ast.op === "/") {
-                if (ast.op === "/" && b3.n === 0n) {
-                  return divProjZero(distributeTerms(fl$.num, fr$.den, t30$), distributeTerms(fl$.den, fr$.num, t30$), r3, ctx, l2);
-                }
-                const num$ = ast.op === "*" ? distributeTerms(fl$.num, fr$.num, t30$) : distributeTerms(fl$.num, fr$.den, t30$);
-                const den$ = ast.op === "*" ? distributeTerms(fl$.den, fr$.den, t30$) : distributeTerms(fl$.den, fr$.num, t30$);
-                return build$(ast.op === "*" ? rMul(a3, b3) : rDiv(a3, b3), num$, den$);
-              }
-              const aa$ = distributeTerms(fl$.num, fr$.den, t30$);
-              const bb$ = distributeTerms(fr$.num, fl$.den, t30$);
-              const dd$ = distributeTerms(fl$.den, fr$.den, t30$);
-              if (aa$ !== null && bb$ !== null && dd$ !== null) {
-                const nn$ = mergeTerms(aa$, bb$, ast.op === "+" ? 1n : -1n, t30$);
-                if (nn$.length === 0) {
-                  const gz$ = capAddGate9(l2, r3, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
-                  if (gz$.err !== void 0) return gz$.err;
-                  return { t: "d", ...qv({ n: 0n, d: 1n }) };
-                }
-                return build$(ast.op === "+" ? rAdd(a3, b3) : rSub(a3, b3), nn$, dd$);
-              }
-              ctx.capNotes?.push("sum");
-              return { t: "d", ...qv(ast.op === "+" ? rAdd(a3, b3) : rSub(a3, b3)), capped: true };
-            }
-          }
           if (ast.op === "^" && (rPreCap9 && (a3.n === 0n || a3.n < 0n) || lPreCap9 && b3.n < 0n)) {
             return err("inexact", "a power whose domain depends on a capped value is not decidable");
           }
