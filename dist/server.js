@@ -30920,6 +30920,13 @@ var carrierNum = (rt2, ctx) => {
   return { t: "d", v: rt2.v, capped: true };
 };
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
+var pctScale9 = (base9, factor9, cap9) => {
+  const out9 = { ...base9, ...qv(rMul(qx(base9), factor9)), ...scaleTerms(base9, factor9), ...cap9 && { capped: true } };
+  const cf9 = capFScale9(capFOf9(base9) ?? [], factor9);
+  if (cf9.length > 0) out9.capF = cf9;
+  else delete out9.capF;
+  return out9;
+};
 var promoteShadowScalar9 = (o2) => {
   if (o2.t !== "d" && o2.t !== "f") return o2;
   const o9 = o2;
@@ -31968,6 +31975,16 @@ var pctFactorFrac = (p9, mode9, thirty) => {
 };
 var applyFracFactor = (base9, x9, ff9, ctx, cap9) => {
   const t30 = ctx.monthToDays === "30";
+  const bv9 = base9.t === "q" ? qx(base9) : numRat(base9);
+  const scaleCapF9 = (out) => {
+    const f0 = capFOf9(base9);
+    if (out.t === "e" || f0 === void 0 || f0.length === 0) return out;
+    if (bv9.n === 0n) return out;
+    const sc0 = capFScale9(f0, rDiv(x9, bv9));
+    if (sc0.length > 0) out.capF = sc0;
+    else delete out.capF;
+    return out;
+  };
   if (base9.t === "q") {
     const f9 = fracOf(base9);
     const n92 = distributeTerms(f9.num, ff9.num, t30);
@@ -31977,12 +31994,12 @@ var applyFracFactor = (base9, x9, ff9, ctx, cap9) => {
       return { ...base9, ...qv(x9), terms: void 0, termsDen: void 0, capped: true };
     }
     const out92 = attachFrac({ ...base9, ...qv(x9) }, n92, d9);
-    return cap9 ? { ...out92, capped: true } : out92;
+    return scaleCapF9(cap9 ? { ...out92, capped: true } : out92);
   }
   const b9 = numRat(base9);
   const n9 = ff9.num.map((t9) => ({ x: rMul(t9.x, b9), comps: t9.comps }));
   const out9 = attachFrac({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [] }, n9, ff9.den);
-  return cap9 ? { ...out9, capped: true } : out9;
+  return scaleCapF9(cap9 ? { ...out9, capped: true } : out9);
 };
 var tsScalarOf = (o2, ctx) => {
   if (o2.capped === true) return "irr";
@@ -32864,7 +32881,7 @@ function evalAst(ast, env, ctx = {}) {
           const k9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
           const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), k9), ff9, ctx, p2.capped === true || base.capped === true);
-          return { ...base, ...qv(rMul(qx(base), k9)), ...scaleTerms(base, k9), ...(p2.capped === true || base.capped === true) && { capped: true } };
+          return pctScale9(base, k9, p2.capped === true || base.capped === true);
         }
         if (base.t === "ts") {
           if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
@@ -32975,7 +32992,7 @@ function evalAst(ast, env, ctx = {}) {
       return scRes9;
     }
     case "pct": {
-      let e = evalAst(ast.e, env, ctx);
+      let e = promoteShadowScalar9(evalAst(ast.e, env, ctx));
       if (e.t === "e") return e;
       if (e.t === "p") return err("unsupported-pair", "percentage of a percentage needs \u201Cde/of\u201D");
       if (e.t === "q") e = foldIrrationalResidue(e, ctx.monthToDays === "30");
@@ -33024,7 +33041,7 @@ function evalAst(ast, env, ctx = {}) {
         if (base.t === "q") {
           const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
-          return { ...base, ...qv(rMul(qx(base), pf)), ...scaleTerms(base, pf), ...(p2.capped === true || base.capped === true) && { capped: true } };
+          return pctScale9(base, pf, p2.capped === true || base.capped === true);
         }
         if (base.t === "ts") {
           if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
@@ -33057,7 +33074,7 @@ function evalAst(ast, env, ctx = {}) {
           const kOn = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
           const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), kOn), ff9, ctx, p2.capped === true || base.capped === true);
-          return { ...base, ...qv(rMul(qx(base), kOn)), ...scaleTerms(base, kOn), ...(p2.capped === true || base.capped === true) && { capped: true } };
+          return pctScale9(base, kOn, p2.capped === true || base.capped === true);
         }
         if (base.t === "ts") {
           if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
@@ -33078,7 +33095,7 @@ function evalAst(ast, env, ctx = {}) {
       return capPctOnOff9(res$9, base, p2, 1);
     }
     case "isPctOfWhat": {
-      const value = evalAst(ast.value, env, ctx);
+      const value = promoteShadowScalar9(evalAst(ast.value, env, ctx));
       const p2 = evalAst(ast.pct, env, ctx);
       const res$9 = (() => {
         if (value.t === "e") return value;
@@ -33128,7 +33145,7 @@ function evalAst(ast, env, ctx = {}) {
     }
     case "whatPctOf": {
       const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
-      const part = evalAst(ast.part, env, ctx);
+      const part = promoteShadowScalar9(evalAst(ast.part, env, ctx));
       if (base.t === "e") return base;
       if (part.t === "e") return part;
       const wpRes$9 = (() => {
@@ -33152,14 +33169,17 @@ function evalAst(ast, env, ctx = {}) {
             return z9;
           }
           const px9 = isCarrier(part) ? qx(part) : numRat(part);
-          const x9 = rMul(rDiv(px9, bx9), { n: 100n, d: 1n });
           const n9 = distributeTerms(fP9.num, fB9.den, t30w);
           const d9 = distributeTerms(fP9.den, fB9.num, t30w);
           if (n9 === null || d9 === null) {
             ctx.capNotes?.push("product");
-            return { t: "p", ...qv(x9), capped: true };
+            return { t: "p", ...qv(rMul(rDiv(px9, bx9), { n: 100n, d: 1n })), capped: true };
           }
-          const q9 = attachFrac({ t: "q", ...qv(rDiv(px9, bx9)), dim: {}, symbol: "", comps: [] }, n9, d9);
+          const nP9 = termsProject(n9, t30w);
+          const dP9 = termsProject(d9, t30w);
+          const ratio9 = nP9 !== null && dP9 !== null && dP9.n !== 0n ? rDiv(nP9, dP9) : rDiv(px9, bx9);
+          const x9 = rMul(ratio9, { n: 100n, d: 1n });
+          const q9 = attachFrac({ t: "q", ...qv(ratio9), dim: {}, symbol: "", comps: [] }, n9, d9);
           return {
             t: "p",
             ...qv(x9),
@@ -33256,7 +33276,7 @@ function evalAst(ast, env, ctx = {}) {
       return { t: "ds", pd: new Pt.PlainDate(year, ast.month, 1), precision: "monthOnly" };
     }
     case "pctMoreWhat": {
-      const value = evalAst(ast.value, env, ctx);
+      const value = promoteShadowScalar9(evalAst(ast.value, env, ctx));
       const p2 = evalAst(ast.pct, env, ctx);
       const res$9 = (() => {
         if (value.t === "e") return value;
