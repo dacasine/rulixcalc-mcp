@@ -30173,26 +30173,52 @@ var TRANSCENDENTAL_FNS = /* @__PURE__ */ new Set([
   "tanh"
 ]);
 var DecHi = DecC.clone({ precision: 100 });
-var termsProjectDec9 = (list9, thirty, D9) => {
-  let acc9 = new D9(0);
+var termsProjectIval9 = (list9, thirty, prec9) => {
+  const Dlo = DecC.clone({ precision: prec9, rounding: 3 });
+  const Dhi = DecC.clone({ precision: prec9, rounding: 2 });
+  const dec2 = (D9, n2, d2) => new D9(n2.toString()).div(d2.toString());
+  let lo9 = new Dlo(0);
+  let hi9 = new Dhi(0);
   for (const t9 of list9) {
-    let x9 = new D9(t9.x.n.toString()).div(t9.x.d.toString());
+    let flo9 = new Dlo(1);
+    let fhi9 = new Dhi(1);
     for (const c9 of t9.comps) {
+      let blo9;
+      let bhi9;
       if (c9.def.factorDec !== void 0) {
-        x9 = x9.times(new D9(c9.def.factorDec).pow(c9.exp));
+        blo9 = new Dlo(c9.def.factorDec);
+        bhi9 = new Dhi(c9.def.factorDec);
       } else if (c9.def.factor !== void 0) {
         const fr9 = ratOfFactor(c9.def.factor);
-        let fd9 = new D9(fr9.n.toString()).div(fr9.d.toString());
+        blo9 = dec2(Dlo, fr9.n, fr9.d);
+        bhi9 = dec2(Dhi, fr9.n, fr9.d);
         if (thirty === true && (c9.def.dim["calmonths"] ?? 0) !== 0) {
-          fd9 = fd9.times(new D9(30).pow(c9.def.dim["calmonths"]));
+          blo9 = blo9.times(new Dlo(30).pow(c9.def.dim["calmonths"]));
+          bhi9 = bhi9.times(new Dhi(30).pow(c9.def.dim["calmonths"]));
         }
-        x9 = x9.times(fd9.pow(c9.exp));
       } else if (c9.def.currency !== void 0) {
+        continue;
       } else return null;
+      if (c9.exp >= 0) {
+        flo9 = flo9.times(blo9.pow(c9.exp));
+        fhi9 = fhi9.times(bhi9.pow(c9.exp));
+      } else {
+        const e9 = -c9.exp;
+        flo9 = flo9.div(bhi9.pow(e9));
+        fhi9 = fhi9.div(blo9.pow(e9));
+      }
     }
-    acc9 = acc9.plus(x9);
+    const xlo9 = dec2(Dlo, t9.x.n, t9.x.d);
+    const xhi9 = dec2(Dhi, t9.x.n, t9.x.d);
+    if (t9.x.n >= 0n) {
+      lo9 = lo9.plus(xlo9.times(flo9));
+      hi9 = hi9.plus(xhi9.times(fhi9));
+    } else {
+      lo9 = lo9.plus(xlo9.times(fhi9));
+      hi9 = hi9.plus(xhi9.times(flo9));
+    }
   }
-  return acc9;
+  return [lo9, hi9];
 };
 var toDecHi = (rt2) => {
   const x9 = numRat(rt2);
@@ -30972,31 +30998,33 @@ var reemitFromShadow9 = (rt2, thirty) => {
         }
       }
     }
-    const project9 = (prec9) => {
-      const D9 = DecC.clone({ precision: prec9 });
-      const nD9 = termsProjectDec9(terms ?? ONE_TERMS(), thirty, D9);
-      const dD9 = termsProjectDec9(termsDen ?? ONE_TERMS(), thirty, D9);
-      if (nD9 === null || dD9 === null || dD9.isZero()) return null;
-      const siD9 = nD9.div(dD9);
+    const sd40 = (d9) => new DecC(d9.toString()).toSignificantDigits(40).toString();
+    const sd60 = (d9) => new DecC(d9.toString()).toSignificantDigits(60).toString();
+    const projIval9 = (prec9) => {
+      const nI9 = termsProjectIval9(terms ?? ONE_TERMS(), thirty, prec9);
+      const dI9 = termsProjectIval9(termsDen ?? ONE_TERMS(), thirty, prec9);
+      if (nI9 === null || dI9 === null) return null;
+      const [nLo9, nHi9] = nI9;
+      const [dLo9, dHi9] = dI9;
+      if (!dLo9.gt(0)) return null;
+      const rLo9 = nLo9.isNegative() ? nLo9.div(dLo9) : nLo9.div(dHi9);
+      const rHi9 = nHi9.isNegative() ? nHi9.div(dHi9) : nHi9.div(dLo9);
       if (affine9 !== null) {
-        return siD9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString());
+        return [
+          rLo9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString()),
+          rHi9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString())
+        ];
       }
-      const fD9 = new D9(fRat9.n.toString()).div(fRat9.d.toString());
-      return siD9.div(fD9);
+      return [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())];
     };
-    const sd40 = (d9) => d9.toSignificantDigits(40).toString();
-    const sd60 = (d9) => d9.toSignificantDigits(60).toString();
-    let prev9 = project9(80);
-    if (prev9 === null) return rt2;
     let valD9 = null;
-    for (let prec9 = 160; prec9 <= 5120; prec9 *= 2) {
-      const cur9 = project9(prec9);
-      if (cur9 === null) return rt2;
-      if (sd40(prev9) === sd40(cur9)) {
-        valD9 = cur9;
+    for (let prec9 = 80; prec9 <= 5120; prec9 *= 2) {
+      const iv9 = projIval9(prec9);
+      if (iv9 === null) return rt2;
+      if (sd40(iv9[0]) === sd40(iv9[1])) {
+        valD9 = iv9[0];
         break;
       }
-      prev9 = cur9;
     }
     if (valD9 === null) return err("inexact", "this cancellation is too ill-conditioned to certify 40 significant figures");
     const D9c = DecC.clone({ precision: 5120 });
