@@ -30187,6 +30187,7 @@ var termsProjectDec9 = (list9, thirty, D9) => {
           fd9 = fd9.times(new D9(30).pow(c9.def.dim["calmonths"]));
         }
         x9 = x9.times(fd9.pow(c9.exp));
+      } else if (c9.def.currency !== void 0) {
       } else return null;
     }
     acc9 = acc9.plus(x9);
@@ -30963,6 +30964,7 @@ var reemitFromShadow9 = (rt2, thirty) => {
         affine9 = comps9[0].def.affine;
       } else {
         for (const c9 of comps9) {
+          if (c9.def.currency !== void 0) continue;
           if (!isPureLinear(c9.def)) return rt2;
           fRat9 = rMul(fRat9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
           const calM9 = c9.def.dim["calmonths"];
@@ -31000,9 +31002,7 @@ var reemitFromShadow9 = (rt2, thirty) => {
     const D9c = DecC.clone({ precision: 5120 });
     const curV9 = rt2.vx !== void 0 ? new D9c(rt2.vx.n.toString()).div(rt2.vx.d.toString()) : new D9c(rt2.v.toString());
     if (sd60(curV9) === sd60(valD9)) return rt2;
-    const gapD9 = curV9.minus(valD9).abs();
-    const magD9 = curV9.abs().gt(valD9.abs()) ? curV9.abs() : valD9.abs();
-    if (magD9.isZero() || gapD9.times(new D9c(10).pow(30)).gt(magD9)) return rt2;
+    if (valD9.isZero()) return rt2;
     const out9 = { ...rt2, v: new DecC(sd40(valD9)) };
     delete out9.vx;
     return out9;
@@ -33919,6 +33919,13 @@ function evalAst(ast, env, ctx = {}) {
         const att9 = combineQuantities(e, uq9, "*", ctx);
         if (att9.t === "e") return att9;
         const att8 = e.capped === true && att9.capped !== true ? { ...att9, capped: true } : att9;
+        if (att8.t === "q" && (e.terms !== void 0 || e.termsDen !== void 0)) {
+          const t30u9 = ctx.monthToDays === "30";
+          const fe9 = fracOf(e);
+          const uComps9 = unitComps(ast.word) ?? [{ def, exp: 1 }];
+          const num9 = distributeTerms(fe9.num, [{ x: { n: 1n, d: 1n }, comps: uComps9.map((c9) => ({ ...c9 })) }], t30u9);
+          if (num9 !== null) return capCopy9(attachFrac(att8, num9, fe9.den), e);
+        }
         return capCopy9(att8, e);
       }
       return err("unsupported-pair", `cannot attach the unit \u201C${ast.word}\u201D here`);
