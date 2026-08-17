@@ -30932,10 +30932,35 @@ var reemitFromShadow9 = (rt2, thirty) => {
   const terms = rt2.terms;
   const termsDen = rt2.termsDen;
   if (terms === void 0 && termsDen === void 0) return rt2;
+  if ((terms?.length ?? 0) > 16 || (termsDen?.length ?? 0) > 16) return rt2;
   const nP = termsProject(terms ?? ONE_TERMS(), thirty);
   const dP = termsProject(termsDen ?? ONE_TERMS(), thirty);
   if (nP === null || dP === null || dP.n === 0n) return rt2;
-  return { ...rt2, ...qv(rDiv(nP, dP)) };
+  let val = rDiv(nP, dP);
+  if (rt2.t === "q") {
+    const comps = compsOf(rt2) ?? [];
+    let f2 = { n: 1n, d: 1n };
+    for (const c2 of comps) {
+      if (!isPureLinear(c2.def)) return rt2;
+      f2 = rMul(f2, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
+      const calM = c2.def.dim["calmonths"];
+      if (thirty === true && calM) f2 = rMul(f2, rPowInt({ n: 30n, d: 1n }, calM * c2.exp));
+    }
+    val = rDiv(val, f2);
+  }
+  const newV = ratToDec(val);
+  const curRat = rt2.vx ?? decToRat(rt2.v);
+  if (ratToDec(curRat).eq(newV)) return rt2;
+  const gap9 = rAbs9M(rSub(curRat, val));
+  const mag9 = rCmp(rAbs9M(curRat), rAbs9M(val)) >= 0 ? rAbs9M(curRat) : rAbs9M(val);
+  if (mag9.n === 0n || rCmp(rMul(gap9, { n: 10n ** 30n, d: 1n }), mag9) > 0) return rt2;
+  const approx = [terms, termsDen].some((l9) => l9?.some((t9) => t9.comps.some((c9) => c9.def.factorDec !== void 0)));
+  if (approx) {
+    const out = { ...rt2, v: newV };
+    delete out.vx;
+    return out;
+  }
+  return { ...rt2, ...qv(val) };
 };
 var promoteShadowScalar9 = (o2) => {
   if (o2.t !== "d" && o2.t !== "f") return o2;
@@ -39851,6 +39876,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     rt2 = finalizeCurrencies(rt2, ctx);
+    rt2 = reemitFromShadow9(rt2, ctx.monthToDays === "30");
     if (ast.k === "finance" && ast.fn === "interest" && rt2.t !== "e" && !/(compound(ed|ing)?|compos[ée]e?s?|capitalis[ée]e?s?)/iu.test(line)) {
       rawAssume.push({ code: "interest-convention", level: 2, impact: "money", data: {} });
     }
