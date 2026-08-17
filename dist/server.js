@@ -30173,6 +30173,27 @@ var TRANSCENDENTAL_FNS = /* @__PURE__ */ new Set([
   "tanh"
 ]);
 var DecHi = DecC.clone({ precision: 100 });
+var DecProj9 = DecC.clone({ precision: 80 });
+var termsProjectDec9 = (list9, thirty) => {
+  let acc9 = new DecProj9(0);
+  for (const t9 of list9) {
+    let x9 = new DecProj9(t9.x.n.toString()).div(t9.x.d.toString());
+    for (const c9 of t9.comps) {
+      if (c9.def.factorDec !== void 0) {
+        x9 = x9.times(new DecProj9(c9.def.factorDec).pow(c9.exp));
+      } else if (c9.def.factor !== void 0) {
+        const fr9 = ratOfFactor(c9.def.factor);
+        let fd9 = new DecProj9(fr9.n.toString()).div(fr9.d.toString());
+        if (thirty === true && (c9.def.dim["calmonths"] ?? 0) !== 0) {
+          fd9 = fd9.times(new DecProj9(30).pow(c9.def.dim["calmonths"]));
+        }
+        x9 = x9.times(fd9.pow(c9.exp));
+      } else return null;
+    }
+    acc9 = acc9.plus(x9);
+  }
+  return acc9;
+};
 var toDecHi = (rt2) => {
   const x9 = numRat(rt2);
   return new DecHi(x9.n.toString()).div(x9.d.toString());
@@ -30932,7 +30953,34 @@ var reemitFromShadow9 = (rt2, thirty) => {
   const terms = rt2.terms;
   const termsDen = rt2.termsDen;
   if (terms === void 0 && termsDen === void 0) return rt2;
-  if ((terms?.length ?? 0) > 16 || (termsDen?.length ?? 0) > 16) return rt2;
+  const R10P30 = new DecProj9(10).pow(30);
+  const approx9 = [terms, termsDen].some((l9) => l9?.some((t9) => t9.comps.some((c9) => c9.def.factorDec !== void 0)));
+  const capped9 = rt2.capped === true;
+  if (approx9 && !capped9) {
+    const nD9 = termsProjectDec9(terms ?? ONE_TERMS(), thirty);
+    const dD9 = termsProjectDec9(termsDen ?? ONE_TERMS(), thirty);
+    if (nD9 === null || dD9 === null || dD9.isZero()) return rt2;
+    let valD9 = nD9.div(dD9);
+    if (rt2.t === "q") {
+      const comps9 = compsOf(rt2) ?? [];
+      for (const c9 of comps9) {
+        if (!isPureLinear(c9.def)) return rt2;
+        const fr9 = ratOfFactor(c9.def.factor);
+        let fd9 = new DecProj9(fr9.n.toString()).div(fr9.d.toString());
+        const calM9 = c9.def.dim["calmonths"];
+        if (thirty === true && calM9) fd9 = fd9.times(new DecProj9(30).pow(calM9));
+        valD9 = valD9.div(fd9.pow(c9.exp));
+      }
+    }
+    const curV9 = rt2.vx !== void 0 ? new DecProj9(rt2.vx.n.toString()).div(rt2.vx.d.toString()) : new DecProj9(rt2.v.toString());
+    if (curV9.eq(valD9)) return rt2;
+    const gapD9 = curV9.minus(valD9).abs();
+    const magD9 = curV9.abs().gt(valD9.abs()) ? curV9.abs() : valD9.abs();
+    if (magD9.isZero() || gapD9.times(R10P30).gt(magD9)) return rt2;
+    const out9 = { ...rt2, v: new DecC(valD9.toSignificantDigits(40).toString()) };
+    delete out9.vx;
+    return out9;
+  }
   const nP = termsProject(terms ?? ONE_TERMS(), thirty);
   const dP = termsProject(termsDen ?? ONE_TERMS(), thirty);
   if (nP === null || dP === null || dP.n === 0n) return rt2;
@@ -30948,15 +30996,13 @@ var reemitFromShadow9 = (rt2, thirty) => {
     }
     val = rDiv(val, f2);
   }
-  const newV = ratToDec(val);
   const curRat = rt2.vx ?? decToRat(rt2.v);
-  if (ratToDec(curRat).eq(newV)) return rt2;
+  if (rSub(curRat, val).n === 0n) return rt2;
   const gap9 = rAbs9M(rSub(curRat, val));
   const mag9 = rCmp(rAbs9M(curRat), rAbs9M(val)) >= 0 ? rAbs9M(curRat) : rAbs9M(val);
   if (mag9.n === 0n || rCmp(rMul(gap9, { n: 10n ** 30n, d: 1n }), mag9) > 0) return rt2;
-  const approx = [terms, termsDen].some((l9) => l9?.some((t9) => t9.comps.some((c9) => c9.def.factorDec !== void 0)));
-  if (approx) {
-    const out = { ...rt2, v: newV };
+  if (approx9) {
+    const out = { ...rt2, v: ratToDec(val) };
     delete out.vx;
     return out;
   }
@@ -33825,7 +33871,7 @@ function evalAst(ast, env, ctx = {}) {
       return capCoarse9(csRes$9, [e], "convertSpan");
     }
     case "unit": {
-      const e = evalAst(ast.e, env, ctx);
+      const e = promoteShadowScalar9(evalAst(ast.e, env, ctx));
       if (e.t === "e") return e;
       const def = lookupUnit(ast.word);
       if (!def) return err("not-understood", `\u201C${ast.word}\u201D is not a registered unit or currency`);
