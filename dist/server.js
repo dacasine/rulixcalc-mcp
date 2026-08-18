@@ -30984,6 +30984,7 @@ var reemitFromShadow9 = (rt2, thirty) => {
   if (approx9 && !capped9) {
     let fRat9 = { n: 1n, d: 1n };
     let affine9 = null;
+    const fdDisp9 = [];
     if (rt2.t === "q") {
       const comps9 = compsOf(rt2) ?? [];
       if (comps9.length === 1 && comps9[0].exp === 1 && comps9[0].def.affine) {
@@ -30991,10 +30992,13 @@ var reemitFromShadow9 = (rt2, thirty) => {
       } else {
         for (const c9 of comps9) {
           if (c9.def.currency !== void 0) continue;
-          if (!isPureLinear(c9.def)) return rt2;
-          fRat9 = rMul(fRat9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
-          const calM9 = c9.def.dim["calmonths"];
-          if (thirty === true && calM9) fRat9 = rMul(fRat9, rPowInt({ n: 30n, d: 1n }, calM9 * c9.exp));
+          if (isPureLinear(c9.def)) {
+            fRat9 = rMul(fRat9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+            const calM9 = c9.def.dim["calmonths"];
+            if (thirty === true && calM9) fRat9 = rMul(fRat9, rPowInt({ n: 30n, d: 1n }, calM9 * c9.exp));
+          } else if (c9.def.factorDec !== void 0) {
+            fdDisp9.push(c9);
+          } else return rt2;
         }
       }
     }
@@ -31003,30 +31007,66 @@ var reemitFromShadow9 = (rt2, thirty) => {
     const projIval9 = (prec9) => {
       const nI9 = termsProjectIval9(terms ?? ONE_TERMS(), thirty, prec9);
       const dI9 = termsProjectIval9(termsDen ?? ONE_TERMS(), thirty, prec9);
-      if (nI9 === null || dI9 === null) return null;
+      if (nI9 === null || dI9 === null) return { kind: "unsupported" };
       const [nLo9, nHi9] = nI9;
-      const [dLo9, dHi9] = dI9;
-      if (!dLo9.gt(0)) return null;
-      const rLo9 = nLo9.isNegative() ? nLo9.div(dLo9) : nLo9.div(dHi9);
-      const rHi9 = nHi9.isNegative() ? nHi9.div(dHi9) : nHi9.div(dLo9);
+      let [dLo9, dHi9] = dI9;
+      if (!dLo9.gt(0) && !dHi9.lt(0)) return { kind: "retry" };
+      const Dlo9 = DecC.clone({ precision: prec9, rounding: 3 });
+      const Dhi9 = DecC.clone({ precision: prec9, rounding: 2 });
+      if (fdDisp9.length > 0) {
+        let FdLo9 = new Dlo9(1);
+        let FdHi9 = new Dhi9(1);
+        for (const c9 of fdDisp9) {
+          const blo9 = new Dlo9(c9.def.factorDec);
+          const bhi9 = new Dhi9(c9.def.factorDec);
+          if (c9.exp >= 0) {
+            FdLo9 = FdLo9.times(blo9.pow(c9.exp));
+            FdHi9 = FdHi9.times(bhi9.pow(c9.exp));
+          } else {
+            const e9 = -c9.exp;
+            FdLo9 = FdLo9.div(bhi9.pow(e9));
+            FdHi9 = FdHi9.div(blo9.pow(e9));
+          }
+        }
+        if (dLo9.gte(0)) {
+          dLo9 = dLo9.times(FdLo9);
+          dHi9 = dHi9.times(FdHi9);
+        } else {
+          const nl9 = dLo9.times(FdHi9);
+          const nh9 = dHi9.times(FdLo9);
+          dLo9 = nl9;
+          dHi9 = nh9;
+        }
+      }
+      const q9 = (n9, d9, D9) => new D9(n9.toString()).div(d9.toString());
+      const corners9 = [[nLo9, dLo9], [nLo9, dHi9], [nHi9, dLo9], [nHi9, dHi9]];
+      let rLo9 = q9(nLo9, dLo9, Dlo9);
+      let rHi9 = q9(nLo9, dLo9, Dhi9);
+      for (const [n9, d9] of corners9) {
+        const cl9 = q9(n9, d9, Dlo9);
+        if (cl9.lt(rLo9)) rLo9 = cl9;
+        const ch9 = q9(n9, d9, Dhi9);
+        if (ch9.gt(rHi9)) rHi9 = ch9;
+      }
       if (affine9 !== null) {
-        return [
+        return { kind: "ok", iv: [
           rLo9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString()),
           rHi9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString())
-        ];
+        ] };
       }
-      return [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())];
+      return { kind: "ok", iv: [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())] };
     };
     let valD9 = null;
     for (let prec9 = 80; prec9 <= 5120; prec9 *= 2) {
-      const iv9 = projIval9(prec9);
-      if (iv9 === null) return rt2;
-      if (sd40(iv9[0]) === sd40(iv9[1])) {
-        valD9 = iv9[0];
+      const r9 = projIval9(prec9);
+      if (r9.kind === "unsupported") return rt2;
+      if (r9.kind === "retry") continue;
+      if (sd40(r9.iv[0]) === sd40(r9.iv[1])) {
+        valD9 = r9.iv[0];
         break;
       }
     }
-    if (valD9 === null) return err("inexact", "this cancellation is too ill-conditioned to certify 40 significant figures");
+    if (valD9 === null) return err("inexact", "this reading cannot be certified to 40 significant figures (ill-conditioned cancellation or undecided denominator sign)");
     const D9c = DecC.clone({ precision: 5120 });
     const curV9 = rt2.vx !== void 0 ? new D9c(rt2.vx.n.toString()).div(rt2.vx.d.toString()) : new D9c(rt2.v.toString());
     if (sd60(curV9) === sd60(valD9)) return rt2;
