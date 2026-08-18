@@ -31056,7 +31056,8 @@ var reemitFromShadow9 = (rt2, thirty) => {
       }
       return { kind: "ok", iv: [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())] };
     };
-    const auxiliary9 = (terms ?? []).concat(termsDen ?? []).some((t9) => t9.comps.length === 0 && t9.x.d !== 1n);
+    const hasFactorDec9 = (t9) => t9.comps.some((c9) => c9.def.factorDec !== void 0);
+    const auxiliary9 = (terms ?? []).some((t9) => !hasFactorDec9(t9));
     let valD9 = null;
     for (let prec9 = 80; prec9 <= 5120; prec9 *= 2) {
       const r9 = projIval9(prec9);
