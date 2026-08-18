@@ -31056,10 +31056,14 @@ var reemitFromShadow9 = (rt2, thirty) => {
       }
       return { kind: "ok", iv: [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())] };
     };
+    const auxiliary9 = (terms ?? []).concat(termsDen ?? []).some((t9) => t9.comps.length === 0 && t9.x.d !== 1n);
     let valD9 = null;
     for (let prec9 = 80; prec9 <= 5120; prec9 *= 2) {
       const r9 = projIval9(prec9);
-      if (r9.kind === "unsupported") return rt2;
+      if (r9.kind === "unsupported") {
+        if (auxiliary9) return rt2;
+        return err("inexact", "this reading carries an authoritative shadow that is not numerically projectable and cannot be certified");
+      }
       if (r9.kind === "retry") continue;
       if (sd40(r9.iv[0]) === sd40(r9.iv[1])) {
         valD9 = r9.iv[0];
@@ -31070,7 +31074,7 @@ var reemitFromShadow9 = (rt2, thirty) => {
     const D9c = DecC.clone({ precision: 5120 });
     const curV9 = rt2.vx !== void 0 ? new D9c(rt2.vx.n.toString()).div(rt2.vx.d.toString()) : new D9c(rt2.v.toString());
     if (sd60(curV9) === sd60(valD9)) return rt2;
-    if (valD9.isZero()) return rt2;
+    if (valD9.isZero() && auxiliary9) return rt2;
     const out9 = { ...rt2, v: new DecC(sd40(valD9)) };
     delete out9.vx;
     return out9;
@@ -33983,6 +33987,15 @@ function evalAst(ast, env, ctx = {}) {
         return capCopy9({ t: "q", ...qv(x2), dim: def.dim, symbol: def.symbol, def, comps, ...capU9 && { capped: true } }, e);
       }
       if (e.t === "q" && dimIsEmpty(e.dim)) {
+        if (def.affine !== void 0 && def.affine.b !== 0n && (e.terms !== void 0 || e.termsDen !== void 0)) {
+          const { a: aAff9, b: bAff9, c: cAff9 } = def.affine;
+          const t30a9 = ctx.monthToDays === "30";
+          const fe9 = fracOf(e);
+          const scaleX9 = (list9, k9) => list9.map((t9) => ({ x: rMul(t9.x, { n: k9, d: 1n }), comps: t9.comps.map((c9) => ({ ...c9 })) }));
+          const kNum9 = mergeTerms(scaleX9(fe9.num, aAff9), scaleX9(fe9.den, bAff9), 1n, t30a9);
+          const kDen9 = scaleX9(fe9.den, cAff9);
+          return capCopy9(attachFrac(mkQ(qx(e), def), kNum9, kDen9), e);
+        }
         const uq9 = { t: "q", v: new DecC(1), dim: def.dim, symbol: def.symbol, def, comps: unitComps(ast.word) ?? [{ def, exp: 1 }] };
         const att9 = combineQuantities(e, uq9, "*", ctx);
         if (att9.t === "e") return att9;
