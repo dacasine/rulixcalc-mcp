@@ -29121,13 +29121,15 @@ var mergeTerms = (a2, b2, sign2, thirty) => {
       const { key, canonX, fold } = termCanon(t2, thirty);
       const xs = s2 === 1n ? canonX : { n: -canonX.n, d: canonX.d };
       const prev = out.get(key);
-      if (prev) prev.canonX = rAdd(prev.canonX, xs);
-      else out.set(key, { canonX: xs, comps: t2.comps, fold });
+      if (prev) {
+        prev.canonX = rAdd(prev.canonX, xs);
+        if (t2.aux) prev.aux = true;
+      } else out.set(key, { canonX: xs, comps: t2.comps, fold, aux: t2.aux });
     }
   };
   addAll(a2, 1n);
   addAll(b2, sign2);
-  return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps }));
+  return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps, aux: e.aux }));
 };
 var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
   if (a2.length * b2.length > 65536) return null;
@@ -29139,14 +29141,16 @@ var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
         comps: canonComps([
           ...ta.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
           ...tb.comps.map((c2) => ({ def: c2.def, exp: c2.exp * sign2 }))
-        ])
+        ]),
+        // a product/quotient touching a captured decimal stays auxiliary (1n)
+        aux: ta.aux || tb.aux
       });
     }
   }
   const merged = mergeTerms(out, [], 1n, thirty);
   return merged.length > 4096 ? null : merged;
 };
-var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [] }];
+var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [], aux: false }];
 var tvCache = /* @__PURE__ */ new WeakMap();
 var termVecInner = (t2, thirty) => {
   const v2 = /* @__PURE__ */ new Map();
@@ -29208,12 +29212,12 @@ var fracQuotient = (N2, D2, thirty) => {
     ...nMin.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
     ...dMin.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
   ]);
-  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc }], [dMin], thirty);
+  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc, aux: false }], [dMin], thirty);
   if (probe === null || probe.length !== 1) return null;
   const pc = termCanon(probe[0], thirty);
   const nc = termCanon(nMin, thirty);
   if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
-  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc };
+  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc, aux: nMin.aux || dMin.aux };
   const full = distributeTerms(D2, [cand], thirty);
   return full !== null && mergeTerms(N2, full, -1n, thirty).length === 0 ? cand : null;
 };
@@ -29267,7 +29271,7 @@ var polyDiv = (num9, den9, thirty) => {
       map9.set(c9.def.id, e9);
     }
     if (rnorm(dl9.x).n === 0n) return null;
-    const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0) };
+    const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0), aux: nl9.aux || dl9.aux };
     if ((m9.x.n < 0n ? -m9.x.n : m9.x.n).toString().length > digitCap9 || m9.x.d.toString().length > digitCap9) return null;
     q9.push(m9);
     const sub9 = distributeTerms([m9], den9, thirty);
@@ -30714,7 +30718,7 @@ function convertQuantity(rt2, to, ctx) {
           push9(to, c9.exp);
         }
         if (bad9) return rt2.terms;
-        out9.push({ x: x9, comps: [...newComps9.values()].filter((c9) => c9.exp !== 0) });
+        out9.push({ ...t9, x: x9, comps: [...newComps9.values()].filter((c9) => c9.exp !== 0) });
       }
       return out9;
     })();
@@ -30726,7 +30730,7 @@ function convertQuantity(rt2, to, ctx) {
   }
   const x2 = convertRat(qx(rt2), from, to);
   if (x2 === null) {
-    const shadow9 = rt2.terms ?? [{ x: qx(rt2), comps: (compsOf(rt2) ?? [{ def: from, exp: 1 }]).map((c9) => ({ ...c9 })) }];
+    const shadow9 = rt2.terms ?? [{ x: qx(rt2), comps: (compsOf(rt2) ?? [{ def: from, exp: 1 }]).map((c9) => ({ ...c9 })), aux: rnorm(qx(rt2)).d !== 1n }];
     const cvOut9 = { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, terms: shadow9, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
     return capScaleConv9(cvOut9, rt2, decToRat(convertExact(new DecC(1), from, to)));
   }
@@ -30766,10 +30770,10 @@ function basePartOf(comps, ctx) {
   }
   return { rat, dec: dec2 };
 }
-var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
+var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
 function fracReduceTerm(q2, thirty) {
   if (q2.terms === void 0 && q2.termsDen === void 0) return null;
-  const N2 = q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })) }];
+  const N2 = q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
   return fracQuotient(N2, q2.termsDen ?? ONE_TERMS(), thirty);
 }
 function fracReduceKey(q2, thirty) {
@@ -30790,7 +30794,7 @@ var attachFrac = (base, num, den) => {
   if (num === null || den === null) return { ...base, terms: void 0, termsDen: void 0 };
   if (den.length === 1 && den[0].comps.length === 0 && rnorm(den[0].x).n !== 0n) {
     const k2 = den[0].x;
-    return { ...base, terms: num.map((t2) => ({ x: rDiv(t2.x, k2), comps: t2.comps })), termsDen: void 0 };
+    return { ...base, terms: num.map((t2) => ({ ...t2, x: rDiv(t2.x, k2) })), termsDen: void 0 };
   }
   return { ...base, terms: num, termsDen: den };
 };
@@ -30897,7 +30901,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
         }
         const resid8 = [...map8.values()].filter((c9) => c9.exp !== 0);
         if (!dimsCompatible(dimOfComps(resid8), {}, ctx)) return null;
-        const p8 = termsProject([{ x: t9.x, comps: resid8 }], t30);
+        const p8 = termsProject([{ x: t9.x, comps: resid8, aux: t9.aux }], t30);
         if (p8 === null) return null;
         acc8 = rAdd(acc8, p8);
       }
@@ -30966,7 +30970,7 @@ var carrierNum = (rt2, ctx) => {
   ctx.capNotes?.push("carrier");
   return { t: "d", v: rt2.v, capped: true };
 };
-var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps })) } : {};
+var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ ...t2, x: rMul(t2.x, k2) })) } : {};
 var pctScale9 = (base9, factor9, cap9) => {
   const out9 = { ...base9, ...qv(rMul(qx(base9), factor9)), ...scaleTerms(base9, factor9), ...cap9 && { capped: true } };
   const cf9 = capFScale9(capFOf9(base9) ?? [], factor9);
@@ -31056,8 +31060,7 @@ var reemitFromShadow9 = (rt2, thirty) => {
       }
       return { kind: "ok", iv: [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())] };
     };
-    const hasFactorDec9 = (t9) => t9.comps.some((c9) => c9.def.factorDec !== void 0);
-    const auxiliary9 = (terms ?? []).some((t9) => !hasFactorDec9(t9));
+    const auxiliary9 = (terms ?? []).some((t9) => t9.aux);
     let valD9 = null;
     for (let prec9 = 80; prec9 <= 5120; prec9 *= 2) {
       const r9 = projIval9(prec9);
@@ -31187,8 +31190,8 @@ function alignForAdd(l2, r3, ctx) {
       return [...m9.values()].filter((c9) => c9.exp !== 0);
     };
     const canceled9 = (() => {
-      const num0 = termsOf(r3).map((t9) => ({ x: t9.x, comps: idMergeTop9(t9.comps) }));
-      const den0 = r3.termsDen?.map((t9) => ({ x: t9.x, comps: idMergeTop9(t9.comps) }));
+      const num0 = termsOf(r3).map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
+      const den0 = r3.termsDen?.map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
       if (den0 === void 0 || num0.length === 0 || den0.length === 0) return { num: num0, den: den0 };
       const codes0 = /* @__PURE__ */ new Set();
       for (const t9 of [...num0, ...den0]) for (const c9 of t9.comps) if (c9.def.currency !== void 0) codes0.add(c9.def.currency);
@@ -31198,7 +31201,7 @@ function alignForAdd(l2, r3, ctx) {
         const cut9 = exps9.some((e9) => e9 === 0) ? 0 : Math.min(...exps9);
         if (cut9 === 0) continue;
         const def0 = [...num0, ...den0].flatMap((t9) => t9.comps).find((c9) => c9.def.currency === code0).def;
-        const strip9 = (t9) => ({ x: t9.x, comps: idMergeTop9([...t9.comps, { def: def0, exp: -cut9 }]) });
+        const strip9 = (t9) => ({ x: t9.x, comps: idMergeTop9([...t9.comps, { def: def0, exp: -cut9 }]), aux: t9.aux });
         for (let k9 = 0; k9 < num0.length; k9++) num0[k9] = strip9(num0[k9]);
         for (let k9 = 0; k9 < den0.length; k9++) den0[k9] = strip9(den0[k9]);
       }
@@ -31309,10 +31312,10 @@ function alignForAdd(l2, r3, ctx) {
         return [...m9.values()].filter((c9) => c9.exp !== 0);
       };
       for (const t0 of canceled9.num) {
-        const t9 = { x: t0.x, comps: idMerge9(t0.comps) };
+        const t9 = { ...t0, comps: idMerge9(t0.comps) };
         const curs9 = t9.comps.filter((c9) => c9.def.currency !== void 0);
         if (curs9.length === 0 && lCur.length === 0) {
-          out9.push({ x: t9.x, comps: t9.comps });
+          out9.push({ ...t9 });
           continue;
         }
         if (curs9.length === 0 && lCur.reduce((s9, c9) => s9 + c9.exp, 0) !== 0) return termsOf(r3);
@@ -31340,13 +31343,13 @@ function alignForAdd(l2, r3, ctx) {
             push9(lDef9, c9.exp);
           }
           if (bad92) return termsOf(r3);
-          out9.push({ x: x92, comps: [...newComps9.values()].filter((c9) => c9.exp !== 0) });
+          out9.push({ ...t9, x: x92, comps: [...newComps9.values()].filter((c9) => c9.exp !== 0) });
           continue;
         }
         const dimOf9 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
         const lPos9 = lCur.filter((c9) => c9.exp > 0);
         if (curs9.length === 0) {
-          out9.push({ x: t9.x, comps: t9.comps });
+          out9.push({ ...t9 });
           continue;
         }
         const tgt9 = dimOf9(curs9) === dimOf9(lPos9) ? lPos9 : dimOf9(curs9) === dimOf9(lCur) ? lCur : null;
@@ -31371,6 +31374,7 @@ function alignForAdd(l2, r3, ctx) {
         }
         if (bad9) return termsOf(r3);
         out9.push({
+          ...t9,
           x: x9,
           comps: [
             ...t9.comps.filter((c9) => c9.def.currency === void 0),
@@ -31394,7 +31398,7 @@ function alignForAdd(l2, r3, ctx) {
       };
       const out8 = [];
       for (const t0 of canceled9.den ?? r3.termsDen) {
-        const t9 = { x: t0.x, comps: idMerge8(t0.comps) };
+        const t9 = { ...t0, comps: idMerge8(t0.comps) };
         let x9 = t9.x;
         let bad9 = false;
         if (lCodes8.length === 1) {
@@ -31419,14 +31423,14 @@ function alignForAdd(l2, r3, ctx) {
             push8(lDef8, c9.exp);
           }
           if (bad9) return r3.termsDen;
-          out8.push({ x: x9, comps: [...comps8.values()].filter((c9) => c9.exp !== 0) });
+          out8.push({ ...t9, x: x9, comps: [...comps8.values()].filter((c9) => c9.exp !== 0) });
           continue;
         }
         const curs8 = t9.comps.filter((c9) => c9.def.currency !== void 0);
         const dimOf8 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
         const lNeg8 = lCur.filter((c9) => c9.exp < 0).map((c9) => ({ def: c9.def, exp: -c9.exp }));
         if (curs8.length === 0) {
-          out8.push({ x: t9.x, comps: t9.comps });
+          out8.push({ ...t9 });
           continue;
         }
         const tgt8 = dimOf8(curs8) === dimOf8(lNeg8) ? lNeg8 : dimOf8(curs8) === -dimOf8(lCur) ? lCur.map((c9) => ({ def: c9.def, exp: -c9.exp })) : null;
@@ -31449,6 +31453,7 @@ function alignForAdd(l2, r3, ctx) {
         }
         if (bad9) return r3.termsDen;
         out8.push({
+          ...t9,
           x: x9,
           comps: [
             ...t9.comps.filter((c9) => c9.def.currency === void 0),
@@ -31600,7 +31605,7 @@ function combineQuantities(l2, r3, op, ctx) {
       const base2 = { t: "q", dim: dimOfComps(ordered), symbol: compsSymbol(ordered), comps: ordered, ...rateMeta };
       if (decScale2 !== null) {
         const sym9 = comps.filter((c9) => !c9.def.currency).map((c9) => ({ ...c9 }));
-        const shadow9 = [{ x: xPre9, comps: [...ordered.map((c9) => ({ ...c9 })), ...sym9] }];
+        const shadow9 = [{ x: xPre9, comps: [...ordered.map((c9) => ({ ...c9 })), ...sym9], aux: false }];
         const exactV9 = rMul(x2, decScaleR9);
         return { ...base2, ...qv(exactV9), terms: shadow9 };
       }
@@ -32163,9 +32168,9 @@ var carrierFaithful = (q9, thirty) => {
 };
 var pctFactorFrac = (p9, mode9, thirty) => {
   if (p9.terms === void 0 && p9.termsDen === void 0) return null;
-  const pn9 = p9.terms ?? [{ x: p9.vx ?? decToRat(p9.v), comps: [] }];
+  const pn9 = p9.terms ?? [{ x: p9.vx ?? decToRat(p9.v), comps: [], aux: rnorm(p9.vx ?? decToRat(p9.v)).d !== 1n }];
   const pd9 = p9.termsDen ?? ONE_TERMS();
-  const cd9 = pd9.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps }));
+  const cd9 = pd9.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 100n, d: 1n }) }));
   switch (mode9) {
     case "of":
       return { num: pn9, den: cd9 };
@@ -32205,7 +32210,7 @@ var applyFracFactor = (base9, x9, ff9, ctx, cap9) => {
     return scaleCapF9(cap9 ? { ...out92, capped: true } : out92);
   }
   const b9 = numRat(base9);
-  const n9 = ff9.num.map((t9) => ({ x: rMul(t9.x, b9), comps: t9.comps }));
+  const n9 = ff9.num.map((t9) => ({ ...t9, x: rMul(t9.x, b9) }));
   const out9 = attachFrac({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [] }, n9, ff9.den);
   return scaleCapF9(cap9 ? { ...out9, capped: true } : out9);
 };
@@ -32368,7 +32373,7 @@ function foldIrrationalResidueRaw(rt2, thirty) {
   }
   const comps = compsOf(rt2);
   if (!comps || !comps.some((c2) => c2.def.factorDec !== void 0)) return rt2;
-  const terms0 = rt2.terms ?? [{ x: qx(rt2), comps: comps.map((c2) => ({ ...c2 })) }];
+  const terms0 = rt2.terms ?? [{ x: qx(rt2), comps: comps.map((c2) => ({ ...c2 })), aux: rnorm(qx(rt2)).d !== 1n }];
   const foldOut = (v9) => rt2.terms !== void 0 || rt2.termsDen !== void 0 ? { t: "q", v: v9, dim: {}, symbol: "", comps: [], ...rt2.terms && { terms: rt2.terms }, ...rt2.termsDen && { termsDen: rt2.termsDen } } : { t: "d", v: v9 };
   const withDef = (out) => {
     if (out.t !== "q") return out;
@@ -32545,7 +32550,7 @@ function evalAst(ast, env, ctx = {}) {
             dim: {},
             symbol: "",
             comps: [],
-            terms: [{ x: x9, comps: [] }],
+            terms: [{ x: x9, comps: [], aux: rnorm(x9).d !== 1n }],
             ...v9.capped === true && { capped: true }
           };
         }
@@ -32708,7 +32713,7 @@ function evalAst(ast, env, ctx = {}) {
             const d8 = distributeTerms(lo8.termsDen ?? ONE_TERMS(), hi8.termsDen ?? ONE_TERMS(), t30m);
             if (a8 === null || b8 === null || d8 === null) ctx.capNotes?.push("sum");
             else {
-              const n8 = mergeTerms(a8, b8, 1n, t30m).map((t9) => ({ x: rMul(t9.x, { n: 1n, d: 2n }), comps: t9.comps }));
+              const n8 = mergeTerms(a8, b8, 1n, t30m).map((t9) => ({ ...t9, x: rMul(t9.x, { n: 1n, d: 2n }) }));
               meanK9 = attachFrac(meanBase8, n8, d8);
             }
             const f9 = values[0];
@@ -32838,7 +32843,7 @@ function evalAst(ast, env, ctx = {}) {
           const nK9 = { n: 1n, d: BigInt(values.length) };
           const meanBase9 = mkQ(rDiv(sumK, { n: BigInt(values.length), d: 1n }), K9);
           const capT9 = values.some((v9) => v9.capped === true);
-          const meanK0 = fdrop9 ? meanBase9 : attachFrac(meanBase9, fnum9.map((t9) => ({ x: rMul(t9.x, nK9), comps: t9.comps })), fden9);
+          const meanK0 = fdrop9 ? meanBase9 : attachFrac(meanBase9, fnum9.map((t9) => ({ ...t9, x: rMul(t9.x, nK9) })), fden9);
           const meanCapF9 = capFScale9(sumCapF9, nK9);
           const meanK = capT9 || meanCapF9.length > 0 ? { ...meanK0, capped: true } : meanK0;
           if (meanCapF9.length > 0) {
@@ -33190,7 +33195,7 @@ function evalAst(ast, env, ctx = {}) {
       const sx = rMul(e.vx ?? decToRat(e.v), sc9);
       const fields = {
         ...qv(sx),
-        ...e.terms && { terms: e.terms.map((t9) => ({ x: rMul(t9.x, sc9), comps: t9.comps })) },
+        ...e.terms && { terms: e.terms.map((t9) => ({ ...t9, x: rMul(t9.x, sc9) })) },
         ...e.termsDen && { termsDen: e.termsDen }
       };
       if (!isRepresentable(fields.v)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
@@ -33230,8 +33235,8 @@ function evalAst(ast, env, ctx = {}) {
           const capP6 = p2.capped === true || base.capped === true;
           if (p2.terms !== void 0 || p2.termsDen !== void 0 || base.terms !== void 0 || base.termsDen !== void 0) {
             const t30p6 = ctx.monthToDays === "30";
-            const fb6 = { num: base.terms ?? [{ x: base.vx ?? decToRat(base.v), comps: [] }], den: base.termsDen ?? ONE_TERMS() };
-            const ff6 = pctFactorFrac(p2, "of", t30p6) ?? { num: [{ x: pf, comps: [] }], den: ONE_TERMS() };
+            const fb6 = { num: base.terms ?? [{ x: base.vx ?? decToRat(base.v), comps: [], aux: rnorm(base.vx ?? decToRat(base.v)).d !== 1n }], den: base.termsDen ?? ONE_TERMS() };
+            const ff6 = pctFactorFrac(p2, "of", t30p6) ?? { num: [{ x: pf, comps: [], aux: rnorm(pf).d !== 1n }], den: ONE_TERMS() };
             const n6 = distributeTerms(fb6.num, ff6.num, t30p6);
             const d6 = distributeTerms(fb6.den, ff6.den, t30p6);
             if (n6 === null || d6 === null) {
@@ -33320,10 +33325,10 @@ function evalAst(ast, env, ctx = {}) {
         if (pvr.n === 0n) {
           if (p2.t !== "p" || p2.terms === void 0 && p2.termsDen === void 0) return err("division-by-zero");
           const t30z0 = ctx.monthToDays === "30";
-          const fbz9 = { num: p2.terms ?? [{ x: pvr, comps: [] }], den: p2.termsDen ?? ONE_TERMS() };
+          const fbz9 = { num: p2.terms ?? [{ x: pvr, comps: [], aux: rnorm(pvr).d !== 1n }], den: p2.termsDen ?? ONE_TERMS() };
           const vz9 = value.t === "ts" || isCarrier(value) ? { n: 1n, d: 1n } : numRat(value);
-          const fVz9 = value.t === "q" ? fracOf(value) : { num: [{ x: vz9, comps: [] }], den: ONE_TERMS() };
-          const nZ0 = distributeTerms(fVz9.num, fbz9.den.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })), t30z0);
+          const fVz9 = value.t === "q" ? fracOf(value) : { num: [{ x: vz9, comps: [], aux: rnorm(vz9).d !== 1n }], den: ONE_TERMS() };
+          const nZ0 = distributeTerms(fVz9.num, fbz9.den.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 100n, d: 1n }) })), t30z0);
           const dZ0 = distributeTerms(fVz9.den, fbz9.num, t30z0);
           return divProjZero(nZ0, dZ0, p2, ctx, value.t === "q" || value.t === "p" ? value : void 0);
         }
@@ -33366,8 +33371,8 @@ function evalAst(ast, env, ctx = {}) {
         if ((isCarrier(base) || isCarrier(part)) && (isCarrier(base) || base.t === "d" || base.t === "f") && (isCarrier(part) || part.t === "d" || part.t === "f")) {
           if (base.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
           const t30w = ctx.monthToDays === "30";
-          const fB9 = isCarrier(base) ? fracOf(base) : { num: [{ x: numRat(base), comps: [] }], den: ONE_TERMS() };
-          const fP9 = isCarrier(part) ? fracOf(part) : { num: [{ x: numRat(part), comps: [] }], den: ONE_TERMS() };
+          const fB9 = isCarrier(base) ? fracOf(base) : { num: [{ x: numRat(base), comps: [], aux: rnorm(numRat(base)).d !== 1n }], den: ONE_TERMS() };
+          const fP9 = isCarrier(part) ? fracOf(part) : { num: [{ x: numRat(part), comps: [], aux: rnorm(numRat(part)).d !== 1n }], den: ONE_TERMS() };
           const bx9 = isCarrier(base) ? qx(base) : numRat(base);
           if (bx9.n === 0n) {
             const n0 = distributeTerms(fP9.num, fB9.den, t30w);
@@ -33441,7 +33446,7 @@ function evalAst(ast, env, ctx = {}) {
           return {
             t: "p",
             ...qv(xv9),
-            terms: n9.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })),
+            terms: n9.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 100n, d: 1n }) })),
             termsDen: d9,
             ...capW9 && { capped: true }
           };
@@ -33506,7 +33511,7 @@ function evalAst(ast, env, ctx = {}) {
           if (ffm9 === null) return err("division-by-zero");
           const t30m0 = ctx.monthToDays === "30";
           const vm9 = value.t === "d" || value.t === "f" ? numRat(value) : value.t === "q" ? qx(value) : { n: 1n, d: 1n };
-          const fV9 = value.t === "q" ? fracOf(value) : { num: [{ x: vm9, comps: [] }], den: ONE_TERMS() };
+          const fV9 = value.t === "q" ? fracOf(value) : { num: [{ x: vm9, comps: [], aux: rnorm(vm9).d !== 1n }], den: ONE_TERMS() };
           const synth9 = { t: "q", v: new DecC(0), vx: { n: 0n, d: 1n }, dim: {}, symbol: "", comps: [], terms: ffm9.den };
           const nM0 = distributeTerms(fV9.num, ffm9.num, t30m0);
           const dM0 = distributeTerms(fV9.den, ffm9.den, t30m0);
@@ -33627,7 +33632,7 @@ function evalAst(ast, env, ctx = {}) {
         if ((ast.fn === "abs" || ast.fn === "min" || ast.fn === "max") && folded9.some((v9) => isCarrier(v9)) && folded9.every((v9) => isCarrier(v9) || v9.t === "d" || v9.t === "f")) {
           const t30f = ctx.monthToDays === "30";
           const ratOf9 = (v9) => isCarrier(v9) ? qx(v9) : numRat(v9);
-          const liftV9 = (v9) => isCarrier(v9) ? v9 : { t: "q", ...qv(ratOf9(v9)), dim: {}, symbol: "", comps: [], terms: [{ x: ratOf9(v9), comps: [] }] };
+          const liftV9 = (v9) => isCarrier(v9) ? v9 : { t: "q", ...qv(ratOf9(v9)), dim: {}, symbol: "", comps: [], terms: [{ x: ratOf9(v9), comps: [], aux: rnorm(ratOf9(v9)).d !== 1n }] };
           const cmpX9 = (a9, b9) => {
             const c9 = rCmp(ratOf9(a9), ratOf9(b9));
             if (c9 !== 0) return c9;
@@ -33678,7 +33683,7 @@ function evalAst(ast, env, ctx = {}) {
             evaluated9[0] = { t: "d", ...qv(dqe0) };
           }
         } else if (dq0 !== null && dq0.t === "q" && isCarrier(dq0) && (dq0.terms !== void 0 || dq0.termsDen !== void 0)) {
-          const lift0 = (x0) => ({ t: "q", ...qv(x0), dim: {}, symbol: "", comps: [], terms: [{ x: x0, comps: [] }] });
+          const lift0 = (x0) => ({ t: "q", ...qv(x0), dim: {}, symbol: "", comps: [], terms: [{ x: x0, comps: [], aux: rnorm(x0).d !== 1n }] });
           const t30d = ctx.monthToDays === "30";
           const cmp0 = (b0) => fracCmpRT(dq0, lift0(b0), t30d);
           const structSign0 = (() => {
@@ -33695,8 +33700,8 @@ function evalAst(ast, env, ctx = {}) {
             const structBound0 = (b0) => {
               const den0 = dq0.termsDen ?? ONE_TERMS();
               if (!(den0.length > 0 && den0.every((t9) => t9.x.n > 0n))) return null;
-              const num0 = dq0.terms ?? [{ x: dq0.vx ?? decToRat(dq0.v), comps: [] }];
-              const diff0 = mergeTerms(num0, den0.map((t9) => ({ x: rMul(t9.x, { n: b0, d: 1n }), comps: t9.comps })), -1n, t30d);
+              const num0 = dq0.terms ?? [{ x: dq0.vx ?? decToRat(dq0.v), comps: [], aux: rnorm(dq0.vx ?? decToRat(dq0.v)).d !== 1n }];
+              const diff0 = mergeTerms(num0, den0.map((t9) => ({ ...t9, x: rMul(t9.x, { n: b0, d: 1n }) })), -1n, t30d);
               if (diff0.length === 0) return 0;
               if (diff0.every((t9) => t9.x.n > 0n)) return 1;
               if (diff0.every((t9) => t9.x.n < 0n)) return -1;
@@ -33892,7 +33897,7 @@ function evalAst(ast, env, ctx = {}) {
           const ratio = rDiv(bridged(target), bridged(den));
           const termsConv = e.terms?.map((t9) => {
             const cal9 = t9.comps.find((c9) => c9.def.dim["calmonths"] !== void 0 || c9.def.dim["caldays"] !== void 0);
-            if (!cal9) return { x: rMul(t9.x, ratio), comps: t9.comps };
+            if (!cal9) return { ...t9, x: rMul(t9.x, ratio) };
             const k9 = rPowInt(rDiv(bridged(target), bridged(cal9.def)), -cal9.exp);
             return {
               x: rMul(t9.x, k9),
@@ -33936,9 +33941,9 @@ function evalAst(ast, env, ctx = {}) {
             const ratio8 = rDiv(bridged8(target8), bridged8(cal8.def));
             const termsConv8 = e.terms?.map((t9) => {
               const c8 = t9.comps.find((c9) => c9.def.dim["calmonths"] !== void 0 || c9.def.dim["caldays"] !== void 0);
-              if (!c8) return { x: rMul(t9.x, ratio8), comps: t9.comps };
+              if (!c8) return { ...t9, x: rMul(t9.x, ratio8) };
               const k9 = rPowInt(rDiv(bridged8(target8), bridged8(c8.def)), -c8.exp);
-              return { x: rMul(t9.x, k9), comps: t9.comps.map((c9) => c9 === c8 ? { def: target8, exp: c8.exp } : c9) };
+              return { ...t9, x: rMul(t9.x, k9), comps: t9.comps.map((c9) => c9 === c8 ? { def: target8, exp: c8.exp } : c9) };
             });
             const comps8 = ecomps8.map((c9) => c9 === cal8 ? { def: target8, exp: cal8.exp } : { ...c9 });
             return {
@@ -33992,7 +33997,7 @@ function evalAst(ast, env, ctx = {}) {
           const { a: aAff9, b: bAff9, c: cAff9 } = def.affine;
           const t30a9 = ctx.monthToDays === "30";
           const fe9 = fracOf(e);
-          const scaleX9 = (list9, k9) => list9.map((t9) => ({ x: rMul(t9.x, { n: k9, d: 1n }), comps: t9.comps.map((c9) => ({ ...c9 })) }));
+          const scaleX9 = (list9, k9) => list9.map((t9) => ({ ...t9, x: rMul(t9.x, { n: k9, d: 1n }), comps: t9.comps.map((c9) => ({ ...c9 })) }));
           const kNum9 = mergeTerms(scaleX9(fe9.num, aAff9), scaleX9(fe9.den, bAff9), 1n, t30a9);
           const kDen9 = scaleX9(fe9.den, cAff9);
           return capCopy9(attachFrac(mkQ(qx(e), def), kNum9, kDen9), e);
@@ -34005,7 +34010,7 @@ function evalAst(ast, env, ctx = {}) {
           const t30u9 = ctx.monthToDays === "30";
           const fe9 = fracOf(e);
           const uComps9 = unitComps(ast.word) ?? [{ def, exp: 1 }];
-          const num9 = distributeTerms(fe9.num, [{ x: { n: 1n, d: 1n }, comps: uComps9.map((c9) => ({ ...c9 })) }], t30u9);
+          const num9 = distributeTerms(fe9.num, [{ x: { n: 1n, d: 1n }, comps: uComps9.map((c9) => ({ ...c9 })), aux: false }], t30u9);
           if (num9 !== null) return capCopy9(attachFrac(att8, num9, fe9.den), e);
         }
         return capCopy9(att8, e);
@@ -34184,7 +34189,7 @@ function evalAst(ast, env, ctx = {}) {
           if (l2.t === "p" && r3.t === "q" && (ast.op === "*" || ast.op === "/") && isCarrier(r3)) {
             const lp9 = l2.vx ?? decToRat(l2.v);
             const t30c = ctx.monthToDays === "30";
-            const fa9 = { num: l2.terms ?? [{ x: lp9, comps: [] }], den: l2.termsDen ?? ONE_TERMS() };
+            const fa9 = { num: l2.terms ?? [{ x: lp9, comps: [], aux: rnorm(lp9).d !== 1n }], den: l2.termsDen ?? ONE_TERMS() };
             const fb9 = fracOf(r3);
             const sh9 = l2.terms !== void 0 || l2.termsDen !== void 0 || r3.terms !== void 0 || r3.termsDen !== void 0;
             const cap9 = l2.capped === true || r3.capped === true;
@@ -34233,7 +34238,7 @@ function evalAst(ast, env, ctx = {}) {
               const kelvinTerms = (q9) => {
                 if (q9.terms !== void 0 || q9.def?.affine === void 0) return termsOf(q9);
                 const cv9 = convertQuantity(q9, lookupUnit("K"), ctx);
-                return cv9.t === "q" ? [{ x: qx(cv9), comps: [{ def: lookupUnit("K"), exp: 1 }] }] : termsOf(q9);
+                return cv9.t === "q" ? [{ x: qx(cv9), comps: [{ def: lookupUnit("K"), exp: 1 }], aux: false }] : termsOf(q9);
               };
               const tempShadow = (sign9) => irrT(l2) || irrT(r3) ? mergeTerms(kelvinTerms(l2), kelvinTerms(r3), sign9) : null;
               const tempFrac9 = (sign9) => {
@@ -34536,7 +34541,7 @@ function evalAst(ast, env, ctx = {}) {
                 if (!sh9) return base9;
                 const f9 = fracOf(l2);
                 if (f9.num.length === 1 && l2.termsDen === void 0) {
-                  return { ...base9, terms: [{ x: rDiv({ n: 1n, d: 1n }, f9.num[0].x), comps: f9.num[0].comps.map((c9) => ({ def: c9.def, exp: -c9.exp })) }] };
+                  return { ...base9, terms: [{ x: rDiv({ n: 1n, d: 1n }, f9.num[0].x), comps: f9.num[0].comps.map((c9) => ({ def: c9.def, exp: -c9.exp })), aux: f9.num[0].aux }] };
                 }
                 return attachFrac(base9, f9.den, f9.num);
               }
@@ -34560,7 +34565,7 @@ function evalAst(ast, env, ctx = {}) {
               }
               if (pow9.t === "q" && (shadowed9 || l2.termsDen !== void 0)) {
                 if (lt9.length === 1 && l2.termsDen === void 0) {
-                  pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))) }] };
+                  pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))), aux: lt9[0].aux }] };
                 } else {
                   const t30 = ctx.monthToDays === "30";
                   const f9 = fracOf(l2);
@@ -34585,7 +34590,7 @@ function evalAst(ast, env, ctx = {}) {
               const t30c = ctx.monthToDays === "30";
               const fc9 = fracOf(lC9);
               const decC9 = ast.op === "+" ? rAdd(qx(lC9), b3) : rSub(qx(lC9), b3);
-              const bd9 = distributeTerms(fc9.den, [{ x: b3, comps: [] }], t30c);
+              const bd9 = distributeTerms(fc9.den, [{ x: b3, comps: [], aux: rnorm(b3).d !== 1n }], t30c);
               if (bd9 === null) {
                 ctx.capNotes?.push("sum");
                 return { t: "d", ...qv(decC9) };
@@ -34606,7 +34611,7 @@ function evalAst(ast, env, ctx = {}) {
             const t30c = ctx.monthToDays === "30";
             const fc9 = fracOf(rC8);
             const decC9 = ast.op === "+" ? rAdd(b8, qx(rC8)) : rSub(b8, qx(rC8));
-            const bd9 = distributeTerms(fc9.den, [{ x: b8, comps: [] }], t30c);
+            const bd9 = distributeTerms(fc9.den, [{ x: b8, comps: [], aux: rnorm(b8).d !== 1n }], t30c);
             if (bd9 === null) {
               ctx.capNotes?.push("sum");
               return { t: "d", ...qv(decC9) };
@@ -34641,14 +34646,14 @@ function evalAst(ast, env, ctx = {}) {
             if (qx(r3).n === 0n) {
               const t30z = ctx.monthToDays === "30";
               const fr0 = fracOf(r3);
-              return divProjZero(fr0.den.map((t9) => ({ x: rMul(t9.x, b3), comps: t9.comps })), fr0.num, r3, ctx);
+              return divProjZero(fr0.den.map((t9) => ({ ...t9, x: rMul(t9.x, b3) })), fr0.num, r3, ctx);
             }
             const lq = { t: "q", ...qv(b3), dim: {}, symbol: "", comps: [] };
             let invRes = combineQuantities(lq, r3, "/", ctx);
             const shInv9 = r3.terms !== void 0 || r3.termsDen !== void 0 || (compsOf(r3)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
             if (shInv9 && (invRes.t === "q" || invRes.t === "d")) {
               const f9 = fracOf(r3);
-              const num9 = f9.den.map((t9) => ({ x: rMul(t9.x, b3), comps: t9.comps }));
+              const num9 = f9.den.map((t9) => ({ ...t9, x: rMul(t9.x, b3) }));
               const base9 = invRes.t === "q" ? invRes : { t: "q", ...qv(numRat(invRes)), dim: {}, symbol: "", comps: [] };
               invRes = attachFrac(base9, num9, f9.num);
             }
@@ -34720,7 +34725,7 @@ function evalAst(ast, env, ctx = {}) {
                     x0 = rMul(x0, rPowInt(rDiv(bridged0(den), bridged0(hit0.def)), dExp));
                     hit0.exp += dExp;
                   } else comps0.push({ def: den, exp: dExp });
-                  return { x: x0, comps: comps0.filter((c9) => c9.exp !== 0) };
+                  return { x: x0, comps: comps0.filter((c9) => c9.exp !== 0), aux: t0.aux };
                 };
                 const f9 = fracOf(qSide);
                 if (l2.t !== "ts" || ast.op === "*") {
@@ -34873,9 +34878,9 @@ function evalAst(ast, env, ctx = {}) {
             const t9 = x9.terms;
             const d9 = x9.termsDen;
             const x0 = x9.t === "p" ? x9.vx ?? decToRat(x9.v) : numRat(x9);
-            return { num: t9 ?? [{ x: x0, comps: [] }], den: d9 ?? ONE_TERMS() };
+            return { num: t9 ?? [{ x: x0, comps: [], aux: rnorm(x0).d !== 1n }], den: d9 ?? ONE_TERMS() };
           };
-          const scl9 = (list9, k9) => list9.map((t9) => ({ x: rMul(t9.x, k9), comps: t9.comps }));
+          const scl9 = (list9, k9) => list9.map((t9) => ({ ...t9, x: rMul(t9.x, k9) }));
           const t30p = ctx.monthToDays === "30";
           const out9 = (kind9, x9, num9, den9) => {
             const base9 = kind9 === "p" ? { t: "p", ...qv(x9) } : { t: "d", ...qv(x9) };
@@ -39767,7 +39772,7 @@ function exactSemantic(rt2, thirty) {
     const lead9 = first9 === void 0 || first9.x.n === 0n ? { n: 1n, d: 1n } : first9.x;
     const ser9 = (list9) => list9.map((t9) => {
       const x9 = div9(t9.x, lead9);
-      return `${x9.n}/${x9.d}\xB7${compsSig9(t9)}`;
+      return `${x9.n}/${x9.d}\xB7${compsSig9(t9)}${t9.aux ? "~a" : ""}`;
     }).sort().join("+");
     if (den9 !== void 0) exact += `|d:${ser9(den9)}`;
     if (rt2.terms !== void 0) exact += `|t:${ser9(rt2.terms)}`;
