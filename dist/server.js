@@ -29079,6 +29079,7 @@ var canonComps = (list) => {
   }
   return out.filter((o2) => o2.exp !== 0);
 };
+var mkTerm = (x2, comps, aux) => ({ x: x2, comps, aux });
 var termCanon = (t2, thirty) => {
   const dims = /* @__PURE__ */ new Map();
   const sym = [];
@@ -29114,7 +29115,7 @@ var termCanon = (t2, thirty) => {
   const dimKey = [...dims].filter(([, v2]) => v2 !== 0).sort((a2, b2) => a2[0] < b2[0] ? -1 : 1).map(([k2, v2]) => `${k2}^${v2}`).join("\xB7");
   return { key: `${dimKey}|${sym.sort().join("\xB7")}`, canonX: rMul(t2.x, fold), fold };
 };
-var mergeTerms = (a2, b2, sign2, thirty) => {
+var mergeTerms = (a2, b2, sign2, thirty, keepAuxZero = false) => {
   const out = /* @__PURE__ */ new Map();
   const addAll = (list, s2) => {
     for (const t2 of list) {
@@ -29129,9 +29130,13 @@ var mergeTerms = (a2, b2, sign2, thirty) => {
   };
   addAll(a2, 1n);
   addAll(b2, sign2);
-  return [...out.values()].filter((e) => rnorm(e.canonX).n !== 0n).map((e) => ({ x: rDiv(e.canonX, e.fold), comps: e.comps, aux: e.aux }));
+  return [...out.values()].flatMap((e) => {
+    const zero = rnorm(e.canonX).n === 0n;
+    if (zero) return keepAuxZero && e.aux ? [{ x: { n: 0n, d: 1n }, comps: e.comps, aux: true }] : [];
+    return [{ x: rDiv(e.canonX, e.fold), comps: e.comps, aux: e.aux }];
+  });
 };
-var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
+var distributeTerms = (a2, b2, thirty, sign2 = 1, keepAuxZero = false) => {
   if (a2.length * b2.length > 65536) return null;
   const out = [];
   for (const ta of a2) {
@@ -29147,7 +29152,7 @@ var distributeTerms = (a2, b2, thirty, sign2 = 1) => {
       });
     }
   }
-  const merged = mergeTerms(out, [], 1n, thirty);
+  const merged = mergeTerms(out, [], 1n, thirty, keepAuxZero);
   return merged.length > 4096 ? null : merged;
 };
 var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [], aux: false }];
@@ -29298,6 +29303,364 @@ var termsProject = (list9, thirty) => {
   }
   return acc9;
 };
+
+// ../textual-calculator/core/packages/engine/src/shadow.ts
+var projectIval = (list, thirty, prec, currencyAsOne = false) => {
+  const Dlo = DecC.clone({ precision: prec, rounding: 3 });
+  const Dhi = DecC.clone({ precision: prec, rounding: 2 });
+  const dec2 = (D9, n2, d2) => new D9(n2.toString()).div(d2.toString());
+  let lo = new Dlo(0);
+  let hi = new Dhi(0);
+  for (const t2 of list) {
+    let flo = new Dlo(1);
+    let fhi = new Dhi(1);
+    for (const c2 of t2.comps) {
+      let blo;
+      let bhi;
+      if (c2.def.factorDec !== void 0) {
+        blo = new Dlo(c2.def.factorDec);
+        bhi = new Dhi(c2.def.factorDec);
+      } else if (c2.def.factor !== void 0) {
+        const fr = ratOfFactor(c2.def.factor);
+        blo = dec2(Dlo, fr.n, fr.d);
+        bhi = dec2(Dhi, fr.n, fr.d);
+        if (thirty === true && (c2.def.dim["calmonths"] ?? 0) !== 0) {
+          blo = blo.times(new Dlo(30).pow(c2.def.dim["calmonths"]));
+          bhi = bhi.times(new Dhi(30).pow(c2.def.dim["calmonths"]));
+        }
+      } else if (currencyAsOne && c2.def.currency !== void 0) {
+        continue;
+      } else return null;
+      if (c2.exp >= 0) {
+        flo = flo.times(blo.pow(c2.exp));
+        fhi = fhi.times(bhi.pow(c2.exp));
+      } else {
+        const e = -c2.exp;
+        flo = flo.div(bhi.pow(e));
+        fhi = fhi.div(blo.pow(e));
+      }
+    }
+    const xlo = dec2(Dlo, t2.x.n, t2.x.d);
+    const xhi = dec2(Dhi, t2.x.n, t2.x.d);
+    if (t2.x.n >= 0n) {
+      lo = lo.plus(xlo.times(flo));
+      hi = hi.plus(xhi.times(fhi));
+    } else {
+      lo = lo.plus(xlo.times(fhi));
+      hi = hi.plus(xhi.times(flo));
+    }
+  }
+  return [lo, hi];
+};
+var copyTerms = (list) => list.map((t2) => ({ x: t2.x, comps: t2.comps.map((c2) => ({ ...c2 })), aux: t2.aux }));
+var legacyFingerprint = (terms, termsDen) => {
+  const encExp = (e) => Object.is(e, -0) ? "-0" : String(e);
+  const slot = (list) => list === void 0 ? null : list.map((t2) => [t2.x.n.toString(), t2.x.d.toString(), t2.aux ? 1 : 0, t2.comps.map((c2) => [c2.def.id, encExp(c2.exp)])]);
+  return JSON.stringify(["lf1", slot(terms), slot(termsDen)]);
+};
+var ShadowFraction = class _ShadowFraction {
+  #num;
+  #den;
+  #thirty;
+  constructor(num, den, thirty) {
+    this.#num = num;
+    this.#den = den;
+    this.#thirty = thirty;
+  }
+  // ─── factories ────────────────────────────────────────────────────────────
+  /** Bridge from the legacy `terms`/`termsDen` storage (Phase 1 adapter),
+   * returning a DISCRIMINATED result (audit interne #78 1o-ter) — `no-shadow`
+   * (a plain number), `invalid-denominator` (empty or proven-zero denominator),
+   * and `ok` are distinct, never conflated in one `null`. The denominator is
+   * MERGED first, so a structurally-zero currency denominator like
+   * « [1 USD, −1 USD] » is caught before any FX-blind projection. */
+  static fromLegacy(terms, termsDen, thirty) {
+    if (terms === void 0 && termsDen === void 0) return { kind: "no-shadow" };
+    let den = ONE_TERMS();
+    if (termsDen !== void 0) {
+      den = mergeTerms(copyTerms(termsDen), [], 1n, thirty, true);
+      if (den.length === 0) return { kind: "invalid-denominator" };
+      const dz = new _ShadowFraction(den, ONE_TERMS(), thirty).zeroState();
+      if (dz === "authoritative-zero") return { kind: "invalid-denominator" };
+      if (dz === "auxiliary-zero") return { kind: "undecidable-denominator" };
+    }
+    return { kind: "ok", value: new _ShadowFraction(terms ? copyTerms(terms) : ONE_TERMS(), den, thirty) };
+  }
+  /** Cross-context operations are FORBIDDEN (audit interne #78 1o-bis): two
+   * shadows built under different `monthToDays` calendars must never combine
+   * silently on the left context. */
+  #requireCtx(other) {
+    if (this.#thirty !== other.#thirty) {
+      throw new Error("ShadowFraction: operation across incompatible calendar contexts (monthToDays) is forbidden");
+    }
+  }
+  /** EVERY ShadowFraction distribution forces `keepAuxZero=true` (audit interne
+   * #78 1o-quater), so an auxiliary-zero marker is COMPOSITIONAL through × ÷ +:
+   * « z × 2 », « 2 × z », « z ÷ 2 », « z + authZero » all stay auxiliary zero.
+   * The engine's own distributeTerms keeps the historical default (false). */
+  #distribute(a2, b2) {
+    return distributeTerms(a2, b2, this.#thirty, 1, true);
+  }
+  /** Legacy view for storing back into an RT during Phase 1 (never exposes the
+   * private arrays by reference — always a copy). A trivial `1` denominator is
+   * elided to match the historical shape. */
+  writeLegacy() {
+    const denTrivial = this.#den.length === 1 && this.#den[0].comps.length === 0 && rnorm(this.#den[0].x).n === 1n && rnorm(this.#den[0].x).d === 1n;
+    return { terms: copyTerms(this.#num), ...denTrivial ? {} : { termsDen: copyTerms(this.#den) } };
+  }
+  /** A dimensionless scalar. `aux` is DECLARED by the caller from parse
+   * provenance (captured decimal ⇒ true; exact rational/integer ⇒ false). */
+  static scalar(x2, aux, thirty) {
+    return new _ShadowFraction([mkTerm(x2, [], aux)], ONE_TERMS(), thirty);
+  }
+  /** The authoritative exact zero (empty numerator). */
+  static zero(thirty) {
+    return new _ShadowFraction([], ONE_TERMS(), thirty);
+  }
+  // ─── authority ────────────────────────────────────────────────────────────
+  /** Does the NUMERATOR carry a captured-decimal (auxiliary) term? The reemit's
+   * zero decision reads ONLY this — the denominator never requalifies it. */
+  numeratorAuxiliary() {
+    return this.#num.some((t2) => t2.aux);
+  }
+  /** Classify the value as a zero. `authoritative-zero` overrides a drifted
+   * direct reading; `auxiliary-zero` cedes to it; `nonzero`/`undecidable` are
+   * explicit (never an ambiguous null). Structural emptiness is decided first
+   * (cheap); a factorDec near-zero is confirmed by an interval that excludes,
+   * or an exact projection that reaches, zero. */
+  zeroState() {
+    if (this.#num.length === 0) return "authoritative-zero";
+    const merged = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    if (merged.every((t2) => rnorm(t2.x).n === 0n)) {
+      return merged.some((t2) => t2.aux) ? "auxiliary-zero" : "authoritative-zero";
+    }
+    const iv = projectIval(this.#num, this.#thirty, 80);
+    if (iv === null) return "unsupported";
+    const [lo, hi] = iv;
+    if (lo.gt(0) || hi.lt(0)) return "nonzero";
+    const nx = termsProject(this.#num, this.#thirty);
+    if (nx === null) return "unsupported";
+    if (rnorm(nx).n !== 0n) return "nonzero";
+    return this.numeratorAuxiliary() ? "auxiliary-zero" : "authoritative-zero";
+  }
+  // ─── central operations (authority carried by construction) ─────────────────
+  /** −(num/den) = (−num)/den — authority per term preserved verbatim. */
+  negate() {
+    return new _ShadowFraction(this.#num.map((t2) => ({ x: { n: -t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+  }
+  /** Scale the numerator by an EXACT rational k — a captured decimal stays
+   * captured (aux preserved); k itself is a pure multiplier and never a source. */
+  scale(k2) {
+    return new _ShadowFraction(this.#num.map((t2) => ({ x: rMul(t2.x, k2), comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+  }
+  /** num/den ± other = (num·oDen ± oNum·den)/(den·oDen), authority infecting
+   * through the AUTHORITY-AWARE merge (keepAuxZero): a sum touching a captured
+   * decimal stays captured, and « 1/2 (auth) − 0.5 (aux) » cancels to an
+   * AUXILIARY zero, not a clean authoritative one. `budget-exhausted` when a
+   * distribution exceeds the shadow bound. */
+  addSigned(other, sign2) {
+    this.#requireCtx(other);
+    const a2 = this.#distribute(this.#num, other.#den);
+    const b2 = this.#distribute(other.#num, this.#den);
+    const dd = this.#distribute(this.#den, other.#den);
+    if (a2 === null || b2 === null || dd === null) return { kind: "budget-exhausted" };
+    const num = mergeTerms(a2, b2, sign2, this.#thirty, true);
+    return { kind: "ok", value: new _ShadowFraction(num, dd, this.#thirty) };
+  }
+  add(other) {
+    return this.addSigned(other, 1n);
+  }
+  sub(other) {
+    return this.addSigned(other, -1n);
+  }
+  /** Product with the authZero × finite = authZero LAW: an authoritative
+   * structural zero times any finite shadow is an authoritative zero — the
+   * other operand's captured-decimal terms do not taint a zero they merely
+   * scale. Otherwise the numerators/denominators distribute and authority
+   * infects per term. `budget-exhausted` when a distribution exceeds the bound. */
+  mul(other) {
+    this.#requireCtx(other);
+    if (this.zeroState() === "authoritative-zero" || other.zeroState() === "authoritative-zero") {
+      return { kind: "ok", value: _ShadowFraction.zero(this.#thirty) };
+    }
+    const num = this.#distribute(this.#num, other.#num);
+    const den = this.#distribute(this.#den, other.#den);
+    if (num === null || den === null) return { kind: "budget-exhausted" };
+    return { kind: "ok", value: new _ShadowFraction(num, den, this.#thirty) };
+  }
+  /** num/den ÷ other = (num·oDen)/(den·oNum). Inversion is legal ONLY on a
+   * PROVEN non-zero divisor: a zero → division-by-zero; an undecidable sign →
+   * undecidable; a recipe-less divisor → unsupported (audit interne #78 1o-bis).
+   * An `undecidable` operand is NEVER inverted. */
+  div(other) {
+    this.#requireCtx(other);
+    const oz = other.zeroState();
+    if (oz === "authoritative-zero") return { kind: "division-by-zero" };
+    if (oz === "auxiliary-zero") return { kind: "undecidable" };
+    if (oz === "unsupported") return { kind: "unsupported" };
+    if (oz === "undecidable") return { kind: "undecidable" };
+    const num = this.#distribute(this.#num, other.#den);
+    const den = this.#distribute(this.#den, other.#num);
+    if (num === null || den === null) return { kind: "budget-exhausted" };
+    return { kind: "ok", value: new _ShadowFraction(num, den, this.#thirty) };
+  }
+  /** 1/(num/den) = den/num — legal ONLY when the numerator is PROVEN non-zero;
+   * every other state is explicit (never 1/0 by omission, never invert an
+   * undecidable). */
+  invert() {
+    const z2 = this.zeroState();
+    if (z2 === "authoritative-zero") return { kind: "division-by-zero" };
+    if (z2 === "auxiliary-zero") return { kind: "undecidable" };
+    if (z2 === "unsupported") return { kind: "unsupported" };
+    if (z2 === "undecidable") return { kind: "undecidable" };
+    return { kind: "ok", value: new _ShadowFraction(copyTerms(this.#den), copyTerms(this.#num), this.#thirty) };
+  }
+  /** Reduce num/den to a single monomial term when it divides exactly (z²/z = z),
+   * carrying authority; null when no monomial quotient exists — OR when the
+   * reduction is not authority-complete. `fracQuotient` pairs only the two
+   * EXTREME (min) terms for provenance, so a NON-dominant auxiliary term inside
+   * a genuine polynomial is silently WHITENED (`[2,2m aux]/[1,m]` → `2` auth).
+   * When either side is a polynomial carrying any auxiliary term we refuse
+   * (conservative, mirrors semanticKey()'s polynomial branch — audit interne
+   * #78 1o-quater-bis). A pure monomial ÷ monomial keeps its exact provenance
+   * (both extremes ARE all the terms), so it is never over-refused. */
+  reduceMonomial() {
+    const num = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const den = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const poly = num.length > 1 || den.length > 1;
+    if (poly && (num.some((t2) => t2.aux) || den.some((t2) => t2.aux))) return null;
+    return fracQuotient(this.#num, this.#den, this.#thirty);
+  }
+  // ─── projection ─────────────────────────────────────────────────────────────
+  /** Rigorous interval bracket of the numerator (directed rounding). */
+  numeratorInterval(prec) {
+    const iv = projectIval(this.#num, this.#thirty, prec);
+    return iv === null ? { kind: "unsupported" } : { kind: "ok", lo: iv[0], hi: iv[1] };
+  }
+  /** Rigorous interval bracket of the denominator; `straddle` when its sign is
+   * undecided at this precision (0 ∈ [lo, hi]) — the caller widens. */
+  denominatorInterval(prec) {
+    const iv = projectIval(this.#den, this.#thirty, prec);
+    if (iv === null) return { kind: "unsupported" };
+    const [lo, hi] = iv;
+    if (!lo.gt(0) && !hi.lt(0)) return { kind: "straddle" };
+    return { kind: "ok", lo, hi };
+  }
+  /** Exact rational numerator/denominator projection over the engine's rounded
+   * constants (expensive for high-exponent factorDec — the interval is the
+   * cheap path). Null when a component has no numeric recipe. */
+  projectExact() {
+    const nx = termsProject(this.#num, this.#thirty);
+    const dx = termsProject(this.#den, this.#thirty);
+    if (nx === null || dx === null) return null;
+    return { num: nx, den: dx };
+  }
+  /** Does any term (numerator OR denominator) carry an IRRATIONAL factorDec comp
+   * (radian, …)? Such a shadow's exact-rational projection is a 40-digit
+   * approximation, so its public reading must ride the CERTIFIED interval path
+   * — this reproduces reemit's `approx9` gate WITHOUT the caller touching
+   * terms/termsDen (audit interne #78 Phase 1p). */
+  hasApproxFactor() {
+    return this.#num.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0)) || this.#den.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
+  }
+  /** REEMISSION-ONLY interval projection (audit interne #78 Phase 1p, option a):
+   * numerator AND denominator brackets together, treating a CURRENCY comp as an
+   * OPAQUE ×1 label (no rate read). STRICTLY separate from the identity
+   * projections — a currency shadow like « 2 USD − 1 EUR » stays `unsupported`
+   * for any PROOF (zeroState/compare/semanticKey) even though its reemission
+   * projection IS computable here. `straddle` when the denominator's sign is
+   * undecided at this precision. Used ONLY by candidateReemit9's interval branch. */
+  projectIntervalsForReemit(prec) {
+    const n2 = projectIval(this.#num, this.#thirty, prec, true);
+    const d2 = projectIval(this.#den, this.#thirty, prec, true);
+    if (n2 === null || d2 === null) return { kind: "unsupported" };
+    if (!d2[0].gt(0) && !d2[1].lt(0)) return { kind: "straddle" };
+    return { kind: "ok", num: n2, den: d2 };
+  }
+  // ─── identity ────────────────────────────────────────────────────────────────
+  /** Sign of a term list's projection: +1 / −1, or 0 when undecided/unsupported
+   * (bracket straddles zero at prec 80, or a recipe-less comp). */
+  #signOf(list) {
+    const iv = projectIval(list, this.#thirty, 80);
+    if (iv === null) return 0;
+    if (iv[0].gt(0)) return 1;
+    if (iv[1].lt(0)) return -1;
+    return 0;
+  }
+  /** Ordered comparison this − other ∈ {−1, 0, 1}, or null when not provably
+   * decided. AUTHORITY-aware: a value-equal difference that absorbed a captured
+   * decimal is NOT provably equal (⇒ null, matching semanticKey which
+   * distinguishes it). DENOMINATOR-SIGN aware: a negative common denominator
+   * flips the order (audit interne #78 1o-bis). */
+  compare(other) {
+    this.#requireCtx(other);
+    const a2 = this.#distribute(this.#num, other.#den);
+    const b2 = this.#distribute(other.#num, this.#den);
+    if (a2 === null || b2 === null) return null;
+    const s2 = termsCmp(a2, b2, this.#thirty);
+    if (s2 === null) return null;
+    if (s2 === 0) {
+      return mergeTerms(a2, b2, -1n, this.#thirty, true).length === 0 ? 0 : null;
+    }
+    const sa = this.#signOf(this.#den);
+    const sb = this.#signOf(other.#den);
+    if (sa === 0 || sb === 0) return null;
+    return sa * sb > 0 ? s2 : -s2;
+  }
+  /** CANONICAL world digest of an AUTHORITATIVE value, or `null` (audit interne
+   * #78 observatrice, Finding A). Canonicalised through the SAME algebra as
+   * termCanon/mergeTerms — so `1 m` ≡ `100 cm`, `[1,1]` ≡ `[2]` — normalised by
+   * the leading denominator coefficient so (s·num)/(s·den) ≡ num/den, and
+   * PREFIXED by monthToDays so civil and '30' worlds never share a key.
+   *
+   * STRICT LAW: two NON-null equal keys imply `compare() === 0` — no exception.
+   * An AUXILIARY provenance (a captured decimal surviving the canonical
+   * reduction) has NO provable canonical world — compare() cedes (null) on it,
+   * even reflexively — so it gets NO key at all (`null`), NOT a distinct
+   * decisive key. Two `null`s are never compared as keys.
+   *
+   * NORMATIVE (audit interne #78 observatrice, Finding C): the absolute-vs-
+   * interval THERMAL ROLE belongs to the OUTER RT envelope; the shadow encodes
+   * only the canonical kelvin-LINEAR measure, where `ΔK ≡ K` by size — exactly
+   * as `1 m ≡ 100 cm`. So `1 K·rad/°` and `1 ΔK·rad/°` share this key (same
+   * measure) but stay distinct worlds through their outer envelope (K vs ΔK) and
+   * their typed behaviour (`K + K` refuses, `K + ΔK` succeeds, `ΔK − K` refuses).
+   * NOT a substitute for the legacy fingerprint, which still distinguishes
+   * writing-form shapes. */
+  semanticKey() {
+    const num = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const den = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    if (den.length === 0 || den.every((t2) => rnorm(t2.x).n === 0n)) return null;
+    let reduced;
+    if (den.length === 1) {
+      const inv = { x: rDiv({ n: 1n, d: 1n }, den[0].x), comps: den[0].comps.map((c2) => ({ def: c2.def, exp: -c2.exp })), aux: den[0].aux };
+      const n2 = this.#distribute(num, [inv]);
+      if (n2 === null) return null;
+      reduced = n2;
+    } else {
+      if (num.some((t2) => t2.aux) || den.some((t2) => t2.aux)) return null;
+      const q2 = fracQuotient(this.#num, this.#den, this.#thirty);
+      if (q2 === null) return null;
+      reduced = [q2];
+    }
+    const finalTerms = mergeTerms(reduced, [], 1n, this.#thirty, true);
+    if (finalTerms.some((t2) => t2.aux)) return null;
+    const items = finalTerms.map((t2) => {
+      const c2 = termCanon(t2, this.#thirty);
+      const x2 = rnorm(c2.canonX);
+      return `${c2.key}=${x2.n}/${x2.d}`;
+    });
+    return `${this.#thirty ? "30" : "civ"}|${items.sort().join("+")}`;
+  }
+};
+function shadowFromRT(rt2, thirty) {
+  if (rt2 === null) return { kind: "no-shadow" };
+  return ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
+}
+function shadowApproxFromRT(rt2) {
+  const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
+  return rt2 !== null && (has(rt2.terms) || has(rt2.termsDen));
+}
 
 // ../textual-calculator/core/packages/engine/src/units.ts
 var r2 = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
@@ -30292,8 +30655,15 @@ function applyExactFunction(fn, rts) {
       if (absN > x2.d) return err("inexact", `${fn} needs an argument in [-1, 1]`);
       return null;
     }
-    case "abs":
-      return asF(x2.n < 0n ? { n: -x2.n, d: x2.d } : x2);
+    case "abs": {
+      const neg9 = x2.n < 0n;
+      const absB9 = asF(neg9 ? { n: -x2.n, d: x2.d } : x2);
+      const sh9 = rts[0];
+      if (absB9.t !== "e" && (sh9.terms !== void 0 || sh9.termsDen !== void 0)) {
+        return { ...absB9, ...neg9 ? negateShadow9(rts[0]) : { ...sh9.terms && { terms: sh9.terms }, ...sh9.termsDen && { termsDen: sh9.termsDen } } };
+      }
+      return absB9;
+    }
     case "min":
       return asF(rts.map(numRat).reduce((a2, b2) => rCmp(b2, a2) < 0 ? b2 : a2));
     case "max":
@@ -30971,6 +31341,13 @@ var carrierNum = (rt2, ctx) => {
   return { t: "d", v: rt2.v, capped: true };
 };
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ ...t2, x: rMul(t2.x, k2) })) } : {};
+var negateShadow9 = (rt2) => {
+  const r9 = rt2;
+  return {
+    ...r9.terms && { terms: r9.terms.map((t9) => ({ ...t9, x: { n: -t9.x.n, d: t9.x.d } })) },
+    ...r9.termsDen && { termsDen: r9.termsDen }
+  };
+};
 var pctScale9 = (base9, factor9, cap9) => {
   const out9 = { ...base9, ...qv(rMul(qx(base9), factor9)), ...scaleTerms(base9, factor9), ...cap9 && { capped: true } };
   const cf9 = capFScale9(capFOf9(base9) ?? [], factor9);
@@ -30978,7 +31355,7 @@ var pctScale9 = (base9, factor9, cap9) => {
   else delete out9.capF;
   return out9;
 };
-var reemitFromShadow9 = (rt2, thirty) => {
+var legacyReemitFromShadow9 = (rt2, thirty) => {
   if (rt2.t !== "d" && rt2.t !== "p" && rt2.t !== "q") return rt2;
   const terms = rt2.terms;
   const termsDen = rt2.termsDen;
@@ -31109,6 +31486,159 @@ var reemitFromShadow9 = (rt2, thirty) => {
     return out;
   }
   return { ...rt2, ...qv(val) };
+};
+var reemitFromShadow9 = (rt2, thirty, site, observe) => {
+  const res = candidateReemit9(rt2, thirty);
+  const out = applyCandReemit9(rt2, res);
+  if (observe !== void 0) observe(site, rt2, legacyReemitFromShadow9(rt2, thirty), { res, out }, thirty);
+  return out;
+};
+var candidateReemit9 = (rt2, thirty) => {
+  if (rt2.t !== "d" && rt2.t !== "p" && rt2.t !== "q") return { kind: "no-shadow" };
+  const sf = shadowFromRT(rt2, thirty);
+  if (sf.kind === "no-shadow") return { kind: "no-shadow" };
+  if (sf.kind !== "ok") {
+    const approx = shadowApproxFromRT(rt2);
+    const capped = rt2.capped === true;
+    if (!approx || capped) return { kind: "unchanged" };
+    return { kind: "inexact", why: "this reading cannot be certified to 40 significant figures (ill-conditioned cancellation or undecided denominator sign)" };
+  }
+  const shadow = sf.value;
+  const approx9 = shadow.hasApproxFactor();
+  const capped9 = rt2.capped === true;
+  if (approx9 && !capped9) {
+    let fRat9 = { n: 1n, d: 1n };
+    let affine9 = null;
+    const fdDisp9 = [];
+    if (rt2.t === "q") {
+      const comps9 = compsOf(rt2) ?? [];
+      if (comps9.length === 1 && comps9[0].exp === 1 && comps9[0].def.affine) {
+        affine9 = comps9[0].def.affine;
+      } else {
+        for (const c9 of comps9) {
+          if (c9.def.currency !== void 0) continue;
+          if (isPureLinear(c9.def)) {
+            fRat9 = rMul(fRat9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+            const calM9 = c9.def.dim["calmonths"];
+            if (thirty === true && calM9) fRat9 = rMul(fRat9, rPowInt({ n: 30n, d: 1n }, calM9 * c9.exp));
+          } else if (c9.def.factorDec !== void 0) {
+            fdDisp9.push(c9);
+          } else return { kind: "unsupported", why: "unresolvable-display-comp" };
+        }
+      }
+    }
+    const sd40 = (d9) => new DecC(d9.toString()).toSignificantDigits(40).toString();
+    const sd60 = (d9) => new DecC(d9.toString()).toSignificantDigits(60).toString();
+    const projIval9 = (prec9) => {
+      const pr9 = shadow.projectIntervalsForReemit(prec9);
+      if (pr9.kind === "unsupported") return { kind: "unsupported" };
+      if (pr9.kind === "straddle") return { kind: "retry" };
+      const nLo9 = pr9.num[0], nHi9 = pr9.num[1];
+      let dLo9 = pr9.den[0], dHi9 = pr9.den[1];
+      const Dlo9 = DecC.clone({ precision: prec9, rounding: 3 });
+      const Dhi9 = DecC.clone({ precision: prec9, rounding: 2 });
+      if (fdDisp9.length > 0) {
+        let FdLo9 = new Dlo9(1);
+        let FdHi9 = new Dhi9(1);
+        for (const c9 of fdDisp9) {
+          const blo9 = new Dlo9(c9.def.factorDec);
+          const bhi9 = new Dhi9(c9.def.factorDec);
+          if (c9.exp >= 0) {
+            FdLo9 = FdLo9.times(blo9.pow(c9.exp));
+            FdHi9 = FdHi9.times(bhi9.pow(c9.exp));
+          } else {
+            const e9 = -c9.exp;
+            FdLo9 = FdLo9.div(bhi9.pow(e9));
+            FdHi9 = FdHi9.div(blo9.pow(e9));
+          }
+        }
+        if (dLo9.gte(0)) {
+          dLo9 = dLo9.times(FdLo9);
+          dHi9 = dHi9.times(FdHi9);
+        } else {
+          const nl9 = dLo9.times(FdHi9);
+          const nh9 = dHi9.times(FdLo9);
+          dLo9 = nl9;
+          dHi9 = nh9;
+        }
+      }
+      const q9 = (n9, d9, D9) => new D9(n9.toString()).div(d9.toString());
+      const corners9 = [[nLo9, dLo9], [nLo9, dHi9], [nHi9, dLo9], [nHi9, dHi9]];
+      let rLo9 = q9(nLo9, dLo9, Dlo9);
+      let rHi9 = q9(nLo9, dLo9, Dhi9);
+      for (const [n9, d9] of corners9) {
+        const cl9 = q9(n9, d9, Dlo9);
+        if (cl9.lt(rLo9)) rLo9 = cl9;
+        const ch9 = q9(n9, d9, Dhi9);
+        if (ch9.gt(rHi9)) rHi9 = ch9;
+      }
+      if (affine9 !== null) {
+        return { kind: "ok", iv: [
+          rLo9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString()),
+          rHi9.times(affine9.c.toString()).minus(affine9.b.toString()).div(affine9.a.toString())
+        ] };
+      }
+      return { kind: "ok", iv: [rLo9.div(fRat9.n.toString()).times(fRat9.d.toString()), rHi9.div(fRat9.n.toString()).times(fRat9.d.toString())] };
+    };
+    const auxiliary9 = shadow.numeratorAuxiliary();
+    let valD9 = null;
+    for (let prec9 = 80; prec9 <= 5120; prec9 *= 2) {
+      const r9 = projIval9(prec9);
+      if (r9.kind === "unsupported") {
+        if (auxiliary9) return { kind: "unchanged" };
+        return { kind: "inexact", why: "authoritative shadow not numerically projectable" };
+      }
+      if (r9.kind === "retry") continue;
+      if (sd40(r9.iv[0]) === sd40(r9.iv[1])) {
+        valD9 = r9.iv[0];
+        break;
+      }
+    }
+    if (valD9 === null) return { kind: "inexact", why: "cannot certify to 40 significant figures" };
+    const D9c = DecC.clone({ precision: 5120 });
+    const curV9 = rt2.vx !== void 0 ? new D9c(rt2.vx.n.toString()).div(rt2.vx.d.toString()) : new D9c(rt2.v.toString());
+    if (sd60(curV9) === sd60(valD9)) return { kind: "unchanged" };
+    if (valD9.isZero() && auxiliary9) return { kind: "unchanged" };
+    return { kind: "reemit-decimal", v: new DecC(sd40(valD9)) };
+  }
+  const ex9 = shadow.projectExact();
+  if (ex9 === null || ex9.den.n === 0n) return { kind: "unchanged" };
+  let val = rDiv(ex9.num, ex9.den);
+  if (rt2.t === "q") {
+    const comps = compsOf(rt2) ?? [];
+    let f2 = { n: 1n, d: 1n };
+    for (const c2 of comps) {
+      if (!isPureLinear(c2.def)) return { kind: "unchanged" };
+      f2 = rMul(f2, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
+      const calM = c2.def.dim["calmonths"];
+      if (thirty === true && calM) f2 = rMul(f2, rPowInt({ n: 30n, d: 1n }, calM * c2.exp));
+    }
+    val = rDiv(val, f2);
+  }
+  const curRat = rt2.vx ?? decToRat(rt2.v);
+  if (rSub(curRat, val).n === 0n) return { kind: "unchanged" };
+  const gap9 = rAbs9M(rSub(curRat, val));
+  const mag9 = rCmp(rAbs9M(curRat), rAbs9M(val)) >= 0 ? rAbs9M(curRat) : rAbs9M(val);
+  if (mag9.n === 0n || rCmp(rMul(gap9, { n: 10n ** 30n, d: 1n }), mag9) > 0) return { kind: "unchanged" };
+  if (approx9) return { kind: "reemit-decimal", v: ratToDec(val) };
+  return { kind: "reemit-exact", val };
+};
+var applyCandReemit9 = (rt2, res) => {
+  switch (res.kind) {
+    case "no-shadow":
+    case "unchanged":
+      return rt2;
+    case "reemit-decimal": {
+      const out = { ...rt2, v: res.v };
+      delete out.vx;
+      return out;
+    }
+    case "reemit-exact":
+      return { ...rt2, ...qv(res.val) };
+    case "inexact":
+    case "unsupported":
+      return err("inexact", res.why);
+  }
 };
 var promoteShadowScalar9 = (o2) => {
   if (o2.t !== "d" && o2.t !== "f") return o2;
@@ -33112,7 +33642,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), base, p2, -1);
+      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOff", ctx.reemitObserver), base, p2, -1);
     }
     case "un": {
       const e = evalAst(ast.e, env, ctx);
@@ -33146,7 +33676,7 @@ function evalAst(ast, env, ctx = {}) {
           ...e,
           v: e.v.neg(),
           vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0,
-          ...e.terms && { terms: e.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
+          ...negateShadow9(e)
         };
         const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
         if (fN9.length > 0) negQ9.capF = fN9;
@@ -33154,7 +33684,7 @@ function evalAst(ast, env, ctx = {}) {
         return negQ9;
       }
       {
-        const negD9 = { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0, ...e.capped === true && { capped: true } };
+        const negD9 = { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0, ...e.capped === true && { capped: true }, ...negateShadow9(e) };
         const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
         if (fN9.length > 0) negD9.capF = fN9;
         return negD9;
@@ -33216,7 +33746,7 @@ function evalAst(ast, env, ctx = {}) {
           ...e.terms && { terms: e.terms },
           ...e.termsDen && { termsDen: e.termsDen },
           ...e.capped === true && { capped: true }
-        }, e), ctx.monthToDays === "30");
+        }, e), ctx.monthToDays === "30", "pType", ctx.reemitObserver);
       }
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
       const px = numRat(e);
@@ -33271,7 +33801,7 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "d", ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } };
       })();
-      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), [p2, base], "pctOf");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOf", ctx.reemitObserver), [p2, base], "pctOf");
     }
     case "pctOn": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -33305,7 +33835,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), base, p2, 1);
+      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOn", ctx.reemitObserver), base, p2, 1);
     }
     case "isPctOfWhat": {
       const value = promoteShadowScalar9(evalAst(ast.value, env, ctx));
@@ -33354,7 +33884,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } };
         }
       })();
-      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), [value], "isPctOfWhat");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "isPctOfWhat", ctx.reemitObserver), [value], "isPctOfWhat");
     }
     case "whatPctOf": {
       const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
@@ -33458,7 +33988,7 @@ function evalAst(ast, env, ctx = {}) {
         if (br2.n === 0n) return err("division-by-zero");
         return { t: "p", ...qv(rMul(rDiv(numRat(part), br2), { n: 100n, d: 1n })), ...capW9 && { capped: true } };
       })();
-      return capCoarse9(reemitFromShadow9(wpRes$9, ctx.monthToDays === "30"), [base, part], "whatPctOf");
+      return capCoarse9(reemitFromShadow9(wpRes$9, ctx.monthToDays === "30", "whatPctOf", ctx.reemitObserver), [base, part], "whatPctOf");
     }
     case "date": {
       let year = ast.year;
@@ -33547,7 +34077,7 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "d", ...qv(rMul(numRat(value), factor)), ...(p2.capped === true || value.capped === true) && { capped: true } };
       })();
-      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30"), [value], "pctMoreWhat");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctMoreWhat", ctx.reemitObserver), [value], "pctMoreWhat");
     }
     case "weekday": {
       const ref = referencePlainDate(ctx);
@@ -39706,8 +40236,8 @@ var asCarrierQ = (p9) => ({
   ...p9.termsDen && { termsDen: p9.termsDen },
   ...p9.capped === true && { capped: true }
 });
-function exactSame(a2, b2, thirty) {
-  if (exactSemantic(a2, thirty) === exactSemantic(b2, thirty)) return true;
+function legacyExactSame9(a2, b2, thirty) {
+  if (legacyExactSemantic9(a2, thirty) === legacyExactSemantic9(b2, thirty)) return true;
   if (a2 === null || b2 === null || a2.t !== b2.t) return false;
   if (a2.t !== "q" && a2.t !== "p" && a2.t !== "d") return false;
   const a9 = a2.t === "q" ? a2 : asCarrierQ(a2);
@@ -39729,9 +40259,12 @@ function capFDigest9(f9) {
   }
   return "F" + h9.toString(36);
 }
-function exactSemantic(rt2, thirty) {
+function capWOf9(rt2) {
+  return rt2.capped === true ? "|C" + capFDigest9(rt2.capF) : "";
+}
+function legacyExactSemantic9(rt2, thirty) {
   if (rt2 === null) return "\u2205";
-  const capW = rt2.capped === true ? "|C" + capFDigest9(rt2.capF) : "";
+  const capW = capWOf9(rt2);
   const v2 = toPublicValue(rt2);
   if (v2.kind === "datestamp") return `ds:${v2.date}:${v2.precision}` + capW;
   if (v2.kind === "error") return "\u26A0" + capW;
@@ -39779,6 +40312,24 @@ function exactSemantic(rt2, thirty) {
   }
   return JSON.stringify(v2) + exact + capW;
 }
+function candidateSemantic9(rt2, thirty) {
+  if (rt2 === null) return null;
+  const sf = shadowFromRT(rt2, thirty === true);
+  if (sf.kind !== "ok") return null;
+  const k2 = sf.value.semanticKey();
+  if (k2 === null) return null;
+  const outer = JSON.stringify(toPublicValue(rt2)) + capWOf9(rt2);
+  return JSON.stringify(["cand1", outer, k2]);
+}
+function exactSemantic(rt2, thirty) {
+  return candidateSemantic9(rt2, thirty) ?? legacyExactSemantic9(rt2, thirty);
+}
+function exactSame(a2, b2, thirty) {
+  const ca = candidateSemantic9(a2, thirty);
+  const cb = candidateSemantic9(b2, thirty);
+  if (ca !== null && ca === cb) return true;
+  return legacyExactSame9(a2, b2, thirty);
+}
 function diagnosticsFor(rt2, line) {
   if (rt2.t !== "e") return [];
   return [
@@ -39800,14 +40351,12 @@ var serialize = (rt2) => {
   const cap = rt2.capped === true ? ":C" + capFDigest9(rt2.capF) : "";
   switch (rt2.t) {
     case "d": {
-      const serD = (list) => list === void 0 ? "" : list.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+");
-      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${serD(rt2.terms)}:${serD(rt2.termsDen)}${cap}`;
+      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${cap}`;
     }
     case "f":
       return `f:${rt2.n}/${rt2.d}:${rt2.origin}${cap}`;
     case "p": {
-      const serP = (list) => list === void 0 ? "" : list.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+");
-      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${serP(rt2.terms)}:${serP(rt2.termsDen)}${cap}`;
+      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${cap}`;
     }
     case "ds":
       return `ds:${rt2.pd.toString()}:${rt2.precision}${cap}`;
@@ -39820,8 +40369,7 @@ var serialize = (rt2) => {
     case "q": {
       const comps = (rt2.comps ?? []).map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7");
       const rate = rt2.rate ? `${rt2.rate.num.id}/${rt2.rate.den.id}` : "";
-      const serT = (list) => list === void 0 ? "" : list.map((t9) => `${t9.x.n}/${t9.x.d}\xB7${t9.comps.map((c9) => `${c9.def.id}^${c9.exp}`).sort().join("\xB7")}`).sort().join("+");
-      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${serT(rt2.terms)}:${serT(rt2.termsDen)}${cap}`;
+      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${cap}`;
     }
     case "e":
       return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}${cap}`;
@@ -40042,7 +40590,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     rt2 = finalizeCurrencies(rt2, ctx);
-    rt2 = reemitFromShadow9(rt2, ctx.monthToDays === "30");
+    rt2 = reemitFromShadow9(rt2, ctx.monthToDays === "30", "lineFinal", ctx.reemitObserver);
     if (ast.k === "finance" && ast.fn === "interest" && rt2.t !== "e" && !/(compound(ed|ing)?|compos[ée]e?s?|capitalis[ée]e?s?)/iu.test(line)) {
       rawAssume.push({ code: "interest-convention", level: 2, impact: "money", data: {} });
     }
@@ -40447,7 +40995,7 @@ function copyQuote(q2) {
   }
   return null;
 }
-function runSheet(text, context, cache2, initialCfg) {
+function runSheet(text, context, cache2, initialCfg, probe) {
   const safeGet = (read, fallback) => {
     try {
       return read();
@@ -40522,7 +41070,8 @@ function runSheet(text, context, cache2, initialCfg) {
       ...cfgSnap.policies?.monthToDays !== void 0 && { monthToDays: cfgSnap.policies.monthToDays },
       ...cfgSnap.policies?.preferFutureForAmbiguousDates !== void 0 && {
         preferFutureForAmbiguousDates: cfgSnap.policies.preferFutureForAmbiguousDates
-      }
+      },
+      ...probe?.reemitObserver !== void 0 && { reemitObserver: probe.reemitObserver }
     };
     const lexicon = loadLexicon(cfgSnap.languages ?? DEFAULT_LANGUAGES);
     const financialCurrency = resolveFinancialCurrency(cfgSnap.financial);
@@ -40896,7 +41445,7 @@ function runSheet(text, context, cache2, initialCfg) {
       cacheOut.push({ ...entry, text: line, fingerprint });
       if (HEADING.test(line)) sectionStart = i2 + 1;
     });
-    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache, usedNow, nowSnap, cfgCap };
+    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache, usedNow, nowSnap, cfgCap, rts };
   };
   let out = attempt();
   const cfgVerify = captureConfig(context);
@@ -40976,7 +41525,7 @@ function runSheet(text, context, cache2, initialCfg) {
     }
     out = attempt({ fx: fxSeed, hol: holSeed, now: nowSeed, cfg: cfgSeed, refs: { rates: ratesSweep, holidays: holidaysSweep } });
   }
-  return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed };
+  return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed, rts: out.rts, thirty: out.cfgCap.cfg.policies?.monthToDays === "30" };
 }
 function evaluateSheet(text, context, initialCfg) {
   return runSheet(text, context, null, initialCfg).result;
