@@ -29661,6 +29661,18 @@ function shadowApproxFromRT(rt2) {
   const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
   return rt2 !== null && (has(rt2.terms) || has(rt2.termsDen));
 }
+function negateShadowFromRT(rt2) {
+  if (rt2 === null) return {};
+  const out = {};
+  if (rt2.terms !== void 0) {
+    const r3 = ShadowFraction.fromLegacy(rt2.terms, void 0, false);
+    out.terms = r3.kind === "ok" ? r3.value.negate().writeLegacy().terms : copyTerms(rt2.terms);
+  } else if (rt2.termsDen !== void 0) {
+    out.terms = ONE_TERMS().map((t2) => ({ ...t2, x: { n: -t2.x.n, d: t2.x.d } }));
+  }
+  if (rt2.termsDen !== void 0) out.termsDen = rt2.termsDen;
+  return out;
+}
 
 // ../textual-calculator/core/packages/engine/src/units.ts
 var r2 = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
@@ -31361,8 +31373,8 @@ var legacyReemitFromShadow9 = (rt2, thirty) => {
   const termsDen = rt2.termsDen;
   if (terms === void 0 && termsDen === void 0) return rt2;
   const approx9 = [terms, termsDen].some((l9) => l9?.some((t9) => t9.comps.some((c9) => c9.def.factorDec !== void 0)));
-  const capped9 = rt2.capped === true;
-  if (approx9 && !capped9) {
+  const capped92 = rt2.capped === true;
+  if (approx9 && !capped92) {
     let fRat9 = { n: 1n, d: 1n };
     let affine9 = null;
     const fdDisp9 = [];
@@ -31505,8 +31517,8 @@ var candidateReemit9 = (rt2, thirty) => {
   }
   const shadow = sf.value;
   const approx9 = shadow.hasApproxFactor();
-  const capped9 = rt2.capped === true;
-  if (approx9 && !capped9) {
+  const capped92 = rt2.capped === true;
+  if (approx9 && !capped92) {
     let fRat9 = { n: 1n, d: 1n };
     let affine9 = null;
     const fdDisp9 = [];
@@ -32337,6 +32349,224 @@ var capFnv9 = (s9) => {
   return h9.toString(36);
 };
 var capFDig9 = (f9) => f9 === void 0 || f9.length === 0 ? "0" : capFnv9(f9.map((t9) => `${t9.s}*${t9.x.n}/${t9.x.d}`).join(";"));
+var capped9 = (rt2) => rt2.capped === true;
+var hasCapF9 = (rt2) => (capFOf9(rt2) ?? []).length > 0;
+var orderable9 = (rt2) => isCarrier(rt2) || rt2.t === "d" || rt2.t === "f";
+var candPrep9 = (rt2, thirty) => rt2.t === "q" && !isCarrier(rt2) ? foldIrrationalResidue(rt2, thirty) : rt2;
+var candReadRat9 = (rt2) => isCarrier(rt2) ? qx(rt2) : numRat(rt2);
+var negVx9 = (vx9) => vx9 ? { vx: { n: -vx9.n, d: vx9.d } } : {};
+var candNum9 = (v9, asFrac9) => {
+  if (asFrac9) return makeFrac(v9.n, v9.d, "derived");
+  const q9 = qv(v9);
+  return { t: "d", v: q9.v, ...q9.vx !== void 0 ? { vx: q9.vx } : {} };
+};
+var applyNegCapF9 = (src9, out9) => {
+  const cf9 = capFOf9(src9);
+  if (cf9 !== void 0) out9.capF = capFScale9(cf9, { n: -1n, d: 1n });
+};
+var refuseToUnary9 = (r9, fn9) => r9.refuse === "invalid-denominator" ? { kind: "invalid-denominator" } : r9.refuse === "undecidable-denominator" ? { kind: "undecidable-denominator" } : r9.refuse === "unsupported" ? { kind: "unsupported", why: r9.why } : { kind: "inexact", reason: r9.refuse, fn: fn9, why: r9.why };
+function applyCandUnary9(cand) {
+  switch (cand.kind) {
+    case "ok":
+      return cand.rt;
+    case "invalid-denominator":
+      return err("division-by-zero", "the denominator is a proven zero");
+    case "undecidable-denominator":
+      return err("inexact", "the denominator is an auxiliary zero \u2014 order/sign not decidable");
+    // Message from the STATIC map driven by the TYPED reason (never parses `why`),
+    // so the seven legacy refusal texts are preserved verbatim (audit interne #78 2a-quinquies).
+    case "inexact":
+      return err("inexact", orderRefusalMessage9(cand.reason, cand.fn));
+    case "unsupported":
+      return err("unsupported-pair", cand.why);
+  }
+}
+function orderRefusalMessage9(reason, fn) {
+  if (reason === "undecidable-sign") return "the sign of this value is not decidable exactly \u2014 abs would pick a rounded reading";
+  if (reason === "undecidable-order") return "cannot order these values exactly \u2014 they tie at the engine\u2019s precision";
+  return `${fn}() decides from its argument \u2014 a capped value decides nothing; exactness was dropped upstream`;
+}
+function candOrderCmp9(a9raw, b9raw, thirty9, fn9) {
+  const rawCapped9 = capped9(a9raw) || capped9(b9raw);
+  const rawCapF9 = hasCapF9(a9raw) || hasCapF9(b9raw);
+  const a9 = candPrep9(a9raw, thirty9);
+  const b9 = candPrep9(b9raw, thirty9);
+  if (!orderable9(a9) || !orderable9(b9)) return { refuse: "unsupported", why: `not an orderable operand (${a9.t} / ${b9.t})` };
+  if (rawCapped9 || rawCapF9) return { refuse: "capped", why: rawCapped9 ? "capped operand \u2014 exactness dropped, no order decidable" : "non-empty capF \u2014 a bounded value decides no order" };
+  if (capped9(a9) || capped9(b9) || hasCapF9(a9) || hasCapF9(b9)) return { refuse: "capped", why: "capped/capF after fold \u2014 no order decidable" };
+  const sa9 = shadowFromRT(a9, thirty9);
+  const sb9 = shadowFromRT(b9, thirty9);
+  if (sa9.kind === "invalid-denominator" || sb9.kind === "invalid-denominator") return { refuse: "invalid-denominator", why: "invalid-denominator (proven-zero) \u2014 no order decidable" };
+  if (sa9.kind === "undecidable-denominator" || sb9.kind === "undecidable-denominator") return { refuse: "undecidable-denominator", why: "undecidable-denominator (auxiliary-zero) \u2014 no order decidable" };
+  const c9 = rCmp(candReadRat9(a9), candReadRat9(b9));
+  if (c9 !== 0) return { ok: c9 };
+  if (sa9.kind === "no-shadow" && sb9.kind === "no-shadow") return { ok: 0 };
+  const fa9 = sa9.kind === "ok" ? sa9.value : ShadowFraction.scalar(candReadRat9(a9), false, thirty9);
+  const fb9 = sb9.kind === "ok" ? sb9.value : ShadowFraction.scalar(candReadRat9(b9), false, thirty9);
+  const r9 = fa9.compare(fb9);
+  if (r9 === null) return { refuse: fn9 === "abs" ? "undecidable-sign" : "undecidable-order", why: "compare() cedes (auxiliary / undecidable)" };
+  return { ok: r9 };
+}
+function candidateNegate9(rt9, thirty9) {
+  const e9 = rt9;
+  if (e9.t === "e") return { kind: "unsupported", why: "error operand" };
+  if (e9.t === "f") {
+    const fr9 = makeFrac(-e9.n, e9.d, e9.origin);
+    if (fr9.t === "e") return { kind: "ok", rt: fr9 };
+    const negF9 = e9.capped === true ? { ...fr9, capped: true } : fr9;
+    applyNegCapF9(e9, negF9);
+    return { kind: "ok", rt: negF9 };
+  }
+  if (e9.t === "ts") return { kind: "ok", rt: { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } } };
+  if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return { kind: "unsupported", why: "this value cannot be negated" };
+  const sh9 = negateShadowFromRT(e9);
+  if (e9.t === "p") {
+    const negP9 = { t: "p", v: e9.v.neg(), ...negVx9(e9.vx), ...sh9, ...e9.capped === true && { capped: true } };
+    applyNegCapF9(e9, negP9);
+    return { kind: "ok", rt: negP9 };
+  }
+  if (e9.t === "q") {
+    const negQ9 = { ...e9, v: e9.v.neg(), ...negVx9(e9.vx), ...sh9 };
+    applyNegCapF9(e9, negQ9);
+    return { kind: "ok", rt: negQ9 };
+  }
+  const negD9 = { t: "d", v: e9.v.neg(), ...negVx9(e9.vx), ...e9.capped === true && { capped: true }, ...sh9 };
+  applyNegCapF9(e9, negD9);
+  return { kind: "ok", rt: negD9 };
+}
+function candidateAbs9(rt9raw, thirty9) {
+  const rawCapped9 = capped9(rt9raw), rawCapF9 = hasCapF9(rt9raw);
+  const rt9 = candPrep9(rt9raw, thirty9);
+  if (!orderable9(rt9)) return { kind: "unsupported", why: "abs candidate handles carriers and d/f only" };
+  if (rawCapped9 || rawCapF9) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF \u2014 abs decides nothing" };
+  if (capped9(rt9) || hasCapF9(rt9)) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF (after fold) \u2014 abs decides nothing" };
+  const shadowed9 = shadowFromRT(rt9, thirty9).kind !== "no-shadow";
+  if (isCarrier(rt9) || shadowed9) {
+    const c9 = candOrderCmp9(rt9, { t: "d", v: new DecC(0) }, thirty9, "abs");
+    if ("refuse" in c9) return refuseToUnary9(c9, "abs");
+    if (c9.ok >= 0) return { kind: "ok", rt: rt9 };
+    return candidateNegate9(rt9, thirty9);
+  }
+  const x9 = numRat(rt9);
+  return { kind: "ok", rt: candNum9(x9.n < 0n ? { n: -x9.n, d: x9.d } : x9, rt9.t === "f") };
+}
+function candidateOrder9(args9raw, which9, thirty9) {
+  if (args9raw.length === 0) return { kind: "unsupported", why: "no arguments" };
+  const rawFlags9 = args9raw.map((a9) => ({ capped: capped9(a9), capF: hasCapF9(a9) }));
+  const args9 = args9raw.map((a9) => candPrep9(a9, thirty9));
+  for (const a9 of args9) if (!orderable9(a9)) return { kind: "unsupported", why: `min/max candidate handles carriers and d/f only (got ${a9.t})` };
+  for (const f2 of rawFlags9) if (f2.capped || f2.capF) return { kind: "inexact", reason: "capped", fn: which9, why: f2.capped ? "capped operand \u2014 min/max decides nothing" : "non-empty capF \u2014 a bounded value decides no order" };
+  for (const a9 of args9) if (capped9(a9) || hasCapF9(a9)) return { kind: "inexact", reason: "capped", fn: which9, why: "capped/capF (after fold) \u2014 no order decidable" };
+  let best9 = args9[0];
+  for (const v9 of args9.slice(1)) {
+    const c9 = candOrderCmp9(v9, best9, thirty9, which9);
+    if ("refuse" in c9) return refuseToUnary9(c9, which9);
+    if (which9 === "min" ? c9.ok < 0 : c9.ok > 0) best9 = v9;
+  }
+  return { kind: "ok", rt: best9 };
+}
+function legacyNegate9(e9) {
+  if (e9.t === "e") return e9;
+  if (e9.t === "f") {
+    const fr9 = makeFrac(-e9.n, e9.d, e9.origin);
+    if (fr9.t === "e") return fr9;
+    const negF9 = e9.capped === true ? { ...fr9, capped: true } : fr9;
+    const fN92 = capFScale9(capFOf9(e9), { n: -1n, d: 1n });
+    if (fN92.length > 0) negF9.capF = fN92;
+    return negF9;
+  }
+  if (e9.t === "p") {
+    const negP9 = {
+      t: "p",
+      v: e9.v.neg(),
+      vx: e9.vx ? { n: -e9.vx.n, d: e9.vx.d } : void 0,
+      ...e9.terms && { terms: e9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) },
+      ...e9.termsDen && { termsDen: e9.termsDen },
+      ...e9.capped === true && { capped: true }
+    };
+    const fN92 = capFScale9(capFOf9(e9), { n: -1n, d: 1n });
+    if (fN92.length > 0) negP9.capF = fN92;
+    return negP9;
+  }
+  if (e9.t === "ts") return { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } };
+  if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return err("unsupported-pair", "this value cannot be negated");
+  if (e9.t === "q") {
+    const negQ9 = { ...e9, v: e9.v.neg(), vx: e9.vx ? { n: -e9.vx.n, d: e9.vx.d } : void 0, ...negateShadow9(e9) };
+    const fN92 = capFScale9(capFOf9(e9), { n: -1n, d: 1n });
+    if (fN92.length > 0) negQ9.capF = fN92;
+    else delete negQ9.capF;
+    return negQ9;
+  }
+  const negD9 = { t: "d", v: e9.v.neg(), vx: e9.vx ? { n: -e9.vx.n, d: e9.vx.d } : void 0, ...e9.capped === true && { capped: true }, ...negateShadow9(e9) };
+  const fN9 = capFScale9(capFOf9(e9), { n: -1n, d: 1n });
+  if (fN9.length > 0) negD9.capF = fN9;
+  return negD9;
+}
+function legacyOrderFn9(fn9, evaluated9, thirty9) {
+  const folded9 = evaluated9.map((v9) => v9.t === "q" ? foldIrrationalResidue(v9, thirty9) : v9);
+  if (folded9.some((v9) => isCarrier(v9)) && folded9.every((v9) => isCarrier(v9) || v9.t === "d" || v9.t === "f")) {
+    const ratOf9 = (v9) => isCarrier(v9) ? qx(v9) : numRat(v9);
+    const liftV9 = (v9) => isCarrier(v9) ? v9 : { t: "q", ...qv(ratOf9(v9)), dim: {}, symbol: "", comps: [], terms: [{ x: ratOf9(v9), comps: [], aux: rnorm(ratOf9(v9)).d !== 1n }] };
+    const cmpX9 = (a9, b9) => {
+      const c9 = rCmp(ratOf9(a9), ratOf9(b9));
+      if (c9 !== 0) return c9;
+      const eq9 = fracCmpRT(liftV9(a9), liftV9(b9), thirty9);
+      return eq9 === null ? "undecidable" : eq9;
+    };
+    if (fn9 === "abs") {
+      const a9 = folded9[0];
+      if (folded9.length === 1 && isCarrier(a9)) {
+        const s9 = cmpX9(a9, { t: "d", v: new DecC(0) });
+        const absOut9 = s9 === "undecidable" ? err("inexact", "the sign of this value is not decidable exactly \u2014 abs would pick a rounded reading") : s9 >= 0 ? a9 : {
+          ...a9,
+          v: a9.v.neg(),
+          vx: a9.vx ? { n: -a9.vx.n, d: a9.vx.d } : void 0,
+          ...a9.terms && { terms: a9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
+        };
+        return { observed: true, site: "carrierAbs", out: absOut9 };
+      }
+    } else {
+      const best0 = folded9[0];
+      if (best0 !== void 0) {
+        let best9 = best0;
+        let ordErr9 = null;
+        for (const v9 of folded9.slice(1)) {
+          const c9 = cmpX9(v9, best9);
+          if (c9 === "undecidable") {
+            ordErr9 = err("inexact", "cannot order these values exactly \u2014 they tie at the engine\u2019s precision");
+            break;
+          }
+          if (fn9 === "min" ? c9 < 0 : c9 > 0) best9 = v9;
+        }
+        return { observed: true, site: fn9 === "min" ? "carrierMin" : "carrierMax", out: ordErr9 ?? best9 };
+      }
+    }
+  }
+  const rts9 = [];
+  for (const v9 of evaluated9) {
+    if (v9.t !== "d" && v9.t !== "f") return { observed: false };
+    rts9.push(v9);
+  }
+  const exact9 = applyExactFunction(fn9, rts9);
+  if (exact9 === null) return { observed: false };
+  const res9 = exact9;
+  if ((res9.t === "d" || res9.t === "f") && rts9.some((r9) => (capFOf9(r9)?.length ?? 0) > 0)) {
+    const inE9 = capCompose9(fn9, rts9);
+    if (!Array.isArray(inE9)) return { observed: false };
+    if (inE9.length > 0) res9.capF = inE9;
+  }
+  return { observed: true, site: fn9 === "abs" ? "exactAbs" : fn9 === "min" ? "exactMin" : "exactMax", out: res9 };
+}
+function routeOrder9(ctx, res, inputs, legacy) {
+  if (ctx.__orderCounts9 !== void 0) ctx.__orderCounts9.cand++;
+  const out = applyCandUnary9(res);
+  if (ctx.orderObserver !== void 0) {
+    if (ctx.__orderCounts9 !== void 0) ctx.__orderCounts9.legacy++;
+    const lg = legacy();
+    if (lg.observed) ctx.orderObserver(lg.site, inputs, lg.out, { res, out }, ctx.monthToDays === "30");
+  }
+  return out;
+}
 var capScaleByValue9 = (res9, src9) => {
   const f9 = capFOf9(src9);
   if (f9 === void 0 || f9.length === 0 || res9.t === "e") return res9;
@@ -32390,22 +32620,22 @@ var capCoarse9 = (res9, parts9, key9) => {
 var capFBound9 = (f9) => f9.reduce((s9, t9) => rAdd(s9, rMul(rAbs9M(t9.x), t9.b)), { n: 0n, d: 1n });
 var capProdTransport9 = (res9, ops9, key9) => {
   if (res9.t !== "d" && res9.t !== "f" && res9.t !== "q" && res9.t !== "p") return res9;
-  const capped9 = ops9.filter((o9) => (capFOf9(o9)?.length ?? 0) > 0);
-  if (capped9.length === 0) return res9;
+  const capped92 = ops9.filter((o9) => (capFOf9(o9)?.length ?? 0) > 0);
+  if (capped92.length === 0) return res9;
   const opVal9 = (o9) => o9.t === "q" ? qx(o9) : o9.t === "d" || o9.t === "f" || o9.t === "p" ? numRat(o9) : null;
-  const vals9 = capped9.map((o9) => opVal9(o9));
+  const vals9 = capped92.map((o9) => opVal9(o9));
   if (vals9.some((v9) => v9 === null || v9.n === 0n)) return capCoarse9(res9, ops9, key9);
   const rv9 = res9.t === "q" ? qx(res9) : numRat(res9);
   let f9 = [];
-  capped9.forEach((o9, i9) => {
+  capped92.forEach((o9, i9) => {
     f9 = capFAdd9(f9, capFScale9(capFOf9(o9), rDiv(rv9, vals9[i9])), 1n);
   });
-  if (capped9.length >= 2) {
-    const boundProd9 = capped9.reduce((s9, o9) => rMul(s9, capFBound9(capFOf9(o9) ?? [])), { n: 1n, d: 1n });
+  if (capped92.length >= 2) {
+    const boundProd9 = capped92.reduce((s9, o9) => rMul(s9, capFBound9(capFOf9(o9) ?? [])), { n: 1n, d: 1n });
     const denomProd9 = vals9.reduce((s9, v9) => rMul(s9, v9), { n: 1n, d: 1n });
     if (rnorm(boundProd9).n !== 0n && denomProd9.n !== 0n) {
       const cross9 = rMul(rAbs9M(rDiv(rv9, denomProd9)), boundProd9);
-      f9 = capFAdd9(f9, [{ s: `rem:${key9}(${capped9.map((o9) => capFDig9(capFOf9(o9))).join(";")})`, x: { n: 1n, d: 1n }, b: cross9 }], 1n);
+      f9 = capFAdd9(f9, [{ s: `rem:${key9}(${capped92.map((o9) => capFDig9(capFOf9(o9))).join(";")})`, x: { n: 1n, d: 1n }, b: cross9 }], 1n);
     }
   }
   if (f9.length === 0) {
@@ -33648,47 +33878,7 @@ function evalAst(ast, env, ctx = {}) {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (ast.op === "+") return e;
-      if (e.t === "f") {
-        const fr9 = makeFrac(-e.n, e.d, e.origin);
-        if (fr9.t === "e") return fr9;
-        const negF9 = e.capped === true ? { ...fr9, capped: true } : fr9;
-        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
-        if (fN9.length > 0 && negF9.t !== "e") negF9.capF = fN9;
-        return negF9;
-      }
-      if (e.t === "p") {
-        const negP9 = {
-          t: "p",
-          v: e.v.neg(),
-          vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0,
-          ...e.terms && { terms: e.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) },
-          ...e.termsDen && { termsDen: e.termsDen },
-          ...e.capped === true && { capped: true }
-        };
-        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
-        if (fN9.length > 0) negP9.capF = fN9;
-        return negP9;
-      }
-      if (e.t === "ts") return { t: "ts", c: addSpans({}, e.c, -1), ...e.capped === true && { capped: true } };
-      if (e.t === "ds" || e.t === "wd" || e.t === "ct") return err("unsupported-pair", "this value cannot be negated");
-      if (e.t === "q") {
-        const negQ9 = {
-          ...e,
-          v: e.v.neg(),
-          vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0,
-          ...negateShadow9(e)
-        };
-        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
-        if (fN9.length > 0) negQ9.capF = fN9;
-        else delete negQ9.capF;
-        return negQ9;
-      }
-      {
-        const negD9 = { t: "d", v: e.v.neg(), vx: e.vx ? { n: -e.vx.n, d: e.vx.d } : void 0, ...e.capped === true && { capped: true }, ...negateShadow9(e) };
-        const fN9 = capFScale9(capFOf9(e), { n: -1n, d: 1n });
-        if (fN9.length > 0) negD9.capF = fN9;
-        return negD9;
-      }
+      return routeOrder9(ctx, candidateNegate9(e, ctx.monthToDays === "30"), [e], () => ({ observed: true, site: "unaryNeg", out: legacyNegate9(e) }));
     }
     case "scale": {
       let e = evalAst(ast.e, env, ctx);
@@ -34157,41 +34347,11 @@ function evalAst(ast, env, ctx = {}) {
       }
       const firstErr9 = evaluated9.find((v9) => v9.t === "e");
       if (firstErr9) return firstErr9;
-      {
-        const folded9 = evaluated9.map((v9) => v9.t === "q" ? foldIrrationalResidue(v9, ctx.monthToDays === "30") : v9);
-        if ((ast.fn === "abs" || ast.fn === "min" || ast.fn === "max") && folded9.some((v9) => isCarrier(v9)) && folded9.every((v9) => isCarrier(v9) || v9.t === "d" || v9.t === "f")) {
-          const t30f = ctx.monthToDays === "30";
-          const ratOf9 = (v9) => isCarrier(v9) ? qx(v9) : numRat(v9);
-          const liftV9 = (v9) => isCarrier(v9) ? v9 : { t: "q", ...qv(ratOf9(v9)), dim: {}, symbol: "", comps: [], terms: [{ x: ratOf9(v9), comps: [], aux: rnorm(ratOf9(v9)).d !== 1n }] };
-          const cmpX9 = (a9, b9) => {
-            const c9 = rCmp(ratOf9(a9), ratOf9(b9));
-            if (c9 !== 0) return c9;
-            const e9 = fracCmpRT(liftV9(a9), liftV9(b9), t30f);
-            return e9 === null ? "undecidable" : e9;
-          };
-          if (ast.fn === "abs") {
-            const a9 = folded9[0];
-            if (folded9.length === 1 && isCarrier(a9)) {
-              const s9 = cmpX9(a9, { t: "d", v: new DecC(0) });
-              if (s9 === "undecidable") return err("inexact", "the sign of this value is not decidable exactly \u2014 abs would pick a rounded reading");
-              if (s9 >= 0) return a9;
-              return {
-                ...a9,
-                v: a9.v.neg(),
-                vx: a9.vx ? { n: -a9.vx.n, d: a9.vx.d } : void 0,
-                ...a9.terms && { terms: a9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
-              };
-            }
-          } else if (folded9.length >= 1) {
-            let best9 = folded9[0];
-            for (const v9 of folded9.slice(1)) {
-              const c9 = cmpX9(v9, best9);
-              if (c9 === "undecidable") return err("inexact", "cannot order these values exactly \u2014 they tie at the engine\u2019s precision");
-              if (ast.fn === "min" ? c9 < 0 : c9 > 0) best9 = v9;
-            }
-            return best9;
-          }
-        }
+      if (ast.fn === "abs" || ast.fn === "min" || ast.fn === "max") {
+        const fn$ = ast.fn;
+        const t30$ = ctx.monthToDays === "30";
+        const res$ = fn$ === "abs" ? candidateAbs9(evaluated9[0], t30$) : candidateOrder9(evaluated9, fn$, t30$);
+        return routeOrder9(ctx, res$, evaluated9, () => legacyOrderFn9(fn$, evaluated9, t30$));
       }
       if (["sqrt", "racine", "log", "ln", "lb", "lg", "log10", "log2", "asin", "acos", "acosh", "atanh", "tan"].includes(ast.fn) && evaluated9.some((v9) => v9.capped === true)) {
         return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
@@ -35006,8 +35166,8 @@ function evalAst(ast, env, ctx = {}) {
               if (b9.n === 0n) return err("division-by-zero");
               const q0 = rDiv(a9, b9);
               const t0 = q0.n / q0.d;
-              const capped9 = lN9.capped === true || rN9.capped === true;
-              return { t: "d", ...qv(rSub(a9, rMul(b9, { n: t0, d: 1n }))), ...capped9 && { capped: true } };
+              const capped92 = lN9.capped === true || rN9.capped === true;
+              return { t: "d", ...qv(rSub(a9, rMul(b9, { n: t0, d: 1n }))), ...capped92 && { capped: true } };
             }
           }
           if (l2.t === "q" && (r3.t === "d" || r3.t === "f")) {
@@ -41071,7 +41231,9 @@ function runSheet(text, context, cache2, initialCfg, probe) {
       ...cfgSnap.policies?.preferFutureForAmbiguousDates !== void 0 && {
         preferFutureForAmbiguousDates: cfgSnap.policies.preferFutureForAmbiguousDates
       },
-      ...probe?.reemitObserver !== void 0 && { reemitObserver: probe.reemitObserver }
+      ...probe?.reemitObserver !== void 0 && { reemitObserver: probe.reemitObserver },
+      ...probe?.orderObserver !== void 0 && { orderObserver: probe.orderObserver },
+      ...probe?.orderCounts !== void 0 && { __orderCounts9: probe.orderCounts }
     };
     const lexicon = loadLexicon(cfgSnap.languages ?? DEFAULT_LANGUAGES);
     const financialCurrency = resolveFinancialCurrency(cfgSnap.financial);
