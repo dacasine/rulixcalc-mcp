@@ -32364,7 +32364,7 @@ var applyNegCapF9 = (src9, out9) => {
   const cf9 = capFOf9(src9);
   if (cf9 !== void 0) out9.capF = capFScale9(cf9, { n: -1n, d: 1n });
 };
-var refuseToUnary9 = (r9, fn9) => r9.refuse === "invalid-denominator" ? { kind: "invalid-denominator" } : r9.refuse === "undecidable-denominator" ? { kind: "undecidable-denominator" } : r9.refuse === "unsupported" ? { kind: "unsupported", why: r9.why } : { kind: "inexact", reason: r9.refuse, fn: fn9, why: r9.why };
+var refuseToUnary9 = (r9, fn9) => r9.refuse === "invalid-denominator" ? { kind: "invalid-denominator" } : r9.refuse === "undecidable-denominator" ? { kind: "undecidable-denominator" } : r9.refuse === "unsupported" ? { kind: "unsupported", fn: fn9 } : { kind: "inexact", reason: r9.refuse, fn: fn9, why: r9.why };
 function applyCandUnary9(cand) {
   switch (cand.kind) {
     case "ok":
@@ -32377,9 +32377,14 @@ function applyCandUnary9(cand) {
     // so the seven legacy refusal texts are preserved verbatim (audit interne #78 2a-quinquies).
     case "inexact":
       return err("inexact", orderRefusalMessage9(cand.reason, cand.fn));
+    // NON-orderable → the STATIC legacy message from the typed fn (audit interne #78
+    // 2a-sixies), NEVER the candidate's internal diagnostic text.
     case "unsupported":
-      return err("unsupported-pair", cand.why);
+      return err("unsupported-pair", orderUnsupportedMessage9(cand.fn));
   }
+}
+function orderUnsupportedMessage9(fn) {
+  return fn === "neg" ? "this value cannot be negated" : `${fn}() needs plain numbers`;
 }
 function orderRefusalMessage9(reason, fn) {
   if (reason === "undecidable-sign") return "the sign of this value is not decidable exactly \u2014 abs would pick a rounded reading";
@@ -32409,7 +32414,7 @@ function candOrderCmp9(a9raw, b9raw, thirty9, fn9) {
 }
 function candidateNegate9(rt9, thirty9) {
   const e9 = rt9;
-  if (e9.t === "e") return { kind: "unsupported", why: "error operand" };
+  if (e9.t === "e") return { kind: "unsupported", fn: "neg" };
   if (e9.t === "f") {
     const fr9 = makeFrac(-e9.n, e9.d, e9.origin);
     if (fr9.t === "e") return { kind: "ok", rt: fr9 };
@@ -32418,7 +32423,7 @@ function candidateNegate9(rt9, thirty9) {
     return { kind: "ok", rt: negF9 };
   }
   if (e9.t === "ts") return { kind: "ok", rt: { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } } };
-  if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return { kind: "unsupported", why: "this value cannot be negated" };
+  if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return { kind: "unsupported", fn: "neg" };
   const sh9 = negateShadowFromRT(e9);
   if (e9.t === "p") {
     const negP9 = { t: "p", v: e9.v.neg(), ...negVx9(e9.vx), ...sh9, ...e9.capped === true && { capped: true } };
@@ -32437,7 +32442,7 @@ function candidateNegate9(rt9, thirty9) {
 function candidateAbs9(rt9raw, thirty9) {
   const rawCapped9 = capped9(rt9raw), rawCapF9 = hasCapF9(rt9raw);
   const rt9 = candPrep9(rt9raw, thirty9);
-  if (!orderable9(rt9)) return { kind: "unsupported", why: "abs candidate handles carriers and d/f only" };
+  if (!orderable9(rt9)) return { kind: "unsupported", fn: "abs" };
   if (rawCapped9 || rawCapF9) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF \u2014 abs decides nothing" };
   if (capped9(rt9) || hasCapF9(rt9)) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF (after fold) \u2014 abs decides nothing" };
   const shadowed9 = shadowFromRT(rt9, thirty9).kind !== "no-shadow";
@@ -32451,10 +32456,10 @@ function candidateAbs9(rt9raw, thirty9) {
   return { kind: "ok", rt: candNum9(x9.n < 0n ? { n: -x9.n, d: x9.d } : x9, rt9.t === "f") };
 }
 function candidateOrder9(args9raw, which9, thirty9) {
-  if (args9raw.length === 0) return { kind: "unsupported", why: "no arguments" };
+  if (args9raw.length === 0) return { kind: "unsupported", fn: which9 };
   const rawFlags9 = args9raw.map((a9) => ({ capped: capped9(a9), capF: hasCapF9(a9) }));
   const args9 = args9raw.map((a9) => candPrep9(a9, thirty9));
-  for (const a9 of args9) if (!orderable9(a9)) return { kind: "unsupported", why: `min/max candidate handles carriers and d/f only (got ${a9.t})` };
+  for (const a9 of args9) if (!orderable9(a9)) return { kind: "unsupported", fn: which9 };
   for (const f2 of rawFlags9) if (f2.capped || f2.capF) return { kind: "inexact", reason: "capped", fn: which9, why: f2.capped ? "capped operand \u2014 min/max decides nothing" : "non-empty capF \u2014 a bounded value decides no order" };
   for (const a9 of args9) if (capped9(a9) || hasCapF9(a9)) return { kind: "inexact", reason: "capped", fn: which9, why: "capped/capF (after fold) \u2014 no order decidable" };
   let best9 = args9[0];
@@ -32523,7 +32528,7 @@ function legacyOrderFn9(fn9, evaluated9, thirty9) {
           vx: a9.vx ? { n: -a9.vx.n, d: a9.vx.d } : void 0,
           ...a9.terms && { terms: a9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
         };
-        return { observed: true, site: "carrierAbs", out: absOut9 };
+        return { site: "carrierAbs", out: absOut9 };
       }
     } else {
       const best0 = folded9[0];
@@ -32538,24 +32543,28 @@ function legacyOrderFn9(fn9, evaluated9, thirty9) {
           }
           if (fn9 === "min" ? c9 < 0 : c9 > 0) best9 = v9;
         }
-        return { observed: true, site: fn9 === "min" ? "carrierMin" : "carrierMax", out: ordErr9 ?? best9 };
+        return { site: fn9 === "min" ? "carrierMin" : "carrierMax", out: ordErr9 ?? best9 };
       }
     }
   }
+  const rejectSite9 = fn9 === "abs" ? "rejectAbs" : fn9 === "min" ? "rejectMin" : "rejectMax";
+  const reject9 = { site: rejectSite9, out: err("unsupported-pair", `${fn9}() needs plain numbers`) };
+  const sink9 = { monthToDays: thirty9 ? "30" : void 0, capNotes: [] };
   const rts9 = [];
   for (const v9 of evaluated9) {
-    if (v9.t !== "d" && v9.t !== "f") return { observed: false };
-    rts9.push(v9);
+    const c9 = carrierNum(v9.t === "q" ? foldIrrationalResidueRaw(v9, thirty9) : v9, sink9);
+    if (c9.t !== "d" && c9.t !== "f") return reject9;
+    rts9.push(c9);
   }
   const exact9 = applyExactFunction(fn9, rts9);
-  if (exact9 === null) return { observed: false };
+  if (exact9 === null) return reject9;
   const res9 = exact9;
   if ((res9.t === "d" || res9.t === "f") && rts9.some((r9) => (capFOf9(r9)?.length ?? 0) > 0)) {
     const inE9 = capCompose9(fn9, rts9);
-    if (!Array.isArray(inE9)) return { observed: false };
+    if (!Array.isArray(inE9)) return { site: rejectSite9, out: inE9 };
     if (inE9.length > 0) res9.capF = inE9;
   }
-  return { observed: true, site: fn9 === "abs" ? "exactAbs" : fn9 === "min" ? "exactMin" : "exactMax", out: res9 };
+  return { site: fn9 === "abs" ? "exactAbs" : fn9 === "min" ? "exactMin" : "exactMax", out: res9 };
 }
 function routeOrder9(ctx, res, inputs, legacy) {
   if (ctx.__orderCounts9 !== void 0) ctx.__orderCounts9.cand++;
@@ -32563,7 +32572,7 @@ function routeOrder9(ctx, res, inputs, legacy) {
   if (ctx.orderObserver !== void 0) {
     if (ctx.__orderCounts9 !== void 0) ctx.__orderCounts9.legacy++;
     const lg = legacy();
-    if (lg.observed) ctx.orderObserver(lg.site, inputs, lg.out, { res, out }, ctx.monthToDays === "30");
+    ctx.orderObserver(lg.site, inputs, lg.out, { res, out }, ctx.monthToDays === "30");
   }
   return out;
 }
@@ -33878,7 +33887,7 @@ function evalAst(ast, env, ctx = {}) {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (ast.op === "+") return e;
-      return routeOrder9(ctx, candidateNegate9(e, ctx.monthToDays === "30"), [e], () => ({ observed: true, site: "unaryNeg", out: legacyNegate9(e) }));
+      return routeOrder9(ctx, candidateNegate9(e, ctx.monthToDays === "30"), [e], () => ({ site: "unaryNeg", out: legacyNegate9(e) }));
     }
     case "scale": {
       let e = evalAst(ast.e, env, ctx);
