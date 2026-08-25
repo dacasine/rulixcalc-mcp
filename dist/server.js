@@ -33950,8 +33950,6 @@ function evalAst(ast, env, ctx = {}) {
         if (isOffsetScale(amount) || dimEquals(amount.dim, { temperature: 1 })) {
           return err("unit-mismatch", "financial formulas need amounts, not absolute temperatures");
         }
-        const rcCap9 = rateRT.capped === true || yearsRT.capped === true;
-        if (rcCap9) return capCoarse9({ ...amount, ...qv(out), ...scaleTerms(amount, kFin), capped: true }, [amount, rateRT, yearsRT], "finance");
         const amtQ9 = amount;
         return routeScale9(ctx, "finance", amtQ9, kFin, ctx.monthToDays === "30", { m: "uniform" }, false, durFactor9, () => {
           const finQ9 = { ...amtQ9, ...qv(out), ...scaleTerms(amtQ9, kFin) };
@@ -33961,8 +33959,6 @@ function evalAst(ast, env, ctx = {}) {
           return finQ9;
         });
       }
-      const rcCapD9 = rateRT.capped === true || yearsRT.capped === true;
-      if (rcCapD9) return capCoarse9({ t: "d", ...qv(out), ...amount.capped === true && { capped: true } }, [amount, rateRT, yearsRT], "finance");
       let amtD9 = amount;
       if (amount.t === "f") {
         amtD9 = { t: "d", ...qv(numRat(amount)), ...amount.capped === true && { capped: true } };
