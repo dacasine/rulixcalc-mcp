@@ -36402,7 +36402,7 @@ var capCoarse9 = (res9, parts9, key9) => {
   const rf9 = capFOf9(res9);
   if (rf9 !== void 0 && rf9.length === 0) return res9;
   if (capCovered9(res9, parts9)) return res9;
-  const v9 = res9.t === "q" ? qx(res9) : res9.vx ?? decToRat(res9.v);
+  const v9 = res9.t === "q" ? qx(res9) : numRat(res9);
   const b9 = rMul(rAdd(rAbs9M(v9), { n: 1n, d: 10n ** 30n }), { n: 1n, d: 10n ** 39n });
   res9.capF = [{ s: `case:${key9}(${digs9.join(";")};${capFnv9(`${v9.n}/${v9.d}`)})`, x: { n: 1n, d: 1n }, b: b9 }];
   return res9;
@@ -42408,7 +42408,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       if ((binJ9.t === "d" || binJ9.t === "f" || binJ9.t === "q" || binJ9.t === "p") && ((capFOf9(l2)?.length ?? 0) > 0 || (capFOf9(r3)?.length ?? 0) > 0) && // the []-sentinel means « transported and exactly cancelled »
       // (x − x) — never a partial transport (audit CA)
       (rf$9 === void 0 || rf$9.length > 0 && !capCovered9(binJ9, [l2, r3]))) {
-        const v9 = binJ9.t === "q" ? qx(binJ9) : binJ9.vx ?? decToRat(binJ9.v);
+        const v9 = binJ9.t === "q" ? qx(binJ9) : numRat(binJ9);
         if ((ast.op === "+" || ast.op === "-") && rnorm(v9).n === 0n) {
           return err("inexact", CAP_CANCEL_MSG);
         }
@@ -42876,7 +42876,6 @@ var UNIT_LIGATURES = {
   "\u33B3": "ms",
   "\u339A": "nm",
   "\u33AA": "kPa",
-  "\u33C0": "k\u03A9",
   "\u33BE": "kW",
   "\u33D7": "pH",
   "\u3388": "cal",
@@ -45064,14 +45063,12 @@ var CONFUSABLES = {
   "\u0422": "T",
   "\u0423": "Y",
   "\u0425": "X",
-  "\u0405": "S",
   "\u0500": "D",
   "\u0430": "a",
   "\u0441": "c",
   "\u0435": "e",
   "\u043E": "o",
   "\u0440": "p",
-  "\u0455": "s",
   "\u0443": "y",
   "\u0445": "x",
   "\u0391": "A",
@@ -45088,11 +45085,8 @@ var CONFUSABLES = {
   "\u03A4": "T",
   "\u03A5": "Y",
   "\u03A7": "X",
-  "\u03F9": "C",
-  "\u03F2": "c",
   "\u03BF": "o",
   "\u13A0": "D",
-  "\u15EA": "D",
   "\u054D": "U",
   "\u054F": "S",
   "\uA4D1": "P",
@@ -45130,7 +45124,6 @@ var CONFUSABLES = {
   "\uA4E7": "H",
   "\uA4DC": "Z",
   // IPA and SMALL-CAP Latin lookalikes (audit AF): kɡ, USᴅ, °ᴄ, CʜF
-  "\u0261": "g",
   "\u1D00": "A",
   "\u0299": "B",
   "\u1D04": "C",
@@ -45138,11 +45131,9 @@ var CONFUSABLES = {
   "\u1D07": "E",
   "\uA730": "F",
   "\u0262": "G",
-  "\u029C": "H",
   "\u026A": "I",
   "\u1D0A": "J",
   "\u1D0B": "K",
-  "\u029F": "L",
   "\u1D0D": "M",
   "\u0274": "N",
   "\u1D0F": "O",
@@ -45151,7 +45142,6 @@ var CONFUSABLES = {
   "\uA731": "S",
   "\u1D1B": "T",
   "\u1D1C": "U",
-  "\u1D20": "V",
   "\u1D21": "W",
   "\u028F": "Y",
   "\u1D22": "Z",
@@ -45160,26 +45150,11 @@ var CONFUSABLES = {
   "\u0474": "V",
   "\u0475": "v",
   "\u0251": "a",
-  "\u142F": "V",
-  "\u146D": "P",
-  "\u15B4": "F",
-  "\u15F7": "B",
   "\u157C": "H",
-  "\u144E": "N",
-  "\u14AA": "L",
   "\u14A5": "M",
   "\u1466": "C",
-  "\u13B3": "W",
   "\u13D4": "W",
-  "\u13D2": "R",
-  "\u13AA": "A",
-  "\u13AC": "E",
-  "\u13D9": "V",
-  "\u13E4": "V",
-  "\u13DA": "S",
   "\u2D38": "V",
-  "\u051C": "W",
-  "\u051D": "w",
   // Carian/Lycian astral lookalikes + Greek letters (audit AI)
   "\u{10296}": "S",
   "\u{102A2}": "C",
@@ -45188,37 +45163,17 @@ var CONFUSABLES = {
   "\u{10299}": "O",
   "\u{10290}": "M",
   "\u03B1": "a",
-  "\u0391": "A",
-  "\u0392": "B",
-  "\u0395": "E",
-  "\u0396": "Z",
-  "\u0397": "H",
-  "\u0399": "I",
-  "\u039A": "K",
-  "\u039C": "M",
-  "\u039D": "N",
-  "\u039F": "O",
-  "\u03A1": "P",
-  "\u03A4": "T",
-  "\u03A5": "Y",
-  "\u03A7": "X",
   // Coptic capitals (UTS #39): °Ⲥ, Ⲕ, ⲘHz must refuse as homoglyphs
   "\u2C80": "A",
-  "\u2C82": "B",
   "\u2C84": "G",
   "\u2C86": "D",
   "\u2C88": "E",
   "\u2C8C": "Z",
-  "\u2C8E": "H",
   "\u2C92": "I",
-  "\u2C94": "K",
   "\u2C96": "L",
-  "\u2C98": "M",
-  "\u2C9A": "N",
   "\u2C9E": "O",
   "\u2CA2": "P",
   "\u2CA4": "C",
-  "\u2CA6": "T",
   "\u2CA8": "Y",
   "\u2CAC": "X",
   "\u2C81": "a",
@@ -45233,16 +45188,6 @@ var CONFUSABLES = {
   "\u2CA5": "c",
   "\u2CA7": "t",
   "\u2CA9": "y",
-  "\u13E6": "K",
-  "\u13DF": "C",
-  "\u13AC": "E",
-  "\u13BB": "H",
-  "\u13B7": "M",
-  "\u13D2": "R",
-  "\u13DA": "S",
-  "\u13D4": "W",
-  "\u13AA": "A",
-  "\u13F4": "B",
   "\u{10314}": "S",
   "\u{1030F}": "O",
   "\u{10302}": "C",
@@ -47925,7 +47870,7 @@ var disguisedAtom9 = (t2) => {
   const raw9 = t2.text ?? "";
   const nf9 = raw9.normalize("NFKC");
   if (nf9 === raw9) return false;
-  return lex(nf9).some((tk9) => ["number", "fraction", "percent", "date", "clocktime", "badnumber", "op", "equals", "bang"].includes(tk9.kind) || tk9.kind === "word" && (isUnitWord(tk9.text) || /[€$£¥₣₤]/u.test(tk9.text)));
+  return lex(nf9, "ch").some((tk9) => ["number", "fraction", "percent", "date", "clocktime", "badnumber", "op", "equals", "bang"].includes(tk9.kind) || tk9.kind === "word" && (isUnitWord(tk9.text) || /[€$£¥₣₤]/u.test(tk9.text)));
 };
 function resolveGrammar(context) {
   if (context.numberGrammar) return context.numberGrammar;
