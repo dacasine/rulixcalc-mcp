@@ -29290,6 +29290,7 @@ var termsProject = (list9, thirty) => {
   for (const t9 of list9) {
     let x9 = t9.x;
     for (const c9 of t9.comps) {
+      if (c9.def.currency !== void 0) return null;
       if (c9.def.factorDec !== void 0) x9 = rMul(x9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
       else if (c9.def.factor !== void 0) {
         let f9 = ratOfFactor(c9.def.factor);
@@ -29305,6 +29306,11 @@ var termsProject = (list9, thirty) => {
 };
 
 // ../textual-calculator/core/packages/engine/src/shadow.ts
+var pureCurrencyLabelForReemit9 = (d9) => {
+  if (d9.currency === void 0 || d9.factor !== void 0 || d9.factorDec !== void 0 || d9.constSym !== void 0 || d9.affine !== void 0) return false;
+  const live9 = Object.entries(d9.dim).filter(([, x9]) => x9 !== 0);
+  return live9.length === 0 || live9.length === 1 && live9[0][0] === "currency" && live9[0][1] === 1;
+};
 var projectIval = (list, thirty, prec, currencyAsOne = false) => {
   const Dlo = DecC.clone({ precision: prec, rounding: 3 });
   const Dhi = DecC.clone({ precision: prec, rounding: 2 });
@@ -29317,6 +29323,10 @@ var projectIval = (list, thirty, prec, currencyAsOne = false) => {
     for (const c2 of t2.comps) {
       let blo;
       let bhi;
+      if (c2.def.currency !== void 0) {
+        if (currencyAsOne && pureCurrencyLabelForReemit9(c2.def)) continue;
+        return null;
+      }
       if (c2.def.factorDec !== void 0) {
         blo = new Dlo(c2.def.factorDec);
         bhi = new Dhi(c2.def.factorDec);
@@ -29328,8 +29338,6 @@ var projectIval = (list, thirty, prec, currencyAsOne = false) => {
           blo = blo.times(new Dlo(30).pow(c2.def.dim["calmonths"]));
           bhi = bhi.times(new Dhi(30).pow(c2.def.dim["calmonths"]));
         }
-      } else if (currencyAsOne && c2.def.currency !== void 0) {
-        continue;
       } else return null;
       if (c2.exp >= 0) {
         flo = flo.times(blo.pow(c2.exp));
@@ -29352,20 +29360,256 @@ var projectIval = (list, thirty, prec, currencyAsOne = false) => {
   }
   return [lo, hi];
 };
-var copyTerms = (list) => list.map((t2) => ({ x: t2.x, comps: t2.comps.map((c2) => ({ ...c2 })), aux: t2.aux }));
+var copyTerms = (list) => list.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps.map((c2) => ({ ...c2 })), aux: t2.aux }));
+var encExp9 = (e) => Object.is(e, -0) ? "-0" : String(e);
+var SNAP_BRAND9 = /* @__PURE__ */ new WeakSet();
+var DEF_CAP_CACHE9 = /* @__PURE__ */ new WeakMap();
+var DEF_POOL9 = /* @__PURE__ */ new WeakMap();
+var createUnitDefSnapshotPool9 = () => {
+  const pool9 = Object.freeze({});
+  DEF_POOL9.set(pool9, { defs: /* @__PURE__ */ new Map(), comps: /* @__PURE__ */ new WeakMap() });
+  return pool9;
+};
+var defPoolMap9 = (pool9) => {
+  const state9 = DEF_POOL9.get(pool9);
+  if (state9 === void 0) throw new Error("shadow capture: forged UnitDef snapshot pool");
+  return state9.defs;
+};
+var snapDefCap9 = (d9, local9) => {
+  if (SNAP_BRAND9.has(d9)) {
+    const hit9 = DEF_CAP_CACHE9.get(d9);
+    if (hit9 !== void 0) return hit9;
+    const out92 = snapDefCapRaw9(d9);
+    DEF_CAP_CACHE9.set(d9, out92);
+    return out92;
+  }
+  const loc9 = local9.get(d9);
+  if (loc9 !== void 0) return loc9;
+  const out9 = snapDefCapRaw9(d9);
+  local9.set(d9, out9);
+  return out9;
+};
+var snapshotUnitDefInPool9 = (pool9, def9) => snapDefCap9(def9, defPoolMap9(pool9)).snap;
+var snapshotQCompInPool9 = (pool9, comp9) => {
+  const state9 = DEF_POOL9.get(pool9);
+  if (state9 === void 0) throw new Error("shadow capture: forged UnitDef snapshot pool");
+  const hit9 = state9.comps.get(comp9);
+  if (hit9 !== void 0) return hit9;
+  const def9 = comp9.def;
+  const exp9 = requireNumberField9("comp.exp", comp9.exp);
+  const out9 = Object.freeze({ def: snapDefCap9(def9, state9.defs).snap, exp: exp9 });
+  state9.comps.set(comp9, out9);
+  return out9;
+};
+var requireStringField9 = (field9, v9) => {
+  if (typeof v9 !== "string") throw new Error(`shadow capture: ${field9} must be a string when present (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var requireBigintField9 = (field9, v9) => {
+  if (typeof v9 !== "bigint") throw new Error(`shadow capture: ${field9} must be a bigint (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var requireNumberField9 = (field9, v9) => {
+  if (typeof v9 !== "number") throw new Error(`shadow capture: ${field9} must be a number (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var requireBooleanField9 = (field9, v9) => {
+  if (typeof v9 !== "boolean") throw new Error(`shadow capture: ${field9} must be a boolean (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var snapDefCapRaw9 = (d9) => {
+  const id9 = requireStringField9("id", d9.id);
+  const sym9 = requireStringField9("symbol", d9.symbol);
+  const f9 = d9.factor;
+  const fd0 = d9.factorDec;
+  const fd9 = fd0 === void 0 ? void 0 : requireStringField9("factorDec", fd0);
+  const cs0 = d9.constSym;
+  const cs9 = cs0 === void 0 ? void 0 : requireStringField9("constSym", cs0);
+  const aff9 = d9.affine;
+  const cur0 = d9.currency;
+  const cur9 = cur0 === void 0 ? void 0 : requireStringField9("currency", cur0);
+  const dimPairs9 = Object.entries(d9.dim);
+  for (const [k9, v9] of dimPairs9) requireNumberField9(`dim.${k9}`, v9);
+  const dimSem9 = dimPairs9.filter(([, v9]) => v9 !== 0).sort((a9, b9) => a9[0] < b9[0] ? -1 : 1).map(([k9, v9]) => [k9, encExp9(v9)]);
+  const dim9 = {};
+  for (const [k9, v9] of dimPairs9) dim9[k9] = v9;
+  const fSnap9 = f9 === void 0 ? void 0 : Object.freeze({ n: requireBigintField9("factor.n", f9.n), d: requireBigintField9("factor.d", f9.d) });
+  const aSnap9 = aff9 === void 0 ? void 0 : Object.freeze({ a: requireBigintField9("affine.a", aff9.a), b: requireBigintField9("affine.b", aff9.b), c: requireBigintField9("affine.c", aff9.c) });
+  const snap9 = Object.freeze({
+    id: id9,
+    symbol: sym9,
+    dim: Object.freeze(dim9),
+    ...fSnap9 !== void 0 && { factor: fSnap9 },
+    ...fd9 !== void 0 && { factorDec: fd9 },
+    ...cs9 !== void 0 && { constSym: cs9 },
+    ...aSnap9 !== void 0 && { affine: aSnap9 },
+    ...cur9 !== void 0 && { currency: cur9 }
+  });
+  const opt9 = (v9) => v9 === void 0 ? ["u"] : ["s", v9];
+  const sem9 = [
+    id9,
+    sym9,
+    dimSem9,
+    fSnap9 === void 0 ? ["u"] : ["s", fSnap9.n.toString(), fSnap9.d.toString()],
+    opt9(fd9),
+    opt9(cs9),
+    aSnap9 === void 0 ? ["u"] : ["s", aSnap9.a.toString(), aSnap9.b.toString(), aSnap9.c.toString()],
+    opt9(cur9)
+  ];
+  SNAP_BRAND9.add(snap9);
+  return { snap: snap9, sem: deepFreeze9(sem9), id9 };
+};
+var deepFreeze9 = (v9) => {
+  if (v9 !== null && typeof v9 === "object" && !Object.isFrozen(v9)) {
+    Object.freeze(v9);
+    for (const k9 of Object.keys(v9)) deepFreeze9(v9[k9]);
+  }
+  return v9;
+};
+var captureSlotsFull9 = (terms, termsDen, pool9) => {
+  const local9 = pool9 === void 0 ? /* @__PURE__ */ new Map() : defPoolMap9(pool9);
+  const capList9 = (list9) => {
+    if (list9 === void 0) return { sem: null, leg: null, copy: void 0 };
+    const sem9 = [];
+    const leg9 = [];
+    const copy9 = [];
+    for (const t9 of list9) {
+      const x9 = t9.x;
+      const n9 = requireBigintField9("x.n", x9.n);
+      const d9 = requireBigintField9("x.d", x9.d);
+      const aux9 = requireBooleanField9("aux", t9.aux);
+      const semC9 = [];
+      const legC9 = [];
+      const comps9 = [];
+      for (const c9 of t9.comps) {
+        const ownedC9 = pool9 === void 0 ? (() => {
+          const def9 = c9.def;
+          const exp92 = requireNumberField9("comp.exp", c9.exp);
+          return Object.freeze({ def: snapDefCap9(def9, local9).snap, exp: exp92 });
+        })() : snapshotQCompInPool9(pool9, c9);
+        const exp9 = ownedC9.exp;
+        const dd92 = snapDefCap9(ownedC9.def, local9);
+        semC9.push([dd92.sem, encExp9(exp9)]);
+        legC9.push([dd92.id9, encExp9(exp9)]);
+        comps9.push(ownedC9);
+      }
+      sem9.push(Object.freeze([n9.toString(), d9.toString(), aux9 ? 1 : 0, deepFreeze9(semC9)]));
+      leg9.push(Object.freeze([n9.toString(), d9.toString(), aux9 ? 1 : 0, deepFreeze9(legC9)]));
+      copy9.push(Object.freeze({ x: Object.freeze({ n: n9, d: d9 }), comps: Object.freeze(comps9), aux: aux9 }));
+    }
+    OWNED9.add(copy9);
+    return { sem: Object.freeze(sem9), leg: Object.freeze(leg9), copy: Object.freeze(copy9) };
+  };
+  const tt9 = capList9(terms);
+  const dd9 = capList9(termsDen);
+  return Object.freeze({
+    digest: JSON.stringify(["sc1", tt9.sem, dd9.sem]),
+    legacyEnc: Object.freeze([tt9.leg, dd9.leg]),
+    terms: tt9.copy,
+    termsDen: dd9.copy
+  });
+};
+var captureSlots9 = (terms, termsDen) => captureSlotsFull9(terms, termsDen).digest;
+var captureUnitDef9 = (def) => JSON.stringify(["ud1", snapDefCapRaw9(def).sem]);
+var snapshotUnitDefForReemit9 = (def) => snapDefCapRaw9(def).snap;
 var legacyFingerprint = (terms, termsDen) => {
-  const encExp = (e) => Object.is(e, -0) ? "-0" : String(e);
-  const slot = (list) => list === void 0 ? null : list.map((t2) => [t2.x.n.toString(), t2.x.d.toString(), t2.aux ? 1 : 0, t2.comps.map((c2) => [c2.def.id, encExp(c2.exp)])]);
-  return JSON.stringify(["lf1", slot(terms), slot(termsDen)]);
+  const cap9 = captureSlotsFull9(terms, termsDen);
+  const t9 = recoverProv9(terms, termsDen, void 0, cap9.digest);
+  if (t9 !== null) return JSON.stringify(["lf1p", cap9.legacyEnc[0], cap9.legacyEnc[1], t9.residue.key, t9.thirty]);
+  return JSON.stringify(["lf1", cap9.legacyEnc[0], cap9.legacyEnc[1]]);
+};
+var requireCleanResidueKey9 = (v9) => {
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(v9)) throw new Error("ShadowFraction: control characters are not part of a provider-residue key");
+  return v9;
+};
+var LEGACY_PROV9 = /* @__PURE__ */ new WeakMap();
+var recoverProv9 = (terms, termsDen, thirty, capture9) => {
+  if (terms === void 0) return null;
+  const t9 = LEGACY_PROV9.get(terms);
+  if (t9 === void 0) return null;
+  if (t9.termsDenRef !== termsDen) return null;
+  if (thirty !== void 0 && t9.thirty !== thirty) return null;
+  if (capture9 !== t9.rawShapeDigest) return null;
+  return t9;
+};
+var OWNED9 = /* @__PURE__ */ new WeakSet();
+var SF_CTOR9 = /* @__PURE__ */ Symbol("shadow-fraction-ctor");
+var PROV_CARRIER_GUARDS9 = /* @__PURE__ */ new WeakMap();
+function registerProvCarrierGuard9(value9, guard9) {
+  if (PROV_CARRIER_GUARDS9.has(value9)) throw new Error("ShadowFraction: residue carrier guard already registered");
+  const attach9 = guard9.attach;
+  const recover9 = guard9.recover;
+  if (typeof attach9 !== "function" || typeof recover9 !== "function") throw new Error("ShadowFraction: invalid residue carrier guard");
+  PROV_CARRIER_GUARDS9.set(value9, Object.freeze({ attach: attach9, recover: recover9 }));
+}
+var ownTerms9 = (list9) => {
+  if (OWNED9.has(list9)) return list9;
+  const local9 = /* @__PURE__ */ new Map();
+  const out9 = list9.map((t9) => Object.freeze({
+    x: Object.freeze({ n: t9.x.n, d: t9.x.d }),
+    comps: Object.freeze(t9.comps.map((c9) => Object.freeze({ def: SNAP_BRAND9.has(c9.def) ? c9.def : snapDefCap9(c9.def, local9).snap, exp: c9.exp }))),
+    aux: t9.aux
+  }));
+  Object.freeze(out9);
+  OWNED9.add(out9);
+  return out9;
 };
 var ShadowFraction = class _ShadowFraction {
   #num;
   #den;
   #thirty;
-  constructor(num, den, thirty) {
-    this.#num = num;
-    this.#den = den;
+  /** Phase 2-S0 opaque storage slot. S0 LAW: the residue survives AT REST
+   * only (attach → writeLegacy → fromLegacy on the same array) — NO central
+   * operation transports it (every op builds a residue-less instance);
+   * composition laws belong to B1-B. At the OPAQUE CUTOVER this constructor
+   * will REQUIRE the slot (central-ctor contract, persistence decision). */
+  #prov9;
+  constructor(token9, num, den, thirty, prov9 = null) {
+    if (token9 !== SF_CTOR9) throw new Error("ShadowFraction: construction is module-private (token required)");
+    this.#num = ownTerms9(num);
+    this.#den = ownTerms9(den);
     this.#thirty = thirty;
+    this.#prov9 = prov9;
+    Object.freeze(this);
+  }
+  /** Attach an opaque Phase-2 residue — returns a NEW instance (value
+   * untouched, immutable law). S0-bis: `key` and `value` are read EXACTLY
+   * ONCE from the caller's (possibly getter/Proxy-backed) object; a
+   * non-string key is refused at RUNTIME before the Cc validation; only the
+   * validated SNAPSHOTS are stored — a changing getter can never smuggle a
+   * different key past the validation. */
+  withProvResidue9(r9) {
+    const key9 = r9.key;
+    const value9 = r9.value;
+    if (typeof key9 !== "string") throw new Error("ShadowFraction: a provider-residue key must be a string");
+    requireCleanResidueKey9(key9);
+    const frozen9 = Object.freeze({ key: key9, value: value9 });
+    const next9 = new _ShadowFraction(SF_CTOR9, this.#num, this.#den, this.#thirty, frozen9);
+    if (typeof value9 === "object" && value9 !== null) {
+      const guard9 = PROV_CARRIER_GUARDS9.get(value9);
+      if (guard9 !== void 0 && !guard9.attach(this, next9)) {
+        throw new Error("ShadowFraction: residue carrier transplantation refused");
+      }
+    }
+    return next9;
+  }
+  /** Read the opaque residue (null when absent). */
+  provResidue9() {
+    return this.#prov9;
+  }
+  /** Return the same owned fraction with the opaque provider residue removed.
+   * This is the ONLY supported purge primitive: callers cannot rebuild from
+   * legacy slots (and thereby accidentally recover the S0 side-band ticket).
+   * The value, authority, calendar context and both faces stay byte-for-byte
+   * owned by this immutable instance. */
+  withoutProvResidue9() {
+    if (this.#prov9 === null) return this;
+    return new _ShadowFraction(SF_CTOR9, this.#num, this.#den, this.#thirty, null);
+  }
+  /** Read-only calendar context (B1-B-bis: the fraction↔contribution
+   * binding checks it — never exposed for mutation). */
+  thirty9() {
+    return this.#thirty;
   }
   // ─── factories ────────────────────────────────────────────────────────────
   /** Bridge from the legacy `terms`/`termsDen` storage (Phase 1 adapter),
@@ -29374,17 +29618,23 @@ var ShadowFraction = class _ShadowFraction {
    * and `ok` are distinct, never conflated in one `null`. The denominator is
    * MERGED first, so a structurally-zero currency denominator like
    * « [1 USD, −1 USD] » is caught before any FX-blind projection. */
-  static fromLegacy(terms, termsDen, thirty) {
+  static fromLegacy(terms, termsDen, thirty, pool9) {
     if (terms === void 0 && termsDen === void 0) return { kind: "no-shadow" };
+    const cap9 = captureSlotsFull9(terms, termsDen, pool9);
     let den = ONE_TERMS();
-    if (termsDen !== void 0) {
-      den = mergeTerms(copyTerms(termsDen), [], 1n, thirty, true);
+    if (cap9.termsDen !== void 0) {
+      den = mergeTerms(cap9.termsDen, [], 1n, thirty, true);
       if (den.length === 0) return { kind: "invalid-denominator" };
-      const dz = new _ShadowFraction(den, ONE_TERMS(), thirty).zeroState();
+      const dz = new _ShadowFraction(SF_CTOR9, den, ONE_TERMS(), thirty).zeroState();
       if (dz === "authoritative-zero") return { kind: "invalid-denominator" };
       if (dz === "auxiliary-zero") return { kind: "undecidable-denominator" };
     }
-    return { kind: "ok", value: new _ShadowFraction(terms ? copyTerms(terms) : ONE_TERMS(), den, thirty) };
+    const ticket9 = recoverProv9(terms, termsDen, thirty, cap9.digest);
+    const value9 = new _ShadowFraction(SF_CTOR9, cap9.terms ?? ONE_TERMS(), den, thirty, ticket9 === null ? null : ticket9.residue);
+    if (ticket9 !== null && typeof ticket9.residue.value === "object" && ticket9.residue.value !== null) {
+      PROV_CARRIER_GUARDS9.get(ticket9.residue.value)?.recover(value9);
+    }
+    return { kind: "ok", value: value9 };
   }
   /** Cross-context operations are FORBIDDEN (audit interne #78 1o-bis): two
    * shadows built under different `monthToDays` calendars must never combine
@@ -29406,16 +29656,24 @@ var ShadowFraction = class _ShadowFraction {
    * elided to match the historical shape. */
   writeLegacy() {
     const denTrivial = this.#den.length === 1 && this.#den[0].comps.length === 0 && rnorm(this.#den[0].x).n === 1n && rnorm(this.#den[0].x).d === 1n;
-    return { terms: copyTerms(this.#num), ...denTrivial ? {} : { termsDen: copyTerms(this.#den) } };
+    const terms9 = copyTerms(this.#num);
+    const den9 = denTrivial ? void 0 : copyTerms(this.#den);
+    if (this.#prov9 !== null) {
+      LEGACY_PROV9.set(terms9, { residue: this.#prov9, termsDenRef: den9, thirty: this.#thirty, rawShapeDigest: captureSlots9(terms9, den9) });
+    }
+    return { terms: terms9, ...den9 === void 0 ? {} : { termsDen: den9 } };
   }
   /** A dimensionless scalar. `aux` is DECLARED by the caller from parse
    * provenance (captured decimal ⇒ true; exact rational/integer ⇒ false). */
   static scalar(x2, aux, thirty) {
-    return new _ShadowFraction([mkTerm(x2, [], aux)], ONE_TERMS(), thirty);
+    const n9 = requireBigintField9("scalar.n", x2.n);
+    const d9 = requireBigintField9("scalar.d", x2.d);
+    if (d9 === 0n) throw new Error("shadow scalar: zero denominator is not a rational (fail-closed)");
+    return new _ShadowFraction(SF_CTOR9, [mkTerm({ n: n9, d: d9 }, [], requireBooleanField9("scalar.aux", aux))], ONE_TERMS(), thirty);
   }
   /** The authoritative exact zero (empty numerator). */
   static zero(thirty) {
-    return new _ShadowFraction([], ONE_TERMS(), thirty);
+    return new _ShadowFraction(SF_CTOR9, [], ONE_TERMS(), thirty);
   }
   // ─── authority ────────────────────────────────────────────────────────────
   /** Does the NUMERATOR carry a captured-decimal (auxiliary) term? The reemit's
@@ -29446,7 +29704,7 @@ var ShadowFraction = class _ShadowFraction {
   // ─── central operations (authority carried by construction) ─────────────────
   /** −(num/den) = (−num)/den — authority per term preserved verbatim. */
   negate() {
-    return new _ShadowFraction(this.#num.map((t2) => ({ x: { n: -t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+    return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: { n: -t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
   }
   /** Scale the numerator by an EXACT rational k (audit interne #78 2b) — a captured
    * decimal stays captured (aux preserved); k itself is a pure multiplier and never a
@@ -29461,9 +29719,9 @@ var ShadowFraction = class _ShadowFraction {
   scale(k2) {
     const kn = rnorm(k2);
     if (kn.n === 0n) return _ShadowFraction.zero(this.#thirty);
-    if (kn.n === 1n && kn.d === 1n) return new _ShadowFraction(this.#num.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+    if (kn.n === 1n && kn.d === 1n) return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
     if (kn.n === -1n && kn.d === 1n) return this.negate();
-    return new _ShadowFraction(this.#num.map((t2) => ({ x: rMul(t2.x, kn), comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+    return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: rMul(t2.x, kn), comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
   }
   /** num/den ± other = (num·oDen ± oNum·den)/(den·oDen), authority infecting
    * through the AUTHORITY-AWARE merge (keepAuxZero): a sum touching a captured
@@ -29477,7 +29735,7 @@ var ShadowFraction = class _ShadowFraction {
     const dd = this.#distribute(this.#den, other.#den);
     if (a2 === null || b2 === null || dd === null) return { kind: "budget-exhausted" };
     const num = mergeTerms(a2, b2, sign2, this.#thirty, true);
-    return { kind: "ok", value: new _ShadowFraction(num, dd, this.#thirty) };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, dd, this.#thirty) };
   }
   add(other) {
     return this.addSigned(other, 1n);
@@ -29498,7 +29756,7 @@ var ShadowFraction = class _ShadowFraction {
     const num = this.#distribute(this.#num, other.#num);
     const den = this.#distribute(this.#den, other.#den);
     if (num === null || den === null) return { kind: "budget-exhausted" };
-    return { kind: "ok", value: new _ShadowFraction(num, den, this.#thirty) };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, den, this.#thirty) };
   }
   /** num/den ÷ other = (num·oDen)/(den·oNum). Inversion is legal ONLY on a
    * PROVEN non-zero divisor: a zero → division-by-zero; an undecidable sign →
@@ -29514,7 +29772,7 @@ var ShadowFraction = class _ShadowFraction {
     const num = this.#distribute(this.#num, other.#den);
     const den = this.#distribute(this.#den, other.#num);
     if (num === null || den === null) return { kind: "budget-exhausted" };
-    return { kind: "ok", value: new _ShadowFraction(num, den, this.#thirty) };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, den, this.#thirty) };
   }
   /** 1/(num/den) = den/num — legal ONLY when the numerator is PROVEN non-zero;
    * every other state is explicit (never 1/0 by omission, never invert an
@@ -29525,7 +29783,7 @@ var ShadowFraction = class _ShadowFraction {
     if (z2 === "auxiliary-zero") return { kind: "undecidable" };
     if (z2 === "unsupported") return { kind: "unsupported" };
     if (z2 === "undecidable") return { kind: "undecidable" };
-    return { kind: "ok", value: new _ShadowFraction(copyTerms(this.#den), copyTerms(this.#num), this.#thirty) };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, copyTerms(this.#den), copyTerms(this.#num), this.#thirty) };
   }
   /** Reduce num/den to a single monomial term when it divides exactly (z²/z = z),
    * carrying authority; null when no monomial quotient exists — OR when the
@@ -29542,6 +29800,25 @@ var ShadowFraction = class _ShadowFraction {
     const poly = num.length > 1 || den.length > 1;
     if (poly && (num.some((t2) => t2.aux) || den.some((t2) => t2.aux))) return null;
     return fracQuotient(this.#num, this.#den, this.#thirty);
+  }
+  /** AUTHORITY-COMPLETE scalar reduction (audit interne #78 2c-a): N ≡ k·D with a
+   * DIMENSIONLESS, symbol-free quotient ⇒ the exact rational k, with the quotient's
+   * authority REPORTED, never laundered. The legacy `fracReduce` publishes `k` as an
+   * exact rational regardless of the quotient term's `aux` (a captured-decimal origin
+   * anywhere in the pairing) — this API keeps the two outcomes DISTINCT: `reduced`
+   * (every contributing extreme authoritative) vs `reduced-aux` (numerically the same
+   * k, but the reduction is not authority-proven). Zeros are NOT this API's job —
+   * `zeroState()` classifies them; an empty or non-quotient numerator is
+   * `irreducible` here. */
+  reduceScalar() {
+    const q2 = fracQuotient(this.#num, this.#den, this.#thirty);
+    if (q2 === null) return { kind: "irreducible" };
+    const c2 = termCanon(q2, this.#thirty);
+    if (c2.key !== "|") return { kind: "irreducible" };
+    const num9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const den9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const anyAux9 = num9.some((t2) => t2.aux) || den9.some((t2) => t2.aux);
+    return anyAux9 ? { kind: "reduced-aux", x: rnorm(c2.canonX) } : { kind: "reduced", x: rnorm(c2.canonX) };
   }
   // ─── projection ─────────────────────────────────────────────────────────────
   /** Rigorous interval bracket of the numerator (directed rounding). */
@@ -29566,6 +29843,55 @@ var ShadowFraction = class _ShadowFraction {
     const dx = termsProject(this.#den, this.#thirty);
     if (nx === null || dx === null) return null;
     return { num: nx, den: dx };
+  }
+  /** Opaque preflight for the REEMISSION currency-as-×1 exception. Every
+   * currency definition on BOTH faces must be a pure provider label; a
+   * contradictory numeric/constant/affine recipe or foreign dimension is a
+   * typed coverage failure at the caller, never a `projectExactForReemit()`
+   * null that can be mistaken for `unchanged`. Definitions are snapshotted
+   * once per identity during this decision. */
+  currencyLabelsValidForReemit9() {
+    const seen9 = /* @__PURE__ */ new Map();
+    const snap9 = (def9) => {
+      const old9 = seen9.get(def9);
+      if (old9 !== void 0) return old9;
+      const fresh9 = snapshotUnitDefForReemit9(def9);
+      seen9.set(def9, fresh9);
+      return fresh9;
+    };
+    for (const list9 of [this.#num, this.#den]) for (const term9 of list9) for (const comp9 of term9.comps) {
+      const def9 = snap9(comp9.def);
+      if (def9.currency !== void 0 && !pureCurrencyLabelForReemit9(def9)) return false;
+    }
+    return true;
+  }
+  /** Exact counterpart of `projectIntervalsForReemit`: currency-only comps
+   * are opaque ×1 labels, while every other unsupported component still
+   * refuses. This is REEMISSION evidence only; identity/zero/compare keep
+   * using the context-free `projectExact()` and therefore never assume FX. */
+  projectExactForReemit() {
+    const currencyAsOne9 = (list9) => {
+      const out9 = [];
+      for (const t9 of list9) {
+        const comps9 = [];
+        for (const c9 of t9.comps) {
+          if (c9.def.currency !== void 0) {
+            if (!pureCurrencyLabelForReemit9(c9.def)) return null;
+            continue;
+          }
+          comps9.push({ ...c9 });
+        }
+        out9.push({ x: { n: t9.x.n, d: t9.x.d }, aux: t9.aux, comps: comps9 });
+      }
+      return out9;
+    };
+    const num9 = currencyAsOne9(this.#num);
+    const den9 = currencyAsOne9(this.#den);
+    if (num9 === null || den9 === null) return null;
+    const nx9 = termsProject(num9, this.#thirty);
+    const dx9 = termsProject(den9, this.#thirty);
+    if (nx9 === null || dx9 === null) return null;
+    return { num: nx9, den: dx9 };
   }
   /** Does any term (numerator OR denominator) carry an IRRATIONAL factorDec comp
    * (radian, …)? Such a shadow's exact-rational projection is a 40-digit
@@ -29619,6 +29945,55 @@ var ShadowFraction = class _ShadowFraction {
     if (sa === 0 || sb === 0) return null;
     return sa * sb > 0 ? s2 : -s2;
   }
+  /** Narrow proof used by the provider-residue quotient route: two opaque
+   * fractions are structurally the same non-zero monomial, hence a/b = 1.
+   * Currency components deliberately remain unsupported by numeric
+   * projection, so the proof is purely algebraic: canonical numerator and
+   * denominator each contain one non-zero term and the cross-difference
+   * cancels without an auxiliary marker. It is NOT a generic x/x shortcut;
+   * the caller must separately prove correlation of the provider residue. */
+  correlatedUnitQuotient9(other) {
+    this.#requireCtx(other);
+    const an9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const ad9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const bn9 = mergeTerms(other.#num, [], 1n, this.#thirty, true);
+    const bd9 = mergeTerms(other.#den, [], 1n, this.#thirty, true);
+    if (an9.length !== 1 || ad9.length !== 1 || bn9.length !== 1 || bd9.length !== 1) return null;
+    if (an9[0].x.n === 0n || ad9[0].x.n === 0n || bn9[0].x.n === 0n || bd9[0].x.n === 0n) return null;
+    const left9 = this.#distribute(an9, bd9);
+    const right9 = this.#distribute(bn9, ad9);
+    if (left9 === null || right9 === null) return null;
+    if (mergeTerms(left9, right9, -1n, this.#thirty, true).length !== 0) return null;
+    return _ShadowFraction.scalar({ n: 1n, d: 1n }, false, this.#thirty);
+  }
+  /** Narrow divisor proof for a provider-labelled monomial. Numeric
+   * projection deliberately treats currency as unsupported, but a single
+   * AUTHORITATIVE symbolic monomial with a non-zero coefficient is still
+   * structurally non-zero when the resulting numerator and denominator have
+   * the SAME canonical support.  This lets the owning provider algebra form
+   * `(94 CHF/h)/(1 CHF/h)` without pretending that a context-free FX rate is
+   * available. The exact fraction remains first-class (its canonical scalar
+   * reduction is still 94); auxiliary terms and polynomial faces are never
+   * admitted.
+   *
+   * The method is intentionally NOT a generic fallback from `div()`: callers
+   * must first receive `unsupported` from the ordinary proof and must retain
+   * their own causal/provider verdict. */
+  divByAuthoritativeMonomial9(other) {
+    this.#requireCtx(other);
+    const an9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const ad9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const on9 = mergeTerms(other.#num, [], 1n, this.#thirty, true);
+    const od9 = mergeTerms(other.#den, [], 1n, this.#thirty, true);
+    const structuralNonzero9 = (face9) => face9.length === 1 && face9[0].x.n !== 0n && face9[0].x.d !== 0n && face9[0].aux === false && face9[0].comps.every((comp9) => comp9.def.currency === void 0 || pureCurrencyLabelForReemit9(comp9.def));
+    if (!structuralNonzero9(an9) || !structuralNonzero9(ad9) || !structuralNonzero9(on9) || !structuralNonzero9(od9)) return null;
+    const num9 = this.#distribute(an9, od9);
+    const den9 = this.#distribute(ad9, on9);
+    if (num9 === null || den9 === null) return { kind: "budget-exhausted" };
+    const quotient9 = new _ShadowFraction(SF_CTOR9, num9, den9, this.#thirty);
+    if (quotient9.reduceScalar().kind !== "reduced") return null;
+    return { kind: "ok", value: quotient9 };
+  }
   /** CANONICAL world digest of an AUTHORITATIVE value, or `null` (audit interne
    * #78 observatrice, Finding A). Canonicalised through the SAME algebra as
    * termCanon/mergeTerms — so `1 m` ≡ `100 cm`, `[1,1]` ≡ `[2]` — normalised by
@@ -29665,9 +30040,60 @@ var ShadowFraction = class _ShadowFraction {
     return `${this.#thirty ? "30" : "civ"}|${items.sort().join("+")}`;
   }
 };
+Object.freeze(ShadowFraction.prototype);
+Object.freeze(ShadowFraction);
 function shadowFromRT(rt2, thirty) {
   if (rt2 === null) return { kind: "no-shadow" };
   return ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
+}
+function snapshotShadowRT9(rt2, thirty, pool9) {
+  const descriptors9 = Object.getOwnPropertyDescriptors(rt2);
+  const termsDesc9 = descriptors9.terms;
+  const termsDenDesc9 = descriptors9.termsDen;
+  const ownOrInheritedTerms9 = termsDesc9 !== void 0 || "terms" in rt2;
+  const ownOrInheritedTermsDen9 = termsDenDesc9 !== void 0 || "termsDen" in rt2;
+  const terms9 = rt2.terms;
+  const termsDen9 = rt2.termsDen;
+  const foldDesc9 = descriptors9.foldA9;
+  const foldA9 = rt2.foldA9;
+  const hasFold9 = foldA9 !== void 0;
+  const hasShadow9 = terms9 !== void 0 || termsDen9 !== void 0;
+  if (hasShadow9 && hasFold9) return { kind: "invalid-authority-state" };
+  delete descriptors9.terms;
+  delete descriptors9.termsDen;
+  delete descriptors9.foldA9;
+  const snapshot9 = Object.create(Object.getPrototypeOf(rt2), descriptors9);
+  if (foldDesc9 !== void 0 || "foldA9" in rt2) {
+    Object.defineProperty(snapshot9, "foldA9", {
+      value: foldA9,
+      writable: foldDesc9 !== void 0 && "writable" in foldDesc9 ? foldDesc9.writable === true : true,
+      enumerable: foldDesc9?.enumerable ?? false,
+      configurable: foldDesc9?.configurable ?? true
+    });
+  }
+  const defineSlot9 = (name9, value9, old9) => {
+    Object.defineProperty(snapshot9, name9, {
+      value: value9,
+      writable: old9 !== void 0 && "writable" in old9 ? old9.writable === true : true,
+      enumerable: old9?.enumerable ?? true,
+      configurable: old9?.configurable ?? true
+    });
+  };
+  if (ownOrInheritedTerms9 || terms9 !== void 0) defineSlot9("terms", terms9, termsDesc9);
+  if (ownOrInheritedTermsDen9 || termsDen9 !== void 0) defineSlot9("termsDen", termsDen9, termsDenDesc9);
+  const replace9 = (fraction9) => {
+    const outDescriptors9 = Object.getOwnPropertyDescriptors(snapshot9);
+    delete outDescriptors9.terms;
+    delete outDescriptors9.termsDen;
+    const out9 = Object.create(Object.getPrototypeOf(snapshot9), outDescriptors9);
+    writeShadowSlots9(out9, fraction9.writeLegacy());
+    return out9;
+  };
+  return { kind: "ok", rt: snapshot9, shadow: ShadowFraction.fromLegacy(terms9, termsDen9, thirty, pool9), replace: replace9 };
+}
+function fingerprintFromRT(rt2) {
+  if (rt2 === null) return legacyFingerprint(void 0, void 0);
+  return legacyFingerprint(rt2.terms, rt2.termsDen);
 }
 function shadowApproxFromRT(rt2) {
   const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
@@ -29685,6 +30111,77 @@ function negateShadowFromRT(rt2) {
   if (rt2.termsDen !== void 0) out.termsDen = rt2.termsDen;
   return out;
 }
+function foldSeedFromRT(rt2, reading, comps, thirty) {
+  void reading;
+  void comps;
+  if (rt2.terms !== void 0 || rt2.termsDen !== void 0) {
+    const r3 = ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
+    switch (r3.kind) {
+      case "ok":
+        return { kind: "shadow", value: r3.value };
+      case "invalid-denominator":
+        return { kind: "invalid-denominator" };
+      case "undecidable-denominator":
+        return { kind: "undecidable-denominator" };
+      case "no-shadow":
+        break;
+    }
+  }
+  return { kind: "undecidable-authority" };
+}
+function foldSlotsVerbatim9(rt2) {
+  const out = {};
+  if (rt2.terms !== void 0) out.terms = copyTerms(rt2.terms);
+  if (rt2.termsDen !== void 0) out.termsDen = copyTerms(rt2.termsDen);
+  return out;
+}
+function slotsNum9(slots) {
+  return slots.terms;
+}
+function slotsPresent9(slots) {
+  return slots.terms !== void 0 || slots.termsDen !== void 0;
+}
+function slotsWithNum9(slots, num) {
+  const out = { terms: num };
+  if (slots.termsDen !== void 0) out.termsDen = slots.termsDen;
+  return out;
+}
+function hasShadowFromRT(rt2) {
+  return rt2 !== null && (rt2.terms !== void 0 || rt2.termsDen !== void 0);
+}
+function replaceShadowFromFraction9(rt2, fraction) {
+  const out9 = { ...rt2 };
+  writeShadowSlots9(out9, fraction.writeLegacy());
+  return out9;
+}
+function stripShadowFromRT9(rt2) {
+  const out9 = { ...rt2 };
+  delete out9.terms;
+  delete out9.termsDen;
+  return out9;
+}
+function restoreUndefinedShadowSlots9(rt2, slots) {
+  const out9 = { ...rt2 };
+  if (slots.includes("terms")) out9.terms = void 0;
+  if (slots.includes("termsDen")) out9.termsDen = void 0;
+  return out9;
+}
+function editShadowSlots9(rt2, edit) {
+  const out9 = { ...rt2 };
+  if ("terms" in edit) {
+    if (edit.terms === null || edit.terms === void 0) delete out9.terms;
+    else out9.terms = edit.terms;
+  }
+  if ("termsDen" in edit) {
+    if (edit.termsDen === null || edit.termsDen === void 0) delete out9.termsDen;
+    else out9.termsDen = edit.termsDen;
+  }
+  return out9;
+}
+function fractionFaces9(fraction) {
+  const slots92 = fraction.writeLegacy();
+  return [slots92.terms, slots92.termsDen ?? ONE_TERMS()];
+}
 function slots9(terms, termsDen) {
   const s2 = {};
   if (terms !== void 0) s2.terms = terms;
@@ -29692,10 +30189,21 @@ function slots9(terms, termsDen) {
   return s2;
 }
 function writeShadowSlots9(target, slots) {
+  if (target.foldA9 !== void 0) {
+    throw new Error("invalid-authority-state: a shadow can never be written onto a certificate-carrying value \u2014 rebuild fresh and consume the authority into the terms first");
+  }
   delete target.terms;
   delete target.termsDen;
   if (slots.terms !== void 0) target.terms = slots.terms;
   if (slots.termsDen !== void 0) target.termsDen = slots.termsDen;
+}
+function transportShadowToCarrier9(source9, carrier9) {
+  const terms9 = source9.terms;
+  const termsDen9 = source9.termsDen;
+  if (terms9 === void 0 && termsDen9 === void 0) return null;
+  const out9 = { ...carrier9 };
+  writeShadowSlots9(out9, slots9(terms9, termsDen9));
+  return out9;
 }
 function scaleShadowFromRT(rt2, k2, thirty) {
   if (rt2 === null) return { kind: "no-shadow" };
@@ -29713,6 +30221,64 @@ function scaleShadowFromRT(rt2, k2, thirty) {
   return { kind: "ok", slots: r3.value.scale(k2).writeLegacy() };
 }
 
+// ../textual-calculator/core/packages/engine/src/fold-authority.ts
+var AUTH9 = Object.freeze({ v: 1, kind: "auth" });
+var AUX9 = Object.freeze({ v: 1, kind: "aux" });
+function authorityConsumable9(ctx) {
+  return ctx.__convAuth9 === true;
+}
+function authStateOf9(foldA9, hasShadow) {
+  if (foldA9 !== void 0 && hasShadow) return "invalid-authority-state";
+  if (foldA9 === void 0) return "unknown";
+  return foldA9.kind;
+}
+function authJoin9(...parts) {
+  let sawAux = false;
+  for (const p2 of parts) {
+    if (p2 === void 0) return void 0;
+    if (p2.kind === "aux") sawAux = true;
+  }
+  return sawAux ? AUX9 : AUTH9;
+}
+function authPreserve9(x2) {
+  return x2;
+}
+function authAbsorbZero9(zero) {
+  return zero;
+}
+function stampAuth9(rt2, a2) {
+  const descriptors9 = Object.getOwnPropertyDescriptors(rt2);
+  const termsDesc9 = Reflect.get(descriptors9, "terms");
+  const termsDenDesc9 = Reflect.get(descriptors9, "termsDen");
+  const hasTermsProp9 = termsDesc9 !== void 0 || Reflect.has(rt2, "terms");
+  const hasTermsDenProp9 = termsDenDesc9 !== void 0 || Reflect.has(rt2, "termsDen");
+  const firstSlots9 = /* @__PURE__ */ Object.create(null);
+  Object.defineProperty(firstSlots9, "terms", { value: Reflect.get(rt2, "terms") });
+  Object.defineProperty(firstSlots9, "termsDen", { value: Reflect.get(rt2, "termsDen") });
+  if (firstSlots9.terms !== void 0 || firstSlots9.termsDen !== void 0) {
+    throw new Error("invalid-authority-state: a certificate can never be stamped onto a shadow-carrying value \u2014 per-term authority lives in IrrTerm.aux (empty term arrays count as a PRESENT shadow)");
+  }
+  delete descriptors9.foldA9;
+  Reflect.deleteProperty(descriptors9, "terms");
+  Reflect.deleteProperty(descriptors9, "termsDen");
+  const out = Object.create(Object.getPrototypeOf(rt2), descriptors9);
+  const defineEmptySlot9 = (name9, old9) => {
+    Object.defineProperty(out, name9, {
+      value: void 0,
+      writable: old9 !== void 0 && "writable" in old9 ? old9.writable === true : true,
+      enumerable: old9?.enumerable ?? true,
+      configurable: old9?.configurable ?? true
+    });
+  };
+  if (hasTermsProp9) defineEmptySlot9("terms", termsDesc9);
+  if (hasTermsDenProp9) defineEmptySlot9("termsDen", termsDenDesc9);
+  Object.defineProperty(out, "foldA9", { value: a2, enumerable: false, writable: false, configurable: false });
+  return out;
+}
+function serializeAuth9(foldA9) {
+  return foldA9 === void 0 ? "" : foldA9.kind === "auth" ? ":A" : ":X";
+}
+
 // ../textual-calculator/core/packages/engine/src/scale-factor.ts
 var F_EXACT9 = { num: "exact" };
 function factorProof9(flag, capF, jac, rem) {
@@ -29721,6 +30287,1972 @@ function factorProof9(flag, capF, jac, rem) {
   if (flag) return { num: "capped", capF: fk, rem };
   return fk === void 0 ? F_EXACT9 : { num: "exact", capF: [] };
 }
+
+// ../textual-calculator/core/packages/engine/src/b1-unit-envelope.ts
+function selectB1UnitEnvelope9(source9) {
+  const comps9 = source9.comps;
+  if (comps9 !== void 0) return Object.freeze({ kind: "comps", comps: comps9 });
+  const def9 = source9.def;
+  const rate9 = source9.rate;
+  if (def9 !== void 0 && rate9 !== void 0) return Object.freeze({ kind: "invalid-unit-envelope" });
+  if (def9 !== void 0) return Object.freeze({ kind: "def", def: def9 });
+  if (rate9 !== void 0) return Object.freeze({ kind: "rate", rate: rate9 });
+  return Object.freeze({ kind: "none" });
+}
+
+// ../textual-calculator/core/packages/engine/src/shadow-capture-atom.ts
+var CAPTURE_TOKEN9 = /* @__PURE__ */ Symbol("capture-atom-token");
+var CAPTURE_INSTANCES9 = /* @__PURE__ */ new WeakSet();
+var isCaptureAtom9 = (value9) => {
+  try {
+    return typeof value9 === "object" && value9 !== null && CAPTURE_INSTANCES9.has(value9);
+  } catch {
+    return false;
+  }
+};
+var CC9 = /[\u0000-\u001f\u007f-\u009f]/gu;
+var CAPTURE_ATOM_LEAF_KIND9 = "num-aux";
+var requireText9 = (name9, value9) => {
+  if (typeof value9 !== "string") throw new Error(`capture-atom: ${name9} must be a string`);
+  return value9;
+};
+var requireIndex9 = (name9, value9) => {
+  if (typeof value9 !== "number" || !Number.isSafeInteger(value9) || value9 < 0 || Object.is(value9, -0)) {
+    throw new Error(`capture-atom: ${name9} must be a canonical non-negative safe integer`);
+  }
+  return value9;
+};
+var canonicalKey9 = (payload9) => JSON.stringify(payload9).replace(CC9, (c9) => `\\u${c9.codePointAt(0).toString(16).padStart(4, "0")}`);
+var CaptureAtom9 = class _CaptureAtom9 {
+  key;
+  #payload9;
+  #termAux9;
+  constructor(token9, key9, payload9, termAux9) {
+    if (token9 !== CAPTURE_TOKEN9) throw new Error("capture-atom: construction is module-private");
+    this.key = key9;
+    this.#payload9 = payload9;
+    this.#termAux9 = termAux9;
+    CAPTURE_INSTANCES9.add(this);
+    Object.freeze(this);
+  }
+  static is9(value9) {
+    return isCaptureAtom9(value9);
+  }
+  /** Constructor remains TS-private; this runtime-tokened module bridge is
+   * callable but cannot produce an instance without the private token. */
+  static create9(token9, key9, payload9, termAux9) {
+    return new _CaptureAtom9(token9, key9, payload9, termAux9);
+  }
+  /** Module-validated immutable tuple; callers cannot obtain mutable state. */
+  payload9() {
+    return this.#payload9;
+  }
+  termAux9() {
+    return this.#termAux9;
+  }
+};
+function mintCaptureAtom9(input9) {
+  if (typeof input9 !== "object" || input9 === null) throw new Error("capture-atom: input must be an object");
+  const lineIndex09 = requireIndex9("lineIndex0", Reflect.get(input9, "lineIndex0"));
+  const raw09 = requireText9("rawLine", Reflect.get(input9, "rawLine"));
+  const rawPath9 = Reflect.get(input9, "structuralPath");
+  const leafKind9 = Reflect.get(input9, "leafKind");
+  const termAux9 = Reflect.get(input9, "termAux");
+  const rawLine9 = raw09.endsWith("\r") ? raw09.slice(0, -1) : raw09;
+  if (!Array.isArray(rawPath9)) throw new Error("capture-atom: structuralPath must be an array");
+  const length9 = requireIndex9("structuralPath.length", Reflect.get(rawPath9, "length"));
+  if (length9 === 0) throw new Error("capture-atom: structuralPath must be non-empty");
+  const path9 = [];
+  for (let i9 = 0; i9 < length9; i9++) {
+    const segment9 = Reflect.get(rawPath9, String(i9));
+    path9.push(typeof segment9 === "string" ? requireText9(`structuralPath[${i9}]`, segment9) : requireIndex9(`structuralPath[${i9}]`, segment9));
+  }
+  if (leafKind9 !== CAPTURE_ATOM_LEAF_KIND9) throw new Error("capture-atom: unsupported leaf kind");
+  if (typeof termAux9 !== "boolean") throw new Error("capture-atom: termAux must be a boolean");
+  Object.freeze(path9);
+  const payload9 = Object.freeze(["ca1", lineIndex09, rawLine9, path9, leafKind9]);
+  return CaptureAtom9.create9(CAPTURE_TOKEN9, canonicalKey9(payload9), payload9, termAux9);
+}
+function captureAtomKey9(atom9) {
+  if (!isCaptureAtom9(atom9)) throw new Error("capture-atom: forged atom");
+  return atom9.key;
+}
+function captureAtomTermAux9(atom9) {
+  if (!isCaptureAtom9(atom9)) throw new Error("capture-atom: forged atom");
+  return atom9.termAux9();
+}
+Object.freeze(CaptureAtom9.prototype);
+Object.freeze(CaptureAtom9);
+
+// ../textual-calculator/core/packages/engine/src/shadow-capture-lineage.ts
+var AST_ATOM9 = /* @__PURE__ */ new WeakMap();
+var SOURCE_DECIMAL_ATOM9 = /* @__PURE__ */ new WeakMap();
+var sameRat9 = (a9, b9) => a9.n === b9.n && a9.d === b9.d;
+function captureLexicalDecimal9(decimal9, exact9) {
+  if (decimal9 === null) return null;
+  const binding9 = SOURCE_DECIMAL_ATOM9.get(decimal9);
+  const exactRead9 = exact9 === void 0 ? decToRat(decimal9) : (() => {
+    let n9;
+    let d9;
+    try {
+      n9 = exact9.n;
+      d9 = exact9.d;
+    } catch {
+      return null;
+    }
+    if (typeof n9 !== "bigint" || typeof d9 !== "bigint" || d9 === 0n) {
+      return null;
+    }
+    return rnorm({ n: n9, d: d9 });
+  })();
+  if (exactRead9 === null) return null;
+  const normalized9 = rnorm(exactRead9);
+  if (binding9 !== void 0 && !sameRat9(normalized9, binding9.lexicalExact)) {
+    return Object.freeze({ atom: null, exactRead: Object.freeze(normalized9) });
+  }
+  return Object.freeze({ atom: binding9?.atom ?? null, exactRead: Object.freeze(normalized9) });
+}
+function captureLexicalValue9(value9) {
+  if (value9 === null) return null;
+  let v9;
+  let vx9;
+  try {
+    v9 = value9.v;
+    vx9 = value9.vx;
+  } catch {
+    return null;
+  }
+  if (typeof v9 !== "object" || v9 === null) return null;
+  const sealed9 = captureLexicalDecimal9(v9, vx9);
+  return sealed9?.atom === null || sealed9 === null ? null : { atom: sealed9.atom, exactRead: sealed9.exactRead };
+}
+var children9 = (ast9) => {
+  switch (ast9.k) {
+    case "num":
+    case "mathConst":
+    case "frac":
+    case "var":
+    case "date":
+    case "dateKw":
+    case "weekday":
+    case "lineRef":
+    case "monthDate":
+    case "agg":
+    case "clock":
+    case "timeIn":
+    case "holidayDate":
+      return [];
+    case "un":
+    case "scale":
+    case "pct":
+    case "span":
+    case "unit":
+    case "convert":
+    case "convertSpan":
+    case "convertBase":
+    case "fact":
+      return [["e", null, ast9.e]];
+    case "fromNow":
+      return [["span", null, ast9.span]];
+    case "workdays":
+      return [["count", null, ast9.count]];
+    case "unitCompound":
+      return [["e", null, ast9.e]];
+    case "bin":
+      return [["l", null, ast9.l], ["r", null, ast9.r]];
+    case "pctOf":
+    case "pctOn":
+    case "pctOff":
+      return [["pct", null, ast9.pct], ["base", null, ast9.base]];
+    case "isPctOfWhat":
+      return [["value", null, ast9.value], ["pct", null, ast9.pct]];
+    case "whatPctOf":
+      return [["base", null, ast9.base], ["part", null, ast9.part]];
+    case "pctMoreWhat":
+      return [["value", null, ast9.value], ["pct", null, ast9.pct]];
+    case "call":
+      return ast9.args.map((child9, i9) => ["args", i9, child9]);
+    case "finance":
+      return [
+        ["amount", null, ast9.amount],
+        ["rate", null, ast9.rate],
+        ["years", null, ast9.years]
+      ];
+    default: {
+      const never9 = ast9;
+      throw new Error(`CaptureAtom: unhandled AST kind ${never9.k}`);
+    }
+  }
+};
+function annotateCaptureAtoms9(ast9, lineIndex09, rawLine9, observe9) {
+  const seen9 = /* @__PURE__ */ new WeakSet();
+  const pending9 = [];
+  const decimals9 = /* @__PURE__ */ new WeakMap();
+  const sameKey9 = (a9, b9) => captureAtomKey9(a9) === captureAtomKey9(b9);
+  const visit9 = (node9, path9) => {
+    if (seen9.has(node9)) throw new Error("CaptureAtom: AST must be a tree (shared node/DAG refused)");
+    seen9.add(node9);
+    if (node9.k === "num" && node9.auth === false) {
+      const decimal9 = node9.dec;
+      const lexicalExact9 = Object.freeze(rnorm(decToRat(decimal9)));
+      const atom9 = mintCaptureAtom9({
+        lineIndex0: lineIndex09,
+        rawLine: rawLine9,
+        structuralPath: path9,
+        leafKind: "num-aux",
+        termAux: lexicalExact9.d !== 1n
+      });
+      const priorNode9 = AST_ATOM9.get(node9);
+      const priorDecimal9 = SOURCE_DECIMAL_ATOM9.get(decimal9) ?? decimals9.get(decimal9);
+      if (priorNode9 !== void 0 && !sameKey9(priorNode9, atom9)) {
+        throw new Error("CaptureAtom: an AST node cannot be rebound to a distinct causal key");
+      }
+      if (priorDecimal9 !== void 0 && !sameKey9(priorDecimal9.atom, atom9)) {
+        throw new Error("CaptureAtom: a shared Decimal carrier cannot represent distinct causal keys");
+      }
+      if (priorDecimal9 !== void 0 && !sameRat9(priorDecimal9.lexicalExact, lexicalExact9)) {
+        throw new Error("CaptureAtom: a Decimal carrier cannot change its sealed lexical value");
+      }
+      const binding9 = Object.freeze({ atom: atom9, lexicalExact: lexicalExact9 });
+      decimals9.set(decimal9, binding9);
+      pending9.push({ node: node9, decimal: decimal9, binding: binding9 });
+    }
+    for (const [field9, index9, child9] of children9(node9)) {
+      visit9(child9, Object.freeze([
+        ...path9,
+        node9.k,
+        field9,
+        ...index9 === null ? [] : [index9],
+        child9.k
+      ]));
+    }
+  };
+  visit9(ast9, Object.freeze(["root", ast9.k]));
+  for (const { node: node9, decimal: decimal9, binding: binding9 } of pending9) {
+    AST_ATOM9.set(node9, binding9.atom);
+    SOURCE_DECIMAL_ATOM9.set(decimal9, binding9);
+    observe9?.(binding9.atom);
+  }
+}
+function captureAtomOfValue9(value9) {
+  return captureLexicalValue9(value9)?.atom ?? null;
+}
+function captureAtomKeyOfValue9(value9) {
+  const atom9 = captureAtomOfValue9(value9);
+  return atom9 === null ? null : captureAtomKey9(atom9);
+}
+function transportCaptureValue9(source9, target9) {
+  const sourceBinding9 = captureLexicalValue9(source9);
+  if (sourceBinding9 === null || target9 === null) return;
+  let targetDecimal9;
+  let targetExact9;
+  try {
+    targetDecimal9 = Reflect.get(target9, "v");
+    targetExact9 = Reflect.get(target9, "vx");
+  } catch {
+    throw new Error("CaptureAtom: observer copy cannot expose an unreadable numeric carrier");
+  }
+  if (typeof targetDecimal9 !== "object" || targetDecimal9 === null) {
+    throw new Error("CaptureAtom: observer copy lost its numeric carrier");
+  }
+  const targetRead9 = captureLexicalDecimal9(targetDecimal9, targetExact9);
+  if (targetRead9 === null || !sameRat9(targetRead9.exactRead, sourceBinding9.exactRead)) {
+    throw new Error("CaptureAtom: observer copy changed the sealed lexical value");
+  }
+  if (targetRead9.atom !== null && captureAtomKey9(targetRead9.atom) !== captureAtomKey9(sourceBinding9.atom)) {
+    throw new Error("CaptureAtom: observer copy already carries a distinct causal key");
+  }
+  SOURCE_DECIMAL_ATOM9.set(targetDecimal9, Object.freeze({
+    atom: sourceBinding9.atom,
+    lexicalExact: Object.freeze(rnorm(sourceBinding9.exactRead))
+  }));
+}
+
+// ../textual-calculator/core/packages/engine/src/provider-algebra.ts
+var POLY_BUDGET9 = 512;
+var MONO_BOUND9 = 64;
+var POW_BOUND9 = 32n;
+var CTOR9 = /* @__PURE__ */ Symbol("provider-algebra-ctor");
+var ATOMS9 = /* @__PURE__ */ new WeakSet();
+var SHAPES9 = /* @__PURE__ */ new WeakSet();
+var BUILTS9 = /* @__PURE__ */ new WeakSet();
+var MONOS9 = /* @__PURE__ */ new WeakSet();
+var POLYS9 = /* @__PURE__ */ new WeakSet();
+var CONTRIBS9 = /* @__PURE__ */ new WeakSet();
+var inSet9 = (set9, x2) => {
+  try {
+    return typeof x2 === "object" && x2 !== null && set9.has(x2);
+  } catch {
+    return false;
+  }
+};
+var enc9 = (parts) => `v1(${parts.map((p9) => `${p9.length}:${p9}`).join(",")})`;
+var requireCleanText9 = (field9, v9) => {
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(v9)) throw new Error(`provider-algebra: control characters are not part of any provider identity (${field9})`);
+  return v9;
+};
+var freezeParts9 = (parts9) => Object.freeze(parts9.map((p9) => Object.freeze({ ...p9 })));
+var QuoteAtom = class _QuoteAtom {
+  #nominal9 = "QuoteAtom9";
+  key;
+  constructor(token9, key9) {
+    if (token9 !== CTOR9) throw new Error("provider-algebra: QuoteAtom construction is module-private");
+    this.key = key9;
+    void this.#nominal9;
+    ATOMS9.add(this);
+    Object.freeze(this);
+  }
+  static of9(from, to, rate, asOf, source) {
+    const parts9 = [
+      requireCleanText9("from", from),
+      requireCleanText9("to", to),
+      requireCleanText9("rate", rate),
+      asOf === void 0 ? "u" : `s${requireCleanText9("asOf", asOf)}`,
+      requireCleanText9("source", source)
+    ];
+    return new _QuoteAtom(CTOR9, enc9(["qa", ...parts9]));
+  }
+  static is9(x2) {
+    return inSet9(ATOMS9, x2);
+  }
+};
+function quoteAtom9(from, to, rate, asOf, source) {
+  return QuoteAtom.of9(from, to, rate, asOf, source);
+}
+var requireAtom9 = (x2) => {
+  if (!QuoteAtom.is9(x2)) throw new Error("provider-algebra: forged QuoteAtom rejected");
+  return x2;
+};
+var CANON_DEFS9 = /* @__PURE__ */ new Map();
+var canonDef9 = (id9, build9) => {
+  const hit9 = CANON_DEFS9.get(id9);
+  if (hit9) return hit9;
+  const d9 = build9();
+  Object.freeze(d9.dim);
+  if (d9.factor !== void 0) Object.freeze(d9.factor);
+  if (d9.affine !== void 0) Object.freeze(d9.affine);
+  Object.freeze(d9);
+  CANON_DEFS9.set(id9, d9);
+  return d9;
+};
+var snapDef9 = (d9) => {
+  const id9 = requireCleanText9("unitDefId", d9.id);
+  const symbol9 = requireCleanText9("unitDefSymbol", d9.symbol);
+  const cur9 = d9.currency;
+  const cs9 = d9.constSym;
+  const fd9 = d9.factorDec;
+  const aff9 = d9.affine;
+  const f9 = d9.factor;
+  const dim9 = {};
+  for (const [k9, v9] of Object.entries(d9.dim)) dim9[requireCleanText9("dimAxis", k9)] = v9;
+  const out9 = {
+    id: id9,
+    symbol: symbol9,
+    dim: Object.freeze(dim9),
+    ...f9 !== void 0 && { factor: Object.freeze({ n: f9.n, d: f9.d }) },
+    ...fd9 !== void 0 && { factorDec: requireCleanText9("factorDec", fd9) },
+    ...cs9 !== void 0 && { constSym: requireCleanText9("constSym", cs9) },
+    ...aff9 !== void 0 && { affine: Object.freeze({ a: aff9.a, b: aff9.b, c: aff9.c }) },
+    ...cur9 !== void 0 && { currency: requireCleanText9("currency", cur9) }
+  };
+  return Object.freeze(out9);
+};
+var canonSymDef9 = (d9) => {
+  if (d9.currency !== void 0) {
+    const c9 = d9.currency;
+    return canonDef9(`cur:${c9}`, () => ({ id: `cur:${c9}`, symbol: c9, dim: {}, currency: c9 }));
+  }
+  if (d9.constSym !== void 0) {
+    const s9 = d9.constSym;
+    return canonDef9(`sym:${s9}`, () => ({ id: `sym:${s9}`, symbol: s9, dim: {}, constSym: s9 }));
+  }
+  if (d9.factorDec !== void 0) {
+    const f9 = d9.factorDec;
+    return canonDef9(`dec:${f9}`, () => ({ id: `dec:${f9}`, symbol: f9, dim: {}, factorDec: f9 }));
+  }
+  if (d9.affine !== void 0) {
+    const id9 = d9.id;
+    const sym9 = d9.symbol;
+    const dim9 = d9.dim;
+    const a9 = d9.affine.a;
+    const b9 = d9.affine.b;
+    const c9 = d9.affine.c;
+    return canonDef9(`aff:${id9}`, () => ({ id: id9, symbol: sym9, dim: { ...dim9 }, affine: { a: a9, b: b9, c: c9 } }));
+  }
+  throw new Error("provider-algebra: canonSymDef9 is only for symbolic defs");
+};
+var dimDef9 = (axis9) => canonDef9(`dim:${requireCleanText9("dimAxis", axis9)}`, () => ({ id: `dim:${axis9}`, symbol: axis9, dim: { [axis9]: 1 }, factor: { n: 1n, d: 1n } }));
+var symTag9 = (d9, exp9) => {
+  if (d9.currency !== void 0) return `C:${d9.currency}^${exp9}`;
+  if (d9.constSym !== void 0) return `P:${d9.constSym}^${exp9}`;
+  if (d9.factorDec !== void 0) return `D:${d9.factorDec}^${exp9}`;
+  return `A:${d9.id}^${exp9}`;
+};
+var normalComps9 = (comps9, thirty9) => {
+  const dims9 = /* @__PURE__ */ new Map();
+  const syms9 = [];
+  for (const c9 of comps9) {
+    const d9 = c9.def;
+    if (d9.currency !== void 0 || d9.constSym !== void 0 || d9.factorDec !== void 0 || d9.affine !== void 0) {
+      const s9 = canonSymDef9(d9);
+      syms9.push({ tag: symTag9(s9, c9.exp), def: s9, exp: c9.exp });
+      continue;
+    }
+    for (const [k9, v9] of Object.entries(d9.dim)) {
+      let kk9 = k9 === "tempdelta" ? "temperature" : k9;
+      if (thirty9 && kk9 === "calmonths") kk9 = "caldays";
+      dims9.set(kk9, (dims9.get(kk9) ?? 0) + v9 * c9.exp);
+    }
+  }
+  const out9 = [...dims9].filter(([, v9]) => v9 !== 0).sort((a9, b9) => a9[0] < b9[0] ? -1 : 1).map(([k9, v9]) => ({ def: dimDef9(k9), exp: v9 }));
+  syms9.sort((a9, b9) => a9.tag < b9.tag ? -1 : a9.tag > b9.tag ? 1 : 0);
+  out9.push(...syms9.map((s9) => ({ def: s9.def, exp: s9.exp })));
+  return out9;
+};
+var ProviderTermShape = class {
+  #nominal9 = "ProviderTermShape9";
+  comps;
+  key;
+  /** The fold of the STORED normal form (its carriers are factor-1, so the
+   * operands' real folds live in the coefficients — canonX). */
+  fold;
+  thirty;
+  constructor(token9, comps9, key9, fold9, thirty9) {
+    if (token9 !== CTOR9) throw new Error("provider-algebra: ProviderTermShape construction is module-private");
+    this.comps = freezeParts9(comps9.map((c9) => ({ def: c9.def, exp: c9.exp })));
+    this.key = key9;
+    this.fold = Object.freeze({ ...fold9 });
+    this.thirty = thirty9;
+    void this.#nominal9;
+    SHAPES9.add(this);
+    Object.freeze(this);
+  }
+  static is9(x2) {
+    return inSet9(SHAPES9, x2);
+  }
+};
+var requireShape9 = (x2) => {
+  if (!ProviderTermShape.is9(x2)) throw new Error("provider-algebra: forged ProviderTermShape rejected");
+  return x2;
+};
+var BuiltTerm9 = class {
+  #nominal9 = "BuiltTerm9";
+  shape;
+  coeff;
+  constructor(token9, shape9, coeff9) {
+    if (token9 !== CTOR9) throw new Error("provider-algebra: BuiltTerm9 construction is module-private");
+    this.shape = shape9;
+    this.coeff = Object.freeze({ ...coeff9 });
+    void this.#nominal9;
+    BUILTS9.add(this);
+    Object.freeze(this);
+  }
+  static is9(x2) {
+    return inSet9(BUILTS9, x2);
+  }
+};
+var requireBuilt9 = (x2) => {
+  if (!BuiltTerm9.is9(x2)) throw new Error("provider-algebra: forged BuiltTerm9 rejected \u2014 entries only come from termShapeOfIrr9");
+  return x2;
+};
+function termShapeOfIrr9(t2, thirty) {
+  const comps9 = t2.comps.map((cc9) => ({ def: snapDef9(cc9.def), exp: cc9.exp }));
+  const c9 = termCanon({ x: t2.x, comps: comps9, aux: t2.aux }, thirty);
+  requireCleanText9("termCanonKey", c9.key);
+  const norm9c = normalComps9(comps9, thirty);
+  const check9 = termCanon({ x: { n: 1n, d: 1n }, comps: norm9c, aux: false }, thirty);
+  if (check9.key !== c9.key) throw new Error("provider-algebra: total normal form drifted from the canonical identity");
+  const shape9 = new ProviderTermShape(CTOR9, norm9c, enc9(["ts", c9.key]), check9.fold, thirty);
+  return new BuiltTerm9(CTOR9, shape9, c9.canonX);
+}
+function termShapeUnit9(thirty) {
+  return termShapeOfIrr9({ x: { n: 1n, d: 1n }, comps: [], aux: false }, thirty);
+}
+function shapeMul9(a2, b2) {
+  const av9 = requireShape9(a2);
+  const bv9 = requireShape9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const prod9 = distributeTerms(
+    [{ x: { n: 1n, d: 1n }, comps: av9.comps.map((c9) => ({ ...c9 })), aux: false }],
+    [{ x: { n: 1n, d: 1n }, comps: bv9.comps.map((c9) => ({ ...c9 })), aux: false }],
+    av9.thirty
+  );
+  if (prod9 === null || prod9.length !== 1) return { ok: false, reason: "budget-exceeded" };
+  const built9 = termShapeOfIrr9({ x: prod9[0].x, comps: prod9[0].comps, aux: false }, av9.thirty);
+  const denF9 = rMul(av9.fold, bv9.fold);
+  const foldCoeff9 = rnorm({ n: built9.coeff.n * denF9.d, d: built9.coeff.d * denF9.n });
+  return { ok: true, shape: built9.shape, foldCoeff: foldCoeff9 };
+}
+var ProviderMonomial = class {
+  #nominal9 = "ProviderMonomial9";
+  parts;
+  key;
+  constructor(token9, parts9) {
+    if (token9 !== CTOR9) throw new Error("provider-algebra: ProviderMonomial construction is module-private");
+    this.parts = freezeParts9(parts9);
+    this.key = enc9(["pm", ...this.parts.flatMap((p9) => [p9.atom.key, String(p9.exp)])]);
+    void this.#nominal9;
+    MONOS9.add(this);
+    Object.freeze(this);
+  }
+  static is9(x2) {
+    return inSet9(MONOS9, x2);
+  }
+};
+var requireMono9 = (x2) => {
+  if (!ProviderMonomial.is9(x2)) throw new Error("provider-algebra: forged ProviderMonomial rejected");
+  return x2;
+};
+var monoNormRaw9 = (parts9) => {
+  const m9 = /* @__PURE__ */ new Map();
+  for (const p9 of parts9) {
+    requireAtom9(p9.atom);
+    const prev9 = m9.get(p9.atom.key);
+    if (prev9) prev9.exp += p9.exp;
+    else m9.set(p9.atom.key, { ...p9 });
+  }
+  return new ProviderMonomial(CTOR9, [...m9.values()].filter((p9) => p9.exp !== 0n).sort((a9, b9) => a9.atom.key < b9.atom.key ? -1 : 1));
+};
+var monoNormBounded9 = (parts9) => {
+  const v9 = monoNormRaw9(parts9);
+  if (v9.parts.length > MONO_BOUND9) return { ok: false, reason: "budget-exceeded" };
+  return { ok: true, value: v9 };
+};
+var MONO_UNIT9 = monoNormRaw9([]);
+function monoOfAtom9(atom, exp2) {
+  return monoNormRaw9([{ atom: requireAtom9(atom), exp: exp2 }]);
+}
+function monoMul9(a2, b2) {
+  return monoNormBounded9([...requireMono9(a2).parts, ...requireMono9(b2).parts]);
+}
+function monoInv9(a2) {
+  return monoNormRaw9(requireMono9(a2).parts.map((p9) => ({ atom: p9.atom, exp: -p9.exp })));
+}
+function monoIsUnit9(a2) {
+  return requireMono9(a2).parts.length === 0;
+}
+var ProviderPoly = class {
+  #nominal9 = "ProviderPoly9";
+  /** The UNIQUE calendar context — every entry's shape matches it. */
+  thirty;
+  entries;
+  constructor(token9, thirty9, entries9) {
+    if (token9 !== CTOR9) throw new Error("provider-algebra: ProviderPoly construction is module-private");
+    this.thirty = thirty9;
+    this.entries = freezeParts9(entries9.map((e9) => ({ shape: e9.shape, mono: e9.mono, coeff: Object.freeze({ ...e9.coeff }) })));
+    void this.#nominal9;
+    POLYS9.add(this);
+    Object.freeze(this);
+  }
+  static is9(x2) {
+    return inSet9(POLYS9, x2);
+  }
+};
+var requirePoly9 = (x2) => {
+  if (!ProviderPoly.is9(x2)) throw new Error("provider-algebra: forged ProviderPoly rejected");
+  return x2;
+};
+var formSig9 = (comps9) => comps9.map((c9) => `${c9.def.id}^${c9.exp}`).join("\xB7");
+var polyNorm9 = (thirty9, entries9) => {
+  if (entries9.length > POLY_BUDGET9) return { ok: false, reason: "budget-exceeded" };
+  const m9 = /* @__PURE__ */ new Map();
+  for (const e9 of entries9) {
+    requireShape9(e9.shape);
+    requireMono9(e9.mono);
+    if (e9.shape.thirty !== thirty9) return { ok: false, reason: "calendar-mismatch" };
+    const k9 = enc9(["pe", e9.shape.key, e9.mono.key]);
+    const prev9 = m9.get(k9);
+    if (prev9) {
+      if (prev9.shape !== e9.shape && formSig9(prev9.shape.comps) !== formSig9(e9.shape.comps)) {
+        throw new Error("provider-algebra: total normal form violated \u2014 same identity, different stored forms");
+      }
+      m9.set(k9, { shape: prev9.shape, mono: prev9.mono, coeff: rAdd(prev9.coeff, e9.coeff) });
+    } else m9.set(k9, { shape: e9.shape, mono: e9.mono, coeff: rnorm(e9.coeff) });
+  }
+  const out9 = [...m9.entries()].filter(([, e9]) => rnorm(e9.coeff).n !== 0n).sort((a9, b9) => a9[0] < b9[0] ? -1 : 1).map(([, e9]) => ({ ...e9, coeff: rnorm(e9.coeff) }));
+  if (out9.length > POLY_BUDGET9) return { ok: false, reason: "budget-exceeded" };
+  return { ok: true, value: new ProviderPoly(CTOR9, thirty9, out9) };
+};
+function polyZero9(thirty) {
+  return polyNorm9(thirty, []).value;
+}
+function polyUnit9(thirty) {
+  const u9 = termShapeUnit9(thirty);
+  return polyNorm9(thirty, [{ shape: u9.shape, mono: MONO_UNIT9, coeff: u9.coeff }]).value;
+}
+function polyEntry9(built, mono, scale = { n: 1n, d: 1n }) {
+  const b9 = requireBuilt9(built);
+  return polyNorm9(b9.shape.thirty, [{ shape: b9.shape, mono: requireMono9(mono), coeff: rMul(b9.coeff, scale) }]);
+}
+function polyAdd9(a2, b2) {
+  const av9 = requirePoly9(a2);
+  const bv9 = requirePoly9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  return polyNorm9(av9.thirty, [...av9.entries, ...bv9.entries]);
+}
+function polySub9(a2, b2) {
+  const av9 = requirePoly9(a2);
+  const bv9 = requirePoly9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  return polyNorm9(av9.thirty, [...av9.entries, ...bv9.entries.map((e9) => ({ shape: e9.shape, mono: e9.mono, coeff: rSub({ n: 0n, d: 1n }, e9.coeff) }))]);
+}
+function polyScale9(a2, k2) {
+  const av9 = requirePoly9(a2);
+  return polyNorm9(av9.thirty, av9.entries.map((e9) => ({ shape: e9.shape, mono: e9.mono, coeff: rMul(e9.coeff, k2) })));
+}
+function polyIsZero9(a2) {
+  return requirePoly9(a2).entries.length === 0;
+}
+function polyProviderFree9(a2) {
+  return requirePoly9(a2).entries.every((e9) => monoIsUnit9(e9.mono));
+}
+function polyMul9(a2, b2) {
+  const av9 = requirePoly9(a2);
+  const bv9 = requirePoly9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  if (av9.entries.length * bv9.entries.length > POLY_BUDGET9) return { ok: false, reason: "budget-exceeded" };
+  const out9 = [];
+  for (const ea9 of av9.entries) {
+    for (const eb9 of bv9.entries) {
+      const sm9 = shapeMul9(ea9.shape, eb9.shape);
+      if (!sm9.ok) return sm9;
+      const mm9 = monoMul9(ea9.mono, eb9.mono);
+      if (!mm9.ok) return mm9;
+      out9.push({ shape: sm9.shape, mono: mm9.value, coeff: rMul(rMul(ea9.coeff, eb9.coeff), sm9.foldCoeff) });
+    }
+  }
+  return polyNorm9(av9.thirty, out9);
+}
+var ProviderContribution = class _ProviderContribution {
+  #nominal9 = "ProviderContribution9";
+  /** The UNIQUE calendar context (num and den proven equal at of9). */
+  thirty;
+  num;
+  den;
+  constructor(token9, thirty9, num9, den9) {
+    if (token9 !== CTOR9) throw new Error("provider-algebra: ProviderContribution construction is module-private");
+    this.thirty = thirty9;
+    this.num = num9;
+    this.den = den9;
+    void this.#nominal9;
+    CONTRIBS9.add(this);
+    Object.freeze(this);
+  }
+  static of9(num9, den9) {
+    requirePoly9(num9);
+    requirePoly9(den9);
+    if (num9.thirty !== den9.thirty) return { ok: false, reason: "calendar-mismatch" };
+    if (polyIsZero9(den9)) return { ok: false, reason: "zero-denominator" };
+    return { ok: true, value: new _ProviderContribution(CTOR9, num9.thirty, num9, den9) };
+  }
+  static is9(x2) {
+    return inSet9(CONTRIBS9, x2);
+  }
+};
+var requireContrib9 = (x2) => {
+  if (!ProviderContribution.is9(x2)) throw new Error("provider-algebra: forged ProviderContribution rejected");
+  return x2;
+};
+function contribOf9(num, den) {
+  return ProviderContribution.of9(num, den);
+}
+function contribInv9(a2) {
+  const av9 = requireContrib9(a2);
+  return ProviderContribution.of9(av9.den, av9.num);
+}
+function contribMul9(a2, b2) {
+  const av9 = requireContrib9(a2);
+  const bv9 = requireContrib9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const n9 = polyMul9(av9.num, bv9.num);
+  if (!n9.ok) return n9;
+  const d9 = polyMul9(av9.den, bv9.den);
+  if (!d9.ok) return d9;
+  return ProviderContribution.of9(n9.value, d9.value);
+}
+function contribDiv9(a2, b2) {
+  const av9 = requireContrib9(a2);
+  const bv9 = requireContrib9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const bi9 = contribInv9(bv9);
+  if (!bi9.ok) return bi9;
+  return contribMul9(av9, bi9.value);
+}
+function contribAdd9(a2, b2, sign2 = 1n) {
+  const av9 = requireContrib9(a2);
+  const bv9 = requireContrib9(b2);
+  if (av9.thirty !== bv9.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const x9 = polyMul9(av9.num, bv9.den);
+  if (!x9.ok) return x9;
+  const y9 = polyMul9(bv9.num, av9.den);
+  if (!y9.ok) return y9;
+  const d9 = polyMul9(av9.den, bv9.den);
+  if (!d9.ok) return d9;
+  const nn9 = sign2 === 1n ? polyAdd9(x9.value, y9.value) : polySub9(x9.value, y9.value);
+  if (!nn9.ok) return nn9;
+  return ProviderContribution.of9(nn9.value, d9.value);
+}
+function contribSub9(a2, b2) {
+  return contribAdd9(a2, b2, -1n);
+}
+function contribScale9(a2, k2) {
+  const av9 = requireContrib9(a2);
+  const n9 = polyScale9(av9.num, k2);
+  if (!n9.ok) return n9;
+  return ProviderContribution.of9(n9.value, av9.den);
+}
+function contribPow9(a2, exp2) {
+  const e9 = intExp9(exp2);
+  if (!e9.ok) return { ok: false, reason: "non-integer-exponent" };
+  let n9 = e9.exp;
+  let base9 = requireContrib9(a2);
+  if (n9 === 0n) {
+    return ProviderContribution.of9(polyUnit9(base9.thirty), polyUnit9(base9.thirty));
+  }
+  if (n9 < 0n) {
+    const inv9 = contribInv9(base9);
+    if (!inv9.ok) return inv9;
+    base9 = inv9.value;
+    n9 = -n9;
+  }
+  if (n9 > POW_BOUND9) return { ok: false, reason: "budget-exceeded" };
+  let acc9 = base9;
+  for (let i9 = 1n; i9 < n9; i9++) {
+    const m9 = contribMul9(acc9, base9);
+    if (!m9.ok) return m9;
+    acc9 = m9.value;
+  }
+  return { ok: true, value: acc9 };
+}
+var commonMono9 = (a2) => {
+  const all9 = [...a2.num.entries, ...a2.den.entries];
+  if (all9.length === 0) return { ok: true, value: MONO_UNIT9 };
+  const atoms9 = /* @__PURE__ */ new Map();
+  for (const e9 of all9) for (const p9 of e9.mono.parts) atoms9.set(p9.atom.key, p9.atom);
+  const out9 = [];
+  for (const [k9, atom9] of atoms9) {
+    let min9 = null;
+    for (const e9 of all9) {
+      const exp9 = e9.mono.parts.find((p9) => p9.atom.key === k9)?.exp ?? 0n;
+      min9 = min9 === null || exp9 < min9 ? exp9 : min9;
+    }
+    if (min9 !== null && min9 !== 0n) out9.push({ atom: atom9, exp: min9 });
+  }
+  return monoNormBounded9(out9);
+};
+var polyDivMono9 = (p2, m2) => {
+  const inv9 = monoInv9(m2);
+  const entries9 = [];
+  for (const e9 of p2.entries) {
+    const nm9 = monoNormBounded9([...e9.mono.parts, ...inv9.parts]);
+    if (!nm9.ok) return nm9;
+    entries9.push({ shape: e9.shape, mono: nm9.value, coeff: e9.coeff });
+  }
+  return polyNorm9(p2.thirty, entries9);
+};
+function contribReduce9(a2) {
+  const av9 = requireContrib9(a2);
+  if (polyIsZero9(av9.den)) return { kind: "error", reason: "zero-denominator" };
+  if (polyIsZero9(av9.num)) return { kind: "zero-provider-free" };
+  const common9 = commonMono9(av9);
+  if (!common9.ok) return { kind: "error", reason: "budget-exceeded" };
+  const rnP9 = polyDivMono9(av9.num, common9.value);
+  if (!rnP9.ok) return { kind: "error", reason: "budget-exceeded" };
+  const rdP9 = polyDivMono9(av9.den, common9.value);
+  if (!rdP9.ok) return { kind: "error", reason: "budget-exceeded" };
+  const rn9 = rnP9.value;
+  const rd9 = rdP9.value;
+  let q9 = null;
+  if (rn9.entries.length === rd9.entries.length) {
+    q9 = (() => {
+      let acc9 = null;
+      for (let i9 = 0; i9 < rn9.entries.length; i9++) {
+        const en9 = rn9.entries[i9];
+        const ed9 = rd9.entries[i9];
+        if (en9.shape.key !== ed9.shape.key || en9.mono.key !== ed9.mono.key) return null;
+        const r9 = rnorm({ n: en9.coeff.n * ed9.coeff.d, d: en9.coeff.d * ed9.coeff.n });
+        if (acc9 === null) acc9 = r9;
+        else if (acc9.n !== r9.n || acc9.d !== r9.d) return null;
+      }
+      return acc9;
+    })();
+  }
+  const free9 = polyProviderFree9(rn9) && polyProviderFree9(rd9) || q9 !== null;
+  return { kind: "reduced", common: common9.value, q: q9, providerFree: free9 };
+}
+function intExp9(x2) {
+  const n9 = rnorm(x2);
+  return n9.d === 1n ? { ok: true, exp: n9.n } : { ok: false, reason: "non-integer-exponent" };
+}
+for (const C9 of [QuoteAtom, ProviderTermShape, BuiltTerm9, ProviderMonomial, ProviderPoly, ProviderContribution]) {
+  Object.freeze(C9.prototype);
+  Object.freeze(C9);
+}
+
+// ../textual-calculator/core/packages/engine/src/shadow-capture-authority-algebra.ts
+var CAPTURE_CONTRIB_TOKEN9 = /* @__PURE__ */ Symbol("capture-authority-contribution-token");
+var CAPTURE_CONTRIBS9 = /* @__PURE__ */ new WeakSet();
+var CAPTURE_VALUATION9 = /* @__PURE__ */ new WeakMap();
+var CAPTURE_CAUSAL9 = /* @__PURE__ */ new WeakMap();
+var CAPTURE_AUTHORITATIVE_ZERO9 = /* @__PURE__ */ new WeakSet();
+var CAPTURE_BOUND_TOKEN9 = /* @__PURE__ */ Symbol("capture-bound-shadow-token");
+var CAPTURE_BOUNDS9 = /* @__PURE__ */ new WeakSet();
+var CAPTURE_BOUND_PARTS9 = /* @__PURE__ */ new WeakMap();
+var inSet92 = (value9) => {
+  try {
+    return typeof value9 === "object" && value9 !== null && CAPTURE_CONTRIBS9.has(value9);
+  } catch {
+    return false;
+  }
+};
+var enc92 = (parts9) => `v1(${parts9.map((part9) => `${part9.length}:${part9}`).join(",")})`;
+var CaptureContribution9 = class _CaptureContribution9 {
+  #nominal9 = "CaptureContribution9";
+  #valuation9;
+  #causal9;
+  key;
+  constructor(token9, valuation9, causal9, authoritativeZero9) {
+    if (token9 !== CAPTURE_CONTRIB_TOKEN9) throw new Error("capture-authority: construction is module-private");
+    if (!ProviderContribution.is9(valuation9) || !ProviderContribution.is9(causal9)) {
+      throw new Error("capture-authority: forged polynomial contribution");
+    }
+    if (valuation9.thirty !== causal9.thirty) throw new Error("capture-authority: calendar mismatch inside contribution");
+    this.#valuation9 = valuation9;
+    this.#causal9 = causal9;
+    this.key = authoritativeZero9 ? enc92(["acv2z", captureCanonFromInner9(valuation9), captureCanonFromInner9(causal9)]) : enc92(["acv2", captureCanonFromInner9(valuation9), captureCanonFromInner9(causal9)]);
+    void this.#nominal9;
+    CAPTURE_CONTRIBS9.add(this);
+    CAPTURE_VALUATION9.set(this, valuation9);
+    CAPTURE_CAUSAL9.set(this, causal9);
+    if (authoritativeZero9) CAPTURE_AUTHORITATIVE_ZERO9.add(this);
+    Object.freeze(this);
+  }
+  static is9(value9) {
+    return inSet92(value9);
+  }
+  /** Module bridge guarded by both the private token and the sealed inner. */
+  static create9(token9, valuation9, causal9, authoritativeZero9 = false) {
+    return new _CaptureContribution9(token9, valuation9, causal9, authoritativeZero9);
+  }
+};
+var requireContribution9 = (value9) => {
+  if (!CaptureContribution9.is9(value9)) throw new Error("capture-authority: forged CaptureContribution rejected");
+  return value9;
+};
+var requirePair9 = (value9) => {
+  const value = requireContribution9(value9);
+  const valuation9 = CAPTURE_VALUATION9.get(value);
+  const causal9 = CAPTURE_CAUSAL9.get(value);
+  if (valuation9 === void 0 || causal9 === void 0 || !ProviderContribution.is9(valuation9) || !ProviderContribution.is9(causal9)) {
+    throw new Error("capture-authority: missing sealed contribution pair");
+  }
+  return { valuation: valuation9, causal: causal9, authoritativeZero: CAPTURE_AUTHORITATIVE_ZERO9.has(value) };
+};
+var CaptureBoundShadow9 = class _CaptureBoundShadow9 {
+  #nominal9 = "CaptureBoundShadow9";
+  constructor(token9, fraction9, contribution9) {
+    if (token9 !== CAPTURE_BOUND_TOKEN9) throw new Error("capture-authority: bound construction is module-private");
+    if (!CaptureContribution9.is9(contribution9)) throw new Error("capture-authority: forged contribution in bound capsule");
+    const binding9 = bindCaptureContribution9(fraction9, contribution9);
+    if (!binding9.ok) throw new Error(`capture-authority: bound fraction mismatch: ${binding9.reason}`);
+    CAPTURE_BOUNDS9.add(this);
+    CAPTURE_BOUND_PARTS9.set(this, Object.freeze({ fraction: fraction9, contribution: contribution9 }));
+    void this.#nominal9;
+    Object.freeze(this);
+  }
+  static is9(value9) {
+    try {
+      return typeof value9 === "object" && value9 !== null && CAPTURE_BOUNDS9.has(value9);
+    } catch {
+      return false;
+    }
+  }
+  static create9(token9, fraction9, contribution9) {
+    return new _CaptureBoundShadow9(token9, fraction9, contribution9);
+  }
+};
+var requireBound9 = (value9) => {
+  if (!CaptureBoundShadow9.is9(value9)) throw new Error("capture-authority: forged bound capsule rejected");
+  const parts9 = CAPTURE_BOUND_PARTS9.get(value9);
+  if (parts9 === void 0) throw new Error("capture-authority: missing bound capsule state");
+  return parts9;
+};
+var makeBound9 = (fraction9, contribution9) => {
+  return CaptureBoundShadow9.create9(CAPTURE_BOUND_TOKEN9, fraction9, contribution9);
+};
+function captureBoundFraction9(value9) {
+  return requireBound9(value9).fraction;
+}
+function captureBoundCanonKey9(value9) {
+  return captureContributionCanonKey9(requireBound9(value9).contribution);
+}
+function captureBoundAtomKeys9(value9) {
+  const causal9 = requirePair9(requireBound9(value9).contribution).causal;
+  const keys9 = /* @__PURE__ */ new Set();
+  for (const poly9 of [causal9.num, causal9.den]) {
+    for (const entry9 of poly9.entries) {
+      for (const part9 of entry9.mono.parts) keys9.add(part9.atom.key);
+    }
+  }
+  return Object.freeze([...keys9].sort());
+}
+var captureCanonFromInner9 = (inner9) => {
+  const poly9 = (entries9) => entries9.flatMap((entry9) => [entry9.shape.key, entry9.mono.key, `${entry9.coeff.n}/${entry9.coeff.d}`]);
+  return enc92(["acv1", inner9.thirty ? "t30" : "std", "N", ...poly9(inner9.num.entries), "D", ...poly9(inner9.den.entries)]);
+};
+function captureContributionCanonKey9(value9) {
+  return requireContribution9(value9).key;
+}
+var providerContributionKey9 = (value9) => {
+  if (!ProviderContribution.is9(value9)) throw new Error("capture-authority: forged provider contribution");
+  const poly9 = (entries9) => entries9.flatMap((entry9) => [entry9.shape.key, entry9.mono.key, `${entry9.coeff.n}/${entry9.coeff.d}`]);
+  return enc92(["pcv1", value9.thirty ? "t30" : "std", "N", ...poly9(value9.num.entries), "D", ...poly9(value9.den.entries)]);
+};
+var CAPTURE_RESIDUE_TOKEN9 = /* @__PURE__ */ Symbol("capture-bound-residue-token");
+var CAPTURE_RESIDUES9 = /* @__PURE__ */ new WeakSet();
+var CAPTURE_RESIDUE_PARTS9 = /* @__PURE__ */ new WeakMap();
+var CAPTURE_RESIDUE_CARRIERS9 = /* @__PURE__ */ new WeakMap();
+var captureResidueKey9 = (provider9, contribution9) => {
+  const authorityKey9 = captureContributionCanonKey9(contribution9);
+  return provider9 === null ? authorityKey9 : enc92(["pr2", "P", providerContributionKey9(provider9), "A", authorityKey9]);
+};
+var CaptureResidueValue9 = class _CaptureResidueValue9 {
+  constructor(token9, provider9, contribution9, carrier9) {
+    if (token9 !== CAPTURE_RESIDUE_TOKEN9) throw new Error("capture-authority: residue construction is module-private");
+    if (provider9 !== null && !ProviderContribution.is9(provider9)) throw new Error("capture-authority: forged provider component");
+    requireContribution9(contribution9);
+    const carriers9 = new WeakSet([carrier9]);
+    CAPTURE_RESIDUES9.add(this);
+    CAPTURE_RESIDUE_PARTS9.set(this, Object.freeze({ provider: provider9, contribution: contribution9 }));
+    CAPTURE_RESIDUE_CARRIERS9.set(this, carriers9);
+    registerProvCarrierGuard9(this, {
+      attach: (source9, destination9) => {
+        if (!carriers9.has(source9)) return false;
+        carriers9.add(destination9);
+        return true;
+      },
+      recover: (fraction9) => {
+        carriers9.add(fraction9);
+      }
+    });
+    Object.freeze(this);
+  }
+  static create9(provider9, contribution9, carrier9) {
+    return new _CaptureResidueValue9(CAPTURE_RESIDUE_TOKEN9, provider9, contribution9, carrier9);
+  }
+  static is9(value9) {
+    try {
+      return typeof value9 === "object" && value9 !== null && CAPTURE_RESIDUES9.has(value9);
+    } catch {
+      return false;
+    }
+  }
+};
+var attachCaptureResidue9 = (fraction9, contribution9, provider9) => {
+  const clean9 = fraction9.withoutProvResidue9();
+  const binding9 = bindCaptureContribution9(clean9, contribution9);
+  if (!binding9.ok) throw new Error(`capture-authority: output binding failed: ${binding9.reason}`);
+  const payload9 = CaptureResidueValue9.create9(provider9, contribution9, clean9);
+  const residue9 = Object.freeze({ key: captureResidueKey9(provider9, contribution9), value: payload9 });
+  return makeBound9(clean9.withProvResidue9(residue9), contribution9);
+};
+function captureResidueMetadata9(residue9) {
+  let key9;
+  let value9;
+  try {
+    key9 = Reflect.get(residue9, "key");
+    value9 = Reflect.get(residue9, "value");
+  } catch {
+    return { ok: false, reason: "forged-payload" };
+  }
+  if (typeof key9 !== "string") return { ok: false, reason: "forged-payload" };
+  if (CaptureResidueValue9.is9(value9)) {
+    const parts9 = CAPTURE_RESIDUE_PARTS9.get(value9);
+    if (parts9 === void 0) return { ok: false, reason: "forged-payload" };
+    return captureResidueKey9(parts9.provider, parts9.contribution) === key9 ? { ok: true, provider: parts9.provider, hasAuthority: true } : { ok: false, reason: "key-mismatch" };
+  }
+  if (ProviderContribution.is9(value9)) {
+    return providerContributionKey9(value9) === key9 ? { ok: true, provider: value9, hasAuthority: false } : { ok: false, reason: "key-mismatch" };
+  }
+  return { ok: false, reason: "forged-payload" };
+}
+function captureBoundResidue9(fraction9) {
+  const residue9 = fraction9.provResidue9();
+  if (residue9 === null) return { ok: true, provider: null, authority: null };
+  let key9;
+  let value9;
+  try {
+    key9 = Reflect.get(residue9, "key");
+    value9 = Reflect.get(residue9, "value");
+  } catch {
+    return { ok: false, reason: "forged-payload" };
+  }
+  if (typeof key9 !== "string") return { ok: false, reason: "forged-payload" };
+  if (CaptureResidueValue9.is9(value9)) {
+    const parts9 = CAPTURE_RESIDUE_PARTS9.get(value9);
+    const carriers9 = CAPTURE_RESIDUE_CARRIERS9.get(value9);
+    if (parts9 === void 0 || carriers9 === void 0 || !carriers9.has(fraction9)) return { ok: false, reason: "forged-payload" };
+    if (captureResidueKey9(parts9.provider, parts9.contribution) !== key9) return { ok: false, reason: "key-mismatch" };
+    const bound9 = bindCaptureContribution9(fraction9, parts9.contribution);
+    if (!bound9.ok) return {
+      ok: false,
+      reason: bound9.reason === "forged-contribution" ? "forged-payload" : bound9.reason
+    };
+    return { ok: true, provider: parts9.provider, authority: makeBound9(fraction9, parts9.contribution) };
+  }
+  if (ProviderContribution.is9(value9)) {
+    return providerContributionKey9(value9) === key9 ? { ok: true, provider: value9, authority: null } : { ok: false, reason: "key-mismatch" };
+  }
+  return { ok: false, reason: "forged-payload" };
+}
+function captureAttachProvider9(authority9, provider9) {
+  const parts9 = requireBound9(authority9);
+  if (provider9 !== null) {
+    if (!ProviderContribution.is9(provider9) || provider9.thirty !== parts9.fraction.thirty9()) {
+      throw new Error("capture-authority: provider calendar/identity mismatch");
+    }
+    const [num9, den9] = fractionFaces9(parts9.fraction);
+    if (!mapsEqual9(projectedFace9(provider9.num), fractionFace9(num9, provider9.thirty)) || !mapsEqual9(projectedFace9(provider9.den), fractionFace9(den9, provider9.thirty))) {
+      throw new Error("capture-authority: provider face mismatch");
+    }
+  }
+  return attachCaptureResidue9(parts9.fraction, parts9.contribution, provider9);
+}
+var wrapPair9 = (valuation9, causal9, authoritativeZero9 = false) => {
+  if (!valuation9.ok) return valuation9;
+  if (!causal9.ok) return causal9;
+  return { ok: true, value: CaptureContribution9.create9(CAPTURE_CONTRIB_TOKEN9, valuation9.value, causal9.value, authoritativeZero9) };
+};
+var CAPTURE_QUOTE_TERM_AUX9 = /* @__PURE__ */ new Map();
+var monoOfCaptureAtom9 = (atom9) => {
+  const key9 = captureAtomKey9(atom9);
+  const quote9 = quoteAtom9("@capture", key9, "1", void 0, "lexical-capture");
+  const termAux9 = captureAtomTermAux9(atom9);
+  const prior9 = CAPTURE_QUOTE_TERM_AUX9.get(quote9.key);
+  if (prior9 !== void 0 && prior9 !== termAux9) {
+    throw new Error("capture-authority: one causal atom cannot change its sealed term authority");
+  }
+  CAPTURE_QUOTE_TERM_AUX9.set(quote9.key, termAux9);
+  return monoOfAtom9(quote9, 1n);
+};
+var polyOfFace9 = (terms9, thirty9, atom9) => {
+  let acc9 = polyZero9(thirty9);
+  const mono9 = atom9 === null ? MONO_UNIT9 : monoOfCaptureAtom9(atom9);
+  for (const term9 of terms9) {
+    const entry9 = polyEntry9(termShapeOfIrr9(term9, thirty9), mono9);
+    if (!entry9.ok) return entry9;
+    const next9 = polyAdd9(acc9, entry9.value);
+    if (!next9.ok) return next9;
+    acc9 = next9.value;
+  }
+  return { ok: true, value: acc9 };
+};
+var causalPolyOfFace9 = (terms9, thirty9, atom9) => {
+  if (atom9 === null) return polyOfFace9(terms9, thirty9, null);
+  let acc9 = polyZero9(thirty9);
+  const mono9 = monoOfCaptureAtom9(atom9);
+  for (const term9 of terms9) {
+    const nominal9 = termShapeOfIrr9({ x: { n: 1n, d: 1n }, comps: [...term9.comps], aux: false }, thirty9);
+    const entry9 = polyEntry9(nominal9, mono9, rDiv({ n: 1n, d: 1n }, nominal9.coeff));
+    if (!entry9.ok) return entry9;
+    const next9 = polyAdd9(acc9, entry9.value);
+    if (!next9.ok) return next9;
+    acc9 = next9.value;
+  }
+  return { ok: true, value: acc9 };
+};
+var contributionOfFraction9 = (fraction9, atom9) => {
+  const thirty9 = fraction9.thirty9();
+  const [num9, den9] = fractionFaces9(fraction9);
+  const vn9 = polyOfFace9(num9, thirty9, atom9);
+  if (!vn9.ok) return vn9;
+  const vd9 = polyOfFace9(den9, thirty9, null);
+  if (!vd9.ok) return vd9;
+  const cn9 = causalPolyOfFace9(num9, thirty9, atom9);
+  if (!cn9.ok) return cn9;
+  const cd9 = causalPolyOfFace9(den9, thirty9, null);
+  if (!cd9.ok) return cd9;
+  return wrapPair9(contribOf9(vn9.value, vd9.value), contribOf9(cn9.value, cd9.value));
+};
+var captureAuthoritativeContribution9 = (fraction9) => {
+  return contributionOfFraction9(fraction9, null);
+};
+function captureAuthoritativeBound9(fraction9) {
+  const contribution9 = captureAuthoritativeContribution9(fraction9);
+  if (!contribution9.ok) throw new Error(`capture-authority: authoritative lift failed: ${contribution9.reason}`);
+  return makeBound9(fraction9, contribution9.value);
+}
+function captureLexicalFraction9(sourceValue9, numComps9, denComps9, thirty9) {
+  const source9 = captureLexicalValue9(sourceValue9);
+  if (source9 === null) return { ok: false, reason: "missing-capture-source" };
+  const termAux9 = captureAtomTermAux9(source9.atom);
+  let fraction9;
+  if (numComps9.length === 0 && denComps9 === null) {
+    fraction9 = ShadowFraction.scalar(source9.exactRead, termAux9, thirty9);
+  } else {
+    const built9 = ShadowFraction.fromLegacy(
+      [{ x: source9.exactRead, comps: [...numComps9], aux: termAux9 }],
+      denComps9 === null ? void 0 : [{ x: { n: 1n, d: 1n }, comps: [...denComps9], aux: false }],
+      thirty9
+    );
+    if (built9.kind !== "ok") {
+      return { ok: false, reason: built9.kind === "no-shadow" ? "missing-capture-source" : built9.kind };
+    }
+    fraction9 = built9.value;
+  }
+  const contribution9 = contributionOfFraction9(fraction9, source9.atom);
+  if (!contribution9.ok) return contribution9;
+  return { ok: true, value: attachCaptureResidue9(fraction9, contribution9.value, null) };
+}
+function captureNegateContribution9(value9) {
+  const p9 = requirePair9(value9);
+  return wrapPair9(contribScale9(p9.valuation, { n: -1n, d: 1n }), contribScale9(p9.causal, { n: -1n, d: 1n }), p9.authoritativeZero);
+}
+function captureScaleContribution9(value9, scale9) {
+  const p9 = requirePair9(value9);
+  return wrapPair9(contribScale9(p9.valuation, scale9), contribScale9(p9.causal, scale9), p9.authoritativeZero && rnorm(scale9).n !== 0n);
+}
+function captureAddContribution9(a9, b9, authoritativeZero9 = false) {
+  const a0 = requirePair9(a9);
+  const b0 = requirePair9(b9);
+  return wrapPair9(contribAdd9(a0.valuation, b0.valuation), contribAdd9(a0.causal, b0.causal), authoritativeZero9);
+}
+function captureSubContribution9(a9, b9, authoritativeZero9 = false) {
+  const a0 = requirePair9(a9);
+  const b0 = requirePair9(b9);
+  return wrapPair9(contribSub9(a0.valuation, b0.valuation), contribSub9(a0.causal, b0.causal), authoritativeZero9);
+}
+function captureMulContribution9(a9, b9, authoritativeZero9 = false) {
+  const a0 = requirePair9(a9);
+  const b0 = requirePair9(b9);
+  return wrapPair9(contribMul9(a0.valuation, b0.valuation), contribMul9(a0.causal, b0.causal), authoritativeZero9);
+}
+var causalPolyHasAuxCapture9 = (poly9) => poly9.entries.some((entry9) => entry9.mono.parts.some((part9) => CAPTURE_QUOTE_TERM_AUX9.get(part9.atom.key) === true));
+function captureDivContribution9(a9, b9, authoritativeZero9 = false) {
+  const a0 = requirePair9(a9);
+  const b0 = requirePair9(b9);
+  const valuation9 = contribDiv9(a0.valuation, b0.valuation);
+  if (!valuation9.ok && valuation9.reason === "zero-denominator") {
+    if (!causalPolyHasAuxCapture9(b0.causal.num)) return valuation9;
+    const causalDen9 = contribReduce9(b0.causal);
+    if (causalDen9.kind === "error") return { ok: false, reason: causalDen9.reason };
+    if (causalDen9.kind !== "zero-provider-free" && !causalDen9.providerFree) return { ok: false, reason: "undecidable" };
+    return valuation9;
+  }
+  return wrapPair9(valuation9, contribDiv9(a0.causal, b0.causal), authoritativeZero9);
+}
+function captureInvertContribution9(value9) {
+  const p9 = requirePair9(value9);
+  const valuation9 = contribInv9(p9.valuation);
+  if (!valuation9.ok && valuation9.reason === "zero-denominator") {
+    if (!causalPolyHasAuxCapture9(p9.causal.num)) return valuation9;
+    const causal9 = contribReduce9(p9.causal);
+    if (causal9.kind === "error") return { ok: false, reason: causal9.reason };
+    if (causal9.kind !== "zero-provider-free" && !causal9.providerFree) return { ok: false, reason: "undecidable" };
+    return valuation9;
+  }
+  return wrapPair9(valuation9, contribInv9(p9.causal));
+}
+function capturePowContribution9(value9, exp9) {
+  const p9 = requirePair9(value9);
+  const valuation9 = contribPow9(p9.valuation, exp9);
+  if (!valuation9.ok && valuation9.reason === "zero-denominator") {
+    if (!causalPolyHasAuxCapture9(p9.causal.num)) return valuation9;
+    const causal9 = contribReduce9(p9.causal);
+    if (causal9.kind === "error") return { ok: false, reason: causal9.reason };
+    if (causal9.kind !== "zero-provider-free" && !causal9.providerFree) return { ok: false, reason: "undecidable" };
+    return valuation9;
+  }
+  return wrapPair9(valuation9, contribPow9(p9.causal, exp9), p9.authoritativeZero && rnorm(exp9).n > 0n);
+}
+var reframeFace9 = (input9, output9, old9, thirty9) => {
+  if (input9.length !== output9.length) return { ok: false, reason: "face-mismatch" };
+  const groups9 = /* @__PURE__ */ new Map();
+  for (let i9 = 0; i9 < input9.length; i9++) {
+    const inBuilt9 = termShapeOfIrr9(input9[i9], thirty9);
+    const outBuilt9 = termShapeOfIrr9(output9[i9], thirty9);
+    const prior9 = groups9.get(inBuilt9.shape.key);
+    if (prior9 === void 0) groups9.set(inBuilt9.shape.key, { inCoeff: inBuilt9.coeff, outs: [outBuilt9] });
+    else {
+      prior9.inCoeff = rAdd(prior9.inCoeff, inBuilt9.coeff);
+      prior9.outs.push(outBuilt9);
+    }
+  }
+  let acc9 = polyZero9(thirty9);
+  for (const entry9 of old9.entries) {
+    const group9 = groups9.get(entry9.shape.key);
+    if (group9 === void 0) return { ok: false, reason: "face-mismatch" };
+    if (rnorm(group9.inCoeff).n === 0n) {
+      if (group9.outs.length !== 1) return { ok: false, reason: "face-mismatch" };
+      const only9 = group9.outs[0];
+      const nominal9 = termShapeOfIrr9({ x: { n: 1n, d: 1n }, comps: [...only9.shape.comps], aux: false }, thirty9);
+      const entryOut9 = polyEntry9(nominal9, entry9.mono, rDiv(entry9.coeff, nominal9.coeff));
+      if (!entryOut9.ok) return entryOut9;
+      const next9 = polyAdd9(acc9, entryOut9.value);
+      if (!next9.ok) return next9;
+      acc9 = next9.value;
+      continue;
+    }
+    const share9 = rDiv(entry9.coeff, group9.inCoeff);
+    for (const outBuilt9 of group9.outs) {
+      const entryOut9 = polyEntry9(outBuilt9, entry9.mono, share9);
+      if (!entryOut9.ok) return entryOut9;
+      const next9 = polyAdd9(acc9, entryOut9.value);
+      if (!next9.ok) return next9;
+      acc9 = next9.value;
+    }
+  }
+  return { ok: true, value: acc9 };
+};
+function captureReframeContribution9(value9, input9, output9, orientation9 = "preserve") {
+  const inputBound9 = bindCaptureContribution9(input9, value9);
+  if (!inputBound9.ok) return inputBound9;
+  if (input9.thirty9() !== output9.thirty9()) return { ok: false, reason: "calendar-mismatch" };
+  const pair9 = requirePair9(value9);
+  const orientedValuation9 = orientation9 === "invert" ? contribInv9(pair9.valuation) : { ok: true, value: pair9.valuation };
+  if (!orientedValuation9.ok) return orientedValuation9;
+  const orientedCausal9 = orientation9 === "invert" ? contribInv9(pair9.causal) : { ok: true, value: pair9.causal };
+  if (!orientedCausal9.ok) {
+    return orientedCausal9.reason === "zero-denominator" ? { ok: false, reason: "undecidable" } : orientedCausal9;
+  }
+  const [rawNum9, rawDen9] = fractionFaces9(input9);
+  const inNum9 = orientation9 === "invert" ? rawDen9 : rawNum9;
+  const inDen9 = orientation9 === "invert" ? rawNum9 : rawDen9;
+  const [outNum9, outDen9] = fractionFaces9(output9);
+  const vn9 = reframeFace9(inNum9, outNum9, orientedValuation9.value.num, input9.thirty9());
+  if (!vn9.ok) return vn9;
+  const vd9 = reframeFace9(inDen9, outDen9, orientedValuation9.value.den, input9.thirty9());
+  if (!vd9.ok) return vd9;
+  const cn9 = reframeFace9(inNum9, outNum9, orientedCausal9.value.num, input9.thirty9());
+  if (!cn9.ok) return cn9;
+  const cd9 = reframeFace9(inDen9, outDen9, orientedCausal9.value.den, input9.thirty9());
+  if (!cd9.ok) return cd9;
+  const built9 = wrapPair9(
+    contribOf9(vn9.value, vd9.value),
+    contribOf9(cn9.value, cd9.value),
+    pair9.authoritativeZero && orientation9 === "preserve"
+  );
+  if (!built9.ok) return built9;
+  const outputBound9 = applyCaptureContribution9(output9, built9.value);
+  return outputBound9.ok ? built9 : outputBound9;
+}
+function captureReframeBound9(value9, output9, orientation9 = "preserve") {
+  const input9 = requireBound9(value9);
+  const reframed9 = captureReframeContribution9(input9.contribution, input9.fraction, output9.withoutProvResidue9(), orientation9);
+  if (!reframed9.ok) return {
+    kind: "error",
+    reason: reframed9.reason === "forged-contribution" ? "forged-bound" : reframed9.reason
+  };
+  return materializeDerivedBound9(output9.withoutProvResidue9(), reframed9.value);
+}
+function reduceCaptureContribution9(value9) {
+  const pair9 = requirePair9(value9);
+  const valuation9 = contribReduce9(pair9.valuation);
+  if (valuation9.kind === "error") return valuation9;
+  const causal9 = contribReduce9(pair9.causal);
+  if (causal9.kind === "error") return causal9;
+  const captureFree9 = causal9.kind === "zero-provider-free" || causal9.providerFree;
+  if (valuation9.kind === "zero-provider-free") {
+    return captureFree9 ? { kind: "capture-free-zero" } : { kind: "reduced", captureFree: false, quotient: { n: 0n, d: 1n } };
+  }
+  return { kind: "reduced", captureFree: captureFree9, quotient: valuation9.q };
+}
+function captureBoundReduce9(value9) {
+  return reduceCaptureContribution9(requireBound9(value9).contribution);
+}
+function captureFractionZeroAuthority9(fraction9) {
+  const decoded9 = captureBoundResidue9(fraction9);
+  if (!decoded9.ok) return { kind: "error", reason: decoded9.reason };
+  if (decoded9.authority === null) return { kind: "unbound" };
+  const zero9 = fraction9.zeroState();
+  if (zero9 !== "authoritative-zero" && zero9 !== "auxiliary-zero") return { kind: "not-zero" };
+  const pair9 = requirePair9(requireBound9(decoded9.authority).contribution);
+  if (pair9.authoritativeZero) return { kind: "authoritative-zero" };
+  const causalNum9 = pair9.causal.num;
+  for (const entry9 of causalNum9.entries) {
+    for (const part9 of entry9.mono.parts) {
+      if (CAPTURE_QUOTE_TERM_AUX9.get(part9.atom.key) === true) return { kind: "auxiliary-zero" };
+    }
+  }
+  return { kind: "authoritative-zero" };
+}
+var projectedFace9 = (poly9) => {
+  const out9 = /* @__PURE__ */ new Map();
+  for (const entry9 of poly9.entries) {
+    const prior9 = out9.get(entry9.shape.key);
+    out9.set(entry9.shape.key, prior9 === void 0 ? rnorm(entry9.coeff) : rAdd(prior9, entry9.coeff));
+  }
+  for (const [key9, coeff9] of out9) if (rnorm(coeff9).n === 0n) out9.delete(key9);
+  return out9;
+};
+var fractionFace9 = (terms9, thirty9) => {
+  const out9 = /* @__PURE__ */ new Map();
+  for (const term9 of terms9) {
+    const built9 = termShapeOfIrr9(term9, thirty9);
+    const prior9 = out9.get(built9.shape.key);
+    out9.set(built9.shape.key, prior9 === void 0 ? rnorm(built9.coeff) : rAdd(prior9, built9.coeff));
+  }
+  for (const [key9, coeff9] of out9) if (rnorm(coeff9).n === 0n) out9.delete(key9);
+  return out9;
+};
+var mapsEqual9 = (a9, b9) => {
+  if (a9.size !== b9.size) return false;
+  for (const [key9, av9] of a9) {
+    const bv9 = b9.get(key9);
+    if (bv9 === void 0) return false;
+    const an9 = rnorm(av9);
+    const bn9 = rnorm(bv9);
+    if (an9.n !== bn9.n || an9.d !== bn9.d) return false;
+  }
+  return true;
+};
+var captureValuationFacesMatch9 = (fraction9, valuation9) => {
+  const [num9, den9] = fractionFaces9(fraction9);
+  if (!mapsEqual9(projectedFace9(valuation9.num), fractionFace9(num9, valuation9.thirty))) return false;
+  if (mapsEqual9(projectedFace9(valuation9.den), fractionFace9(den9, valuation9.thirty))) return true;
+  return fraction9.zeroState() === "authoritative-zero" && contribReduce9(valuation9).kind === "zero-provider-free";
+};
+var capturedAuxShapeKeys9 = (poly9) => {
+  const out9 = /* @__PURE__ */ new Set();
+  for (const entry9 of poly9.entries) {
+    if (entry9.mono.parts.some((part9) => CAPTURE_QUOTE_TERM_AUX9.get(part9.atom.key) === true)) out9.add(entry9.shape.key);
+  }
+  return out9;
+};
+var capturedLiveTermKeys9 = (poly9, thirty9) => new Set(
+  poly9.entries.filter((entry9) => entry9.mono.parts.some((part9) => CAPTURE_QUOTE_TERM_AUX9.get(part9.atom.key) === true)).map((entry9) => termCanon({ x: { n: 1n, d: 1n }, comps: [...entry9.shape.comps], aux: false }, thirty9).key)
+);
+var auxiliaryShapeKeys9 = (terms9, thirty9) => {
+  const out9 = /* @__PURE__ */ new Set();
+  for (const term9 of terms9) {
+    const key9 = termShapeOfIrr9(term9, thirty9).shape.key;
+    if (term9.aux) out9.add(key9);
+  }
+  return out9;
+};
+var stringSetsEqual9 = (a9, b9) => {
+  if (a9.size !== b9.size) return false;
+  for (const key9 of a9) if (!b9.has(key9)) return false;
+  return true;
+};
+var authorityPatternMatches9 = (pair9, num9, den9) => stringSetsEqual9(pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedAuxShapeKeys9(pair9.causal.num), auxiliaryShapeKeys9(num9, pair9.valuation.thirty)) && stringSetsEqual9(pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedAuxShapeKeys9(pair9.causal.den), auxiliaryShapeKeys9(den9, pair9.valuation.thirty));
+var rewriteAuthorityPattern9 = (fraction9, numeratorKeys9, denominatorKeys9, carrier9) => {
+  const thirty9 = fraction9.thirty9();
+  const [num9, den9] = fractionFaces9(fraction9);
+  const rewrite9 = (terms9, keys9) => terms9.map((term9) => ({
+    x: term9.x,
+    comps: [...term9.comps],
+    aux: keys9.has(termCanon(term9, thirty9).key)
+  }));
+  const rebuilt9 = ShadowFraction.fromLegacy(rewrite9(num9, numeratorKeys9), rewrite9(den9, denominatorKeys9), thirty9);
+  if (rebuilt9.kind !== "ok") throw new Error(`capture-authority: proved rewrite became ${rebuilt9.kind}`);
+  void carrier9;
+  return rebuilt9.value;
+};
+function bindCaptureContribution9(fraction9, value9) {
+  if (!CaptureContribution9.is9(value9)) return { ok: false, reason: "forged-contribution" };
+  const pair9 = requirePair9(value9);
+  if (fraction9.thirty9() !== pair9.valuation.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const [num9, den9] = fractionFaces9(fraction9);
+  if (!captureValuationFacesMatch9(fraction9, pair9.valuation)) return { ok: false, reason: "face-mismatch" };
+  if (!stringSetsEqual9(pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedAuxShapeKeys9(pair9.causal.num), auxiliaryShapeKeys9(num9, pair9.valuation.thirty))) return { ok: false, reason: "face-mismatch" };
+  if (!stringSetsEqual9(pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedAuxShapeKeys9(pair9.causal.den), auxiliaryShapeKeys9(den9, pair9.valuation.thirty))) return { ok: false, reason: "face-mismatch" };
+  return { ok: true };
+}
+function applyCaptureContribution9(fraction9, value9) {
+  if (!CaptureContribution9.is9(value9)) return { ok: false, reason: "forged-contribution" };
+  const pair9 = requirePair9(value9);
+  if (fraction9.thirty9() !== pair9.valuation.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const [num9, den9] = fractionFaces9(fraction9);
+  if (!captureValuationFacesMatch9(fraction9, pair9.valuation)) return { ok: false, reason: "face-mismatch" };
+  if (!authorityPatternMatches9(pair9, num9, den9)) {
+    return { ok: false, reason: "face-mismatch" };
+  }
+  const value = rewriteAuthorityPattern9(
+    fraction9,
+    pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedLiveTermKeys9(pair9.causal.num, pair9.valuation.thirty),
+    pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedLiveTermKeys9(pair9.causal.den, pair9.valuation.thirty),
+    value9
+  );
+  const rebound9 = bindCaptureContribution9(value, value9);
+  return rebound9.ok ? { ok: true, value } : rebound9;
+}
+function captureFreeOutput9(fraction9, value9) {
+  if (!CaptureContribution9.is9(value9)) return { ok: false, reason: "forged-contribution" };
+  const reduced9 = reduceCaptureContribution9(value9);
+  if (reduced9.kind === "error") return { ok: false, reason: reduced9.reason === "budget-exceeded" ? "face-mismatch" : "face-mismatch" };
+  const captureFree9 = reduced9.kind === "capture-free-zero" || reduced9.captureFree;
+  if (!captureFree9) return { ok: false, reason: "face-mismatch" };
+  const scalar9 = fraction9.reduceScalar();
+  const exact9 = scalar9.kind === "reduced" ? null : fraction9.projectExact();
+  if (scalar9.kind !== "reduced" && exact9 === null) return { ok: false, reason: "face-mismatch" };
+  const live9 = scalar9.kind === "reduced" ? scalar9.x : rDiv(exact9.num, exact9.den);
+  const proved9 = reduced9.kind === "capture-free-zero" ? { n: 0n, d: 1n } : reduced9.quotient;
+  if (proved9 === null || rnorm(live9).n !== rnorm(proved9).n || rnorm(live9).d !== rnorm(proved9).d) {
+    return { ok: false, reason: "face-mismatch" };
+  }
+  if (scalar9.kind === "reduced") {
+    return { ok: true, value: ShadowFraction.scalar(scalar9.x, false, fraction9.thirty9()) };
+  }
+  return { ok: true, value: rewriteAuthorityPattern9(fraction9, /* @__PURE__ */ new Set(), /* @__PURE__ */ new Set(), value9) };
+}
+var materializeDerivedBound9 = (output9, contribution9) => {
+  const reduced9 = reduceCaptureContribution9(contribution9);
+  if (reduced9.kind === "error") return { kind: "error", reason: reduced9.reason };
+  const pair9 = requirePair9(contribution9);
+  if ((reduced9.kind === "capture-free-zero" || reduced9.captureFree) && !pair9.authoritativeZero) {
+    const cleared9 = captureFreeOutput9(output9, contribution9);
+    return cleared9.ok ? { kind: "purged", fraction: cleared9.value.withoutProvResidue9() } : { kind: "error", reason: cleared9.reason === "forged-contribution" ? "forged-bound" : cleared9.reason };
+  }
+  if (output9.thirty9() !== pair9.valuation.thirty) return { kind: "error", reason: "calendar-mismatch" };
+  if (!captureValuationFacesMatch9(output9, pair9.valuation)) {
+    return { kind: "error", reason: "face-mismatch" };
+  }
+  const rewritten9 = rewriteAuthorityPattern9(
+    output9.withoutProvResidue9(),
+    pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedLiveTermKeys9(pair9.causal.num, pair9.valuation.thirty),
+    pair9.authoritativeZero ? /* @__PURE__ */ new Set() : capturedLiveTermKeys9(pair9.causal.den, pair9.valuation.thirty),
+    contribution9
+  );
+  const rebound9 = bindCaptureContribution9(rewritten9, contribution9);
+  if (!rebound9.ok) return {
+    kind: "error",
+    reason: rebound9.reason === "forged-contribution" ? "forged-bound" : rebound9.reason
+  };
+  return { kind: "bound", value: attachCaptureResidue9(rewritten9, contribution9, null) };
+};
+var shadowResult9 = (result9) => result9.kind === "ok" ? result9.value : null;
+var providerPolyEqual9 = (a9, b9) => {
+  if (a9.thirty !== b9.thirty || a9.entries.length !== b9.entries.length) return false;
+  return a9.entries.every((entry9, i9) => {
+    const other9 = b9.entries[i9];
+    const ax9 = rnorm(entry9.coeff);
+    const bx9 = rnorm(other9.coeff);
+    return entry9.shape.key === other9.shape.key && entry9.mono.key === other9.mono.key && ax9.n === bx9.n && ax9.d === bx9.d;
+  });
+};
+var exactProviderPolyDiv9 = (num9, den9) => {
+  if (num9.thirty !== den9.thirty || den9.entries.length === 0) return null;
+  const realIds9 = /* @__PURE__ */ new Set();
+  const realAxes9 = /* @__PURE__ */ new Set();
+  const atoms9 = /* @__PURE__ */ new Map();
+  for (const poly9 of [num9, den9]) {
+    for (const entry9 of poly9.entries) {
+      for (const comp9 of entry9.shape.comps) {
+        realIds9.add(comp9.def.id);
+        for (const rawAxis9 of Object.keys(comp9.def.dim)) {
+          const axis9 = rawAxis9 === "tempdelta" ? "temperature" : num9.thirty && rawAxis9 === "calmonths" ? "caldays" : rawAxis9;
+          realAxes9.add(axis9);
+        }
+      }
+      for (const part9 of entry9.mono.parts) atoms9.set(part9.atom.key, part9.atom);
+    }
+  }
+  const syntheticByAtom9 = /* @__PURE__ */ new Map();
+  const atomBySynthetic9 = /* @__PURE__ */ new Map();
+  let serial9 = 0;
+  for (const [key9, atom9] of [...atoms9].sort((a9, b9) => a9[0] < b9[0] ? -1 : a9[0] > b9[0] ? 1 : 0)) {
+    let id9;
+    do {
+      id9 = `capture-polydiv-${serial9++}`;
+    } while (realIds9.has(id9) || realAxes9.has(id9) || atomBySynthetic9.has(id9));
+    const def9 = Object.freeze({
+      id: id9,
+      symbol: id9,
+      dim: Object.freeze({ [id9]: 1 }),
+      factor: Object.freeze({ n: 1n, d: 1n })
+    });
+    syntheticByAtom9.set(key9, def9);
+    atomBySynthetic9.set(id9, atom9);
+  }
+  const encode9 = (poly9) => poly9.entries.map((entry9) => ({
+    x: entry9.coeff,
+    comps: [
+      ...entry9.shape.comps.map((comp9) => ({ def: comp9.def, exp: comp9.exp })),
+      ...entry9.mono.parts.map((part9) => {
+        const exp9 = Number(part9.exp);
+        if (!Number.isSafeInteger(exp9) || BigInt(exp9) !== part9.exp) {
+          throw new Error("capture-authority: provider exponent exceeds polyDiv representation");
+        }
+        return { def: syntheticByAtom9.get(part9.atom.key), exp: exp9 };
+      })
+    ],
+    aux: false
+  }));
+  let quotientTerms9;
+  try {
+    quotientTerms9 = polyDiv(encode9(num9), encode9(den9), num9.thirty);
+  } catch {
+    return null;
+  }
+  if (quotientTerms9 === null) return null;
+  let quotient9 = polyZero9(num9.thirty);
+  const liveTerms9 = [];
+  for (const term9 of quotientTerms9) {
+    const liveComps9 = [];
+    let mono9 = MONO_UNIT9;
+    for (const comp9 of term9.comps) {
+      const atom9 = atomBySynthetic9.get(comp9.def.id);
+      if (atom9 === void 0) {
+        liveComps9.push({ def: comp9.def, exp: comp9.exp });
+        continue;
+      }
+      if (!Number.isSafeInteger(comp9.exp)) return null;
+      const nextMono9 = monoMul9(mono9, monoOfAtom9(atom9, BigInt(comp9.exp)));
+      if (!nextMono9.ok) return null;
+      mono9 = nextMono9.value;
+    }
+    liveTerms9.push({ x: term9.x, comps: liveComps9.map((comp9) => ({ ...comp9 })), aux: false });
+    const entry9 = polyEntry9(termShapeOfIrr9({ x: term9.x, comps: liveComps9, aux: false }, num9.thirty), mono9);
+    if (!entry9.ok) return null;
+    const next9 = polyAdd9(quotient9, entry9.value);
+    if (!next9.ok) return null;
+    quotient9 = next9.value;
+  }
+  const check9 = polyMul9(quotient9, den9);
+  return check9.ok && providerPolyEqual9(check9.value, num9) ? { poly: quotient9, quotient: Object.freeze(liveTerms9) } : null;
+};
+var exactLiveFractionDiv9 = (left9, right9) => {
+  if (left9.thirty9() !== right9.thirty9()) return null;
+  const presentationThirty9 = false;
+  const [leftNum9, leftDen9] = fractionFaces9(left9);
+  const [rightNum9, rightDen9] = fractionFaces9(right9);
+  const num9 = distributeTerms([...leftNum9], [...rightDen9], presentationThirty9);
+  const den9 = distributeTerms([...leftDen9], [...rightNum9], presentationThirty9);
+  if (num9 === null || den9 === null || den9.length === 0) return null;
+  const quotient9 = polyDiv(num9, den9, presentationThirty9);
+  if (quotient9 === null) return null;
+  const rebuilt9 = distributeTerms(quotient9, den9, presentationThirty9);
+  if (rebuilt9 === null || mergeTerms(num9, rebuilt9, -1n, presentationThirty9).length !== 0) return null;
+  return Object.freeze(quotient9.map((term9) => ({
+    x: term9.x,
+    comps: term9.comps.map((comp9) => ({ ...comp9 })),
+    aux: term9.aux
+  })));
+};
+var fractionFromValuation9 = (value9, liveQuotient9) => {
+  const pair9 = requirePair9(value9);
+  const termsOf9 = (poly9) => {
+    const raw9 = [];
+    for (const entry9 of poly9.entries) {
+      raw9.push({
+        x: entry9.coeff,
+        comps: entry9.shape.comps.map((comp9) => ({ def: comp9.def, exp: comp9.exp })),
+        aux: false
+      });
+    }
+    return mergeTerms(raw9, [], 1n, pair9.valuation.thirty, true);
+  };
+  const num9 = termsOf9(pair9.valuation.num);
+  const den9 = termsOf9(pair9.valuation.den);
+  if (num9 === null || den9 === null) return null;
+  const rebuilt9 = ShadowFraction.fromLegacy(num9, den9, pair9.valuation.thirty);
+  if (rebuilt9.kind === "ok") return { fraction: rebuilt9.value, contribution: value9 };
+  if (rebuilt9.kind !== "invalid-denominator" && rebuilt9.kind !== "undecidable-denominator") return null;
+  const valuationDivision9 = exactProviderPolyDiv9(pair9.valuation.num, pair9.valuation.den);
+  const causalDivision9 = exactProviderPolyDiv9(pair9.causal.num, pair9.causal.den);
+  if (valuationDivision9 === null || causalDivision9 === null) return null;
+  const normalized9 = wrapPair9(
+    contribOf9(valuationDivision9.poly, polyUnit9(pair9.valuation.thirty)),
+    contribOf9(causalDivision9.poly, polyUnit9(pair9.causal.thirty))
+  );
+  if (!normalized9.ok) return null;
+  const quotient9 = ShadowFraction.fromLegacy(
+    [...liveQuotient9 ?? valuationDivision9.quotient],
+    void 0,
+    pair9.valuation.thirty
+  );
+  return quotient9.kind === "ok" ? { fraction: quotient9.value, contribution: normalized9.value } : null;
+};
+var materializeUnaryWithFormalFallback9 = (output9, contribution9) => {
+  const formal9 = fractionFromValuation9(contribution9);
+  const chosen9 = output9 ?? formal9?.fraction ?? null;
+  if (chosen9 === null) return { kind: "error", reason: "shadow-refused" };
+  const materialized9 = materializeDerivedBound9(chosen9, output9 === null && formal9 !== null ? formal9.contribution : contribution9);
+  return materialized9.kind === "error" && materialized9.reason === "face-mismatch" && formal9 !== null ? materializeDerivedBound9(formal9.fraction, formal9.contribution) : materialized9;
+};
+function captureNegate9(value9) {
+  const input9 = requireBound9(value9);
+  const contribution9 = captureNegateContribution9(input9.contribution);
+  return contribution9.ok ? materializeDerivedBound9(input9.fraction.negate(), contribution9.value) : { kind: "error", reason: contribution9.reason };
+}
+function captureScale9(value9, scale9) {
+  const input9 = requireBound9(value9);
+  const contribution9 = captureScaleContribution9(input9.contribution, scale9);
+  return contribution9.ok ? materializeDerivedBound9(input9.fraction.scale(scale9), contribution9.value) : { kind: "error", reason: contribution9.reason };
+}
+var captureBinary9 = (op9, a9, b9) => {
+  const a0 = requireBound9(a9);
+  const b0 = requireBound9(b9);
+  const authZeroA9 = captureFractionZeroAuthority9(a0.fraction).kind === "authoritative-zero";
+  const authZeroB9 = captureFractionZeroAuthority9(b0.fraction).kind === "authoritative-zero";
+  const outputAuthZero9 = op9 === "+" || op9 === "-" ? authZeroA9 && authZeroB9 : op9 === "*" ? authZeroA9 || authZeroB9 : authZeroA9 && b0.fraction.zeroState() === "nonzero";
+  const contribution9 = op9 === "+" ? captureAddContribution9(a0.contribution, b0.contribution, outputAuthZero9) : op9 === "-" ? captureSubContribution9(a0.contribution, b0.contribution, outputAuthZero9) : op9 === "*" ? captureMulContribution9(a0.contribution, b0.contribution, outputAuthZero9) : captureDivContribution9(a0.contribution, b0.contribution, outputAuthZero9);
+  if (!contribution9.ok) return { kind: "error", reason: contribution9.reason };
+  const reduced9 = reduceCaptureContribution9(contribution9.value);
+  if (reduced9.kind === "error") return { kind: "error", reason: reduced9.reason };
+  const faceDigest9 = (fraction9) => {
+    const [num9, den9] = fractionFaces9(fraction9);
+    const face9 = (terms9) => JSON.stringify(terms9.map((term9) => {
+      const canon9 = termCanon(term9, fraction9.thirty9());
+      return [canon9.key, `${canon9.canonX.n}/${canon9.canonX.d}`, term9.aux ? 1 : 0];
+    }));
+    return `${face9(num9)}//${face9(den9)}`;
+  };
+  const captureCorrelated9 = captureContributionCanonKey9(a0.contribution) === captureContributionCanonKey9(b0.contribution) && faceDigest9(a0.fraction) === faceDigest9(b0.fraction);
+  if (op9 === "-" && captureCorrelated9) {
+    return { kind: "purged", fraction: ShadowFraction.scalar({ n: 0n, d: 1n }, false, a0.fraction.thirty9()) };
+  }
+  const correlatedUnit9 = op9 === "/" && (reduced9.kind === "capture-free-zero" || reduced9.captureFree) && captureCorrelated9 ? a0.fraction.correlatedUnitQuotient9(b0.fraction) ?? ShadowFraction.scalar({ n: 1n, d: 1n }, false, a0.fraction.thirty9()) : null;
+  if (correlatedUnit9 !== null) return { kind: "purged", fraction: correlatedUnit9.withoutProvResidue9() };
+  const formalOutput9 = fractionFromValuation9(
+    contribution9.value,
+    op9 === "/" ? exactLiveFractionDiv9(a0.fraction, b0.fraction) : void 0
+  );
+  const liveOutput9 = correlatedUnit9 ?? shadowResult9(op9 === "+" ? a0.fraction.add(b0.fraction) : op9 === "-" ? a0.fraction.sub(b0.fraction) : op9 === "*" ? a0.fraction.mul(b0.fraction) : a0.fraction.div(b0.fraction));
+  const output9 = liveOutput9 ?? formalOutput9?.fraction ?? null;
+  if (output9 === null) return { kind: "error", reason: "shadow-refused" };
+  const materialized9 = materializeDerivedBound9(
+    output9,
+    liveOutput9 === null && formalOutput9 !== null ? formalOutput9.contribution : contribution9.value
+  );
+  return materialized9.kind === "error" && materialized9.reason === "face-mismatch" && formalOutput9 !== null ? materializeDerivedBound9(formalOutput9.fraction, formalOutput9.contribution) : materialized9;
+};
+var captureAdd9 = (a9, b9) => captureBinary9("+", a9, b9);
+var captureSub9 = (a9, b9) => captureBinary9("-", a9, b9);
+var captureMul9 = (a9, b9) => captureBinary9("*", a9, b9);
+var captureDiv9 = (a9, b9) => captureBinary9("/", a9, b9);
+function captureAbsorbAuthoritativeZero9(bound9, zero9, op9) {
+  const owned9 = requireBound9(bound9);
+  if (owned9.fraction.thirty9() !== zero9.thirty9()) return { kind: "error", reason: "calendar-mismatch" };
+  if (zero9.zeroState() !== "authoritative-zero") return { kind: "error", reason: "face-mismatch" };
+  void op9;
+  return {
+    kind: "purged",
+    fraction: ShadowFraction.scalar({ n: 0n, d: 1n }, false, zero9.thirty9())
+  };
+}
+function captureInvert9(value9) {
+  const input9 = requireBound9(value9);
+  const contribution9 = captureInvertContribution9(input9.contribution);
+  if (!contribution9.ok) return { kind: "error", reason: contribution9.reason };
+  return materializeUnaryWithFormalFallback9(shadowResult9(input9.fraction.invert()), contribution9.value);
+}
+var powShadow9 = (value9, exponent9) => {
+  if (exponent9 === 0n) return ShadowFraction.scalar({ n: 1n, d: 1n }, false, value9.thirty9());
+  let exp9 = exponent9 < 0n ? -exponent9 : exponent9;
+  let base9 = value9;
+  if (exponent9 < 0n) {
+    const inverse9 = value9.invert();
+    if (inverse9.kind !== "ok") return null;
+    base9 = inverse9.value;
+  }
+  let out9 = ShadowFraction.scalar({ n: 1n, d: 1n }, false, value9.thirty9());
+  while (exp9 > 0n) {
+    if ((exp9 & 1n) === 1n) {
+      const next9 = out9.mul(base9);
+      if (next9.kind !== "ok") return null;
+      out9 = next9.value;
+    }
+    exp9 >>= 1n;
+    if (exp9 > 0n) {
+      const square9 = base9.mul(base9);
+      if (square9.kind !== "ok") return null;
+      base9 = square9.value;
+    }
+  }
+  return out9;
+};
+function capturePow9(value9, exponent9) {
+  const input9 = requireBound9(value9);
+  const contribution9 = capturePowContribution9(input9.contribution, exponent9);
+  if (!contribution9.ok) return { kind: "error", reason: contribution9.reason };
+  const normal9 = rnorm(exponent9);
+  if (normal9.d !== 1n) return { kind: "error", reason: "non-integer-exponent" };
+  return materializeUnaryWithFormalFallback9(powShadow9(input9.fraction, normal9.n), contribution9.value);
+}
+Object.freeze(CaptureContribution9.prototype);
+Object.freeze(CaptureContribution9);
+Object.freeze(CaptureBoundShadow9.prototype);
+Object.freeze(CaptureBoundShadow9);
+Object.freeze(CaptureResidueValue9.prototype);
+Object.freeze(CaptureResidueValue9);
+
+// ../textual-calculator/core/packages/engine/src/shadow-capture-bounded-reserve.ts
+var CAUSE_TOKEN9 = /* @__PURE__ */ Symbol("capture-bounded-cause-token");
+var CAUSES9 = /* @__PURE__ */ new WeakSet();
+var CAUSE_PARTS9 = /* @__PURE__ */ new WeakMap();
+var RESERVE_TICKETS9 = /* @__PURE__ */ new WeakMap();
+var enc93 = (parts9) => `cbr1(${parts9.map((part9) => `${part9.length}:${part9}`).join(",")})`;
+var ratKey9 = (value9) => {
+  const n9 = rnorm(value9);
+  return `${n9.n}/${n9.d}`;
+};
+var hasOwn9 = (value9, key9) => Object.prototype.hasOwnProperty.call(value9, key9);
+var stepKey9 = (step9) => {
+  switch (step9.kind) {
+    case "pow-rational":
+      return enc93(["step", "pow-rational", ratKey9(step9.baseExact), ratKey9(step9.exponent)]);
+    case "sqrt":
+      return enc93(["step", "sqrt", step9.spelling]);
+    case "pow-integer":
+      return enc93(["step", "pow-integer", step9.exponent.toString()]);
+    case "attach-unit":
+      return enc93(["step", "attach-unit"]);
+    case "binary":
+      return enc93(["step", "binary", step9.op, ratKey9(step9.leftExact), ratKey9(step9.rightExact)]);
+  }
+};
+var readRat9 = (value9) => {
+  if (typeof value9 !== "object" || value9 === null) return null;
+  let n9;
+  let d9;
+  try {
+    n9 = Reflect.get(value9, "n");
+    d9 = Reflect.get(value9, "d");
+  } catch {
+    return null;
+  }
+  if (typeof n9 !== "bigint" || typeof d9 !== "bigint" || d9 === 0n) return null;
+  return rnorm({ n: n9, d: d9 });
+};
+var carrierKey9 = (value9) => {
+  if (typeof value9 !== "object" || value9 === null) return null;
+  const carrier9 = value9;
+  let t9;
+  let v9;
+  let vx9;
+  let base9;
+  let dim9;
+  let symbol9;
+  let def9;
+  let comps9;
+  let rate9;
+  let chosen9;
+  let capped92;
+  let capF9;
+  let terms9;
+  let termsDen9;
+  try {
+    t9 = Reflect.get(carrier9, "t");
+    v9 = Reflect.get(carrier9, "v");
+    vx9 = Reflect.get(carrier9, "vx");
+    base9 = Reflect.get(carrier9, "base");
+    dim9 = Reflect.get(carrier9, "dim");
+    symbol9 = Reflect.get(carrier9, "symbol");
+    def9 = Reflect.get(carrier9, "def");
+    comps9 = Reflect.get(carrier9, "comps");
+    rate9 = Reflect.get(carrier9, "rate");
+    chosen9 = Reflect.get(carrier9, "chosen");
+    capped92 = Reflect.get(carrier9, "capped");
+    capF9 = Reflect.get(carrier9, "capF");
+    terms9 = Reflect.get(carrier9, "terms");
+    termsDen9 = Reflect.get(carrier9, "termsDen");
+  } catch {
+    return null;
+  }
+  if (t9 !== "d" && t9 !== "q" || typeof v9 !== "object" || v9 === null || capped92 !== true || !Array.isArray(capF9) || capF9.length === 0 || terms9 !== void 0 || termsDen9 !== void 0) return null;
+  let shown9;
+  let exact9;
+  try {
+    shown9 = v9.toString();
+    const vxRat9 = vx9 === void 0 ? null : readRat9(vx9);
+    if (vx9 !== void 0 && vxRat9 === null) return null;
+    exact9 = vxRat9 ?? rnorm(decToRat(v9));
+  } catch {
+    return null;
+  }
+  const entries9 = [];
+  const length9 = capF9.length;
+  for (let i9 = 0; i9 < length9; i9++) {
+    const raw9 = capF9[i9];
+    if (typeof raw9 !== "object" || raw9 === null) return null;
+    let s9;
+    let x9;
+    let b9;
+    try {
+      s9 = Reflect.get(raw9, "s");
+      x9 = Reflect.get(raw9, "x");
+      b9 = Reflect.get(raw9, "b");
+    } catch {
+      return null;
+    }
+    const xr9 = readRat9(x9);
+    const br9 = readRat9(b9);
+    if (typeof s9 !== "string" || xr9 === null || br9 === null) return null;
+    entries9.push(enc93([s9, ratKey9(xr9), ratKey9(br9)]));
+  }
+  const envelope9 = [];
+  if (t9 === "q") {
+    if (typeof dim9 !== "object" || dim9 === null || typeof symbol9 !== "string") return null;
+    const dimEntries9 = [];
+    for (const [axis9, exp9] of Object.entries(dim9).sort(([a9], [b9]) => a9.localeCompare(b9))) {
+      if (typeof exp9 !== "number" || !Number.isFinite(exp9)) return null;
+      dimEntries9.push(enc93([axis9, Object.is(exp9, -0) ? "-0" : String(exp9)]));
+    }
+    const defCache9 = /* @__PURE__ */ new Map();
+    const defKey9 = (raw9) => {
+      if (typeof raw9 !== "object" || raw9 === null) return null;
+      const cached9 = defCache9.get(raw9);
+      if (cached9 !== void 0) return cached9;
+      try {
+        const key9 = captureUnitDef9(raw9);
+        defCache9.set(raw9, key9);
+        return key9;
+      } catch {
+        return null;
+      }
+    };
+    const defSem9 = def9 === void 0 ? "def:undefined" : defKey9(def9);
+    if (defSem9 === null) return null;
+    const compSem9 = [];
+    if (comps9 !== void 0) {
+      if (!Array.isArray(comps9)) return null;
+      for (const comp9 of comps9) {
+        if (typeof comp9 !== "object" || comp9 === null) return null;
+        let compDef9;
+        let exp9;
+        try {
+          compDef9 = Reflect.get(comp9, "def");
+          exp9 = Reflect.get(comp9, "exp");
+        } catch {
+          return null;
+        }
+        const dk9 = defKey9(compDef9);
+        if (dk9 === null || typeof exp9 !== "number" || !Number.isFinite(exp9)) return null;
+        compSem9.push(enc93([dk9, Object.is(exp9, -0) ? "-0" : String(exp9)]));
+      }
+    }
+    let rateSem9 = "rate:undefined";
+    if (rate9 !== void 0) {
+      if (typeof rate9 !== "object" || rate9 === null) return null;
+      let num9;
+      let den9;
+      try {
+        num9 = Reflect.get(rate9, "num");
+        den9 = Reflect.get(rate9, "den");
+      } catch {
+        return null;
+      }
+      const nk9 = defKey9(num9);
+      const dk9 = defKey9(den9);
+      if (nk9 === null || dk9 === null) return null;
+      rateSem9 = enc93(["rate", nk9, dk9]);
+    }
+    envelope9.push(
+      "q",
+      symbol9,
+      ...dimEntries9,
+      defSem9,
+      hasOwn9(carrier9, "comps") ? enc93(["comps", ...compSem9]) : "comps:absent",
+      rateSem9,
+      hasOwn9(carrier9, "chosen") ? `chosen:${String(chosen9)}` : "chosen:absent"
+    );
+  } else {
+    envelope9.push("d", hasOwn9(carrier9, "base") ? `base:${String(base9)}` : "base:absent");
+  }
+  return enc93([
+    "carrier",
+    shown9,
+    ratKey9(exact9),
+    hasOwn9(carrier9, "vx") ? `vx:${vx9 === void 0 ? "undefined" : ratKey9(exact9)}` : "vx:absent",
+    ...envelope9,
+    "capped:true",
+    ...entries9
+  ]);
+};
+var CaptureBoundedCause9 = class _CaptureBoundedCause9 {
+  #nominal9 = "CaptureBoundedCause9";
+  constructor(token9, key9, sourceAtomKeys9) {
+    if (token9 !== CAUSE_TOKEN9) throw new Error("capture-bounded-reserve: construction is module-private");
+    CAUSES9.add(this);
+    CAUSE_PARTS9.set(this, Object.freeze({ key: key9, sourceAtomKeys: Object.freeze([...sourceAtomKeys9]) }));
+    void this.#nominal9;
+    Object.freeze(this);
+  }
+  static create9(token9, key9, sourceAtomKeys9) {
+    return new _CaptureBoundedCause9(token9, key9, sourceAtomKeys9);
+  }
+  static is9(value9) {
+    try {
+      return typeof value9 === "object" && value9 !== null && CAUSES9.has(value9);
+    } catch {
+      return false;
+    }
+  }
+};
+var causeParts9 = (cause9) => {
+  if (!CaptureBoundedCause9.is9(cause9)) throw new Error("capture-bounded-reserve: forged cause");
+  const parts9 = CAUSE_PARTS9.get(cause9);
+  if (parts9 === void 0) throw new Error("capture-bounded-reserve: missing cause state");
+  return parts9;
+};
+var makeCause9 = (key9, sourceAtomKeys9) => CaptureBoundedCause9.create9(CAUSE_TOKEN9, key9, [...new Set(sourceAtomKeys9)].sort());
+function captureBoundedCauseFromShadow9(bound9) {
+  const fraction9 = captureBoundFraction9(bound9);
+  const decoded9 = captureBoundResidue9(fraction9);
+  if (!decoded9.ok || decoded9.authority === null || decoded9.provider !== null || captureBoundCanonKey9(decoded9.authority) !== captureBoundCanonKey9(bound9)) {
+    throw new Error("capture-bounded-reserve: source shadow is not a provider-free authenticated capture");
+  }
+  const atoms9 = captureBoundAtomKeys9(decoded9.authority);
+  return makeCause9(enc93(["shadow", captureBoundCanonKey9(decoded9.authority), ...atoms9]), atoms9);
+}
+function captureBoundedCauseFromAtom9(atom9) {
+  const key9 = captureAtomKey9(atom9);
+  return makeCause9(enc93(["atom", key9]), [key9]);
+}
+function captureBoundedReserve9(carrier9) {
+  if (typeof carrier9 !== "object" || carrier9 === null) return Object.freeze({ ok: true, value: null });
+  const ticket9 = RESERVE_TICKETS9.get(carrier9);
+  if (ticket9 === void 0) return Object.freeze({ ok: true, value: null });
+  if (!CaptureBoundedCause9.is9(ticket9.cause)) return Object.freeze({ ok: false, reason: "forged-reserve" });
+  const current9 = carrierKey9(carrier9);
+  if (current9 === null || current9 !== ticket9.carrierKey) return Object.freeze({ ok: false, reason: "carrier-mismatch" });
+  const parts9 = causeParts9(ticket9.cause);
+  if (parts9.key !== ticket9.key || parts9.sourceAtomKeys.join("\0") !== ticket9.sourceAtomKeys.join("\0")) {
+    return Object.freeze({ ok: false, reason: "forged-reserve" });
+  }
+  return Object.freeze({ ok: true, value: Object.freeze({
+    key: ticket9.key,
+    sourceAtomKeys: ticket9.sourceAtomKeys,
+    cause: ticket9.cause
+  }) });
+}
+function copyCaptureBoundedReserve9(source9, target9) {
+  const read9 = captureBoundedReserve9(source9);
+  if (!read9.ok || read9.value === null) return read9;
+  if (typeof target9 !== "object" || target9 === null) return Object.freeze({ ok: false, reason: "carrier-mismatch" });
+  const sourceCarrier9 = carrierKey9(source9);
+  const targetCarrier9 = carrierKey9(target9);
+  if (sourceCarrier9 === null || targetCarrier9 === null || sourceCarrier9 !== targetCarrier9) {
+    return Object.freeze({ ok: false, reason: "carrier-mismatch" });
+  }
+  RESERVE_TICKETS9.set(target9, Object.freeze({
+    cause: read9.value.cause,
+    carrierKey: targetCarrier9,
+    key: read9.value.key,
+    sourceAtomKeys: read9.value.sourceAtomKeys
+  }));
+  return captureBoundedReserve9(target9);
+}
+function bindCaptureBoundedReserve9(causes9, output9, step9) {
+  if (causes9.length === 0 || causes9.some((cause92) => !CaptureBoundedCause9.is9(cause92))) {
+    return Object.freeze({ ok: false, reason: "forged-cause" });
+  }
+  if (typeof output9 !== "object" || output9 === null) return Object.freeze({ ok: false, reason: "carrier-unbounded" });
+  const carrier9 = carrierKey9(output9);
+  if (carrier9 === null) return Object.freeze({ ok: false, reason: "carrier-unbounded" });
+  const old9 = captureBoundedReserve9(output9);
+  if (!old9.ok || old9.value !== null) return Object.freeze({ ok: false, reason: "already-bound" });
+  const parts9 = causes9.map(causeParts9);
+  const sourceAtomKeys9 = Object.freeze([...new Set(parts9.flatMap((part9) => part9.sourceAtomKeys))].sort());
+  const key9 = enc93(["reserve", stepKey9(step9), ...parts9.map((part9) => part9.key), carrier9]);
+  const cause9 = makeCause9(key9, sourceAtomKeys9);
+  RESERVE_TICKETS9.set(output9, Object.freeze({ cause: cause9, carrierKey: carrier9, key: key9, sourceAtomKeys: sourceAtomKeys9 }));
+  return Object.freeze({ ok: true, key: key9, sourceAtomKeys: sourceAtomKeys9, cause: cause9 });
+}
+Object.freeze(CaptureBoundedCause9.prototype);
+Object.freeze(CaptureBoundedCause9);
 
 // ../textual-calculator/core/packages/engine/src/units.ts
 var r2 = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
@@ -30527,6 +33059,7 @@ Object.setPrototypeOf(CAL_BY_SYMBOL, null);
 Object.setPrototypeOf(CAL_UNIT_DEFS, null);
 
 // ../textual-calculator/core/packages/engine/src/evaluator.ts
+var B1_MECHANISM_ROUTE9 = /* @__PURE__ */ Symbol("b1-mechanism-route");
 var err = (code, detail) => detail === void 0 ? { t: "e", code } : { t: "e", code, detail };
 var qx = (q2) => q2.vx ?? decToRat(q2.v);
 function ratExactDecString(x2) {
@@ -31077,16 +33610,34 @@ function fxRat(provider, from, to, ctx) {
     const d2 = validRate(direct.rate);
     if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${direct.rate}\u201D for ${from} \u2192 ${to}`);
     ctx.fxTrace?.push({ from, to, rate: direct.rate, ...isoAsOf(direct.asOf) && { asOf: direct.asOf }, source: direct.source, via: "direct" });
-    return decToRat(d2);
+    return {
+      rat: decToRat(d2),
+      authority: "aux",
+      route: "direct",
+      atom: { from, to, rate: direct.rate, ...direct.asOf !== void 0 && { asOf: direct.asOf }, source: direct.source, exp: 1n }
+    };
   }
   const inverse = inverseRaw === "\xB7" ? void 0 : inverseRaw ?? void 0;
   if (inverse) {
     const d2 = validRate(inverse.rate);
     if (d2 === null) return err("rates-unavailable", `invalid rate quote \u201C${inverse.rate}\u201D for ${to} \u2192 ${from}`);
     ctx.fxTrace?.push({ from: to, to: from, rate: inverse.rate, ...isoAsOf(inverse.asOf) && { asOf: inverse.asOf }, source: inverse.source, via: "inverse" });
-    return rDiv({ n: 1n, d: 1n }, decToRat(d2));
+    return {
+      rat: rDiv({ n: 1n, d: 1n }, decToRat(d2)),
+      authority: "aux",
+      route: "inverse",
+      atom: { from: to, to: from, rate: inverse.rate, ...inverse.asOf !== void 0 && { asOf: inverse.asOf }, source: inverse.source, exp: -1n }
+    };
   }
   return err("rates-unavailable", `no rate for ${from} \u2192 ${to}`);
+}
+function fxJoinStamp9(out, source) {
+  if (out.t !== "q" && out.t !== "d" && out.t !== "p" && out.t !== "f") return out;
+  if (out.terms !== void 0 || out.termsDen !== void 0) return out;
+  const src9 = source.foldA9;
+  const zero9 = zeroState(out) === "zero";
+  const cls9 = zero9 ? authPreserve9(src9) : authJoin9(src9, AUX9);
+  return cls9 === void 0 ? out : stampAuth9(out, cls9);
 }
 var mkQ = (x2, def) => ({
   t: "q",
@@ -31108,13 +33659,60 @@ function convertRat(x2, from, to) {
   return rMul(x2, rDiv(ratOfFactor(from.factor), ratOfFactor(to.factor)));
 }
 function convertQuantity(rt2, to, ctx) {
+  if (ctx.__b1ProductionCausal9 !== void 0 && rt2.def !== void 0 && (rt2.def.currency !== void 0 || to.currency !== void 0)) {
+    return convertQuantityInner9(rt2, to, ctx, b1CaptureOperand9(rt2, ctx.monthToDays === "30"));
+  }
+  if (ctx.__b1ProductionCausal9 !== void 0 && rt2.def !== void 0 && rt2.def.currency === void 0 && to.currency === void 0 && dimEquals(rt2.def.dim, to.dim)) {
+    const convertible9 = (u9) => u9.factor !== void 0 || u9.factorDec !== void 0 || u9.affine !== void 0;
+    if (convertible9(rt2.def) && convertible9(to)) {
+      return b1TransformProduction9(ctx, {
+        site: "convertQuantity",
+        host: "convertQuantity",
+        capture: b1CaptureOperand9(rt2, ctx.monthToDays === "30"),
+        frameOp: { kind: "convert", target: b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30") },
+        meta: { kind: "reframe" }
+      }, (legacyCtx9) => convertQuantityInner9(rt2, to, legacyCtx9, null));
+    }
+  }
+  if (ctx.__b1Transform9 === void 0) return convertQuantityInner9(rt2, to, ctx, null);
+  ctx.__b1Capture9?.("transform");
+  const capture9 = b1CaptureOperand9(rt2, ctx.monthToDays === "30");
+  const owned9 = ctx.__b1EligibilityPartition9 === true ? rt2 : materializeB1CapturedQuantityForConversion9(capture9) ?? rt2;
+  return convertQuantityInner9(owned9, to, ctx, capture9);
+}
+function convertQuantityInner9(rt2, to, ctx, inputCapture9) {
+  const finish9 = (out9, frameOp9, meta9) => inputCapture9 === null ? out9 : b1Transform9(ctx, {
+    site: "convertQuantity",
+    host: "convertQuantity",
+    capture: inputCapture9,
+    out: out9,
+    frameOp: frameOp9,
+    meta: meta9
+  });
   const from = rt2.def;
   if (!from) return err("unsupported-pair", `cannot convert the compound unit \u201C${rt2.symbol}\u201D`);
   if (!dimEquals(from.dim, to.dim)) {
     return err("unit-mismatch", `cannot convert ${from.symbol} to ${to.symbol}`);
   }
   if (from.currency || to.currency) {
-    if (from.currency === to.currency) return { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] };
+    if (from.currency === to.currency) {
+      if (ctx.__b1ProductionCausal9 !== void 0 && inputCapture9 !== null) {
+        return b1TransformProduction9(ctx, {
+          site: "convertQuantity",
+          host: "convertQuantity",
+          capture: inputCapture9,
+          frameOp: { kind: "reframe", target: b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30"), factor: { n: 1n, d: 1n } },
+          meta: { kind: "reframe" }
+        }, () => alR9(rt2, { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] }));
+      }
+      const same9 = alR9(rt2, { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] });
+      const target93 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
+      return finish9(
+        same9,
+        { kind: "reframe", target: target93, factor: { n: 1n, d: 1n } },
+        { kind: "reframe" }
+      );
+    }
     const provider = ctx.rates;
     if (!provider) {
       ctx.fxReads?.push({ from: from.currency, to: to.currency, obs: "\u2205;\u2205" });
@@ -31122,12 +33720,16 @@ function convertQuantity(rt2, to, ctx) {
     }
     const fx = fxRat(provider, from.currency, to.currency, ctx);
     if ("t" in fx) return fx;
-    const conv9 = (() => {
-      if (rt2.terms === void 0) return void 0;
+    const numFxRecipe9 = [];
+    const convTerms9 = () => {
+      const inputTerms9 = rt2.terms;
+      if (inputTerms9 === void 0) return void 0;
       const out9 = [];
-      for (const t9 of rt2.terms) {
+      for (const t9 of inputTerms9) {
         let x9 = t9.x;
         let bad9 = false;
+        let touched9 = false;
+        const atoms9 = [];
         const newComps9 = /* @__PURE__ */ new Map();
         const push9 = (d9, e9) => {
           const p9 = newComps9.get(d9.id);
@@ -31144,15 +33746,48 @@ function convertQuantity(rt2, to, ctx) {
             bad9 = true;
             break;
           }
-          x9 = rMul(x9, rPowInt(fx2, c9.exp));
+          x9 = rMul(x9, rPowInt(fx2.rat, c9.exp));
+          atoms9.push({ ...fx2.atom, exp: fx2.atom.exp * BigInt(c9.exp) });
+          touched9 = true;
           push9(to, c9.exp);
         }
-        if (bad9) return rt2.terms;
+        if (bad9) {
+          numFxRecipe9.length = 0;
+          numFxRecipe9.push(...inputTerms9.map(() => []));
+          return inputTerms9;
+        }
+        void touched9;
         out9.push({ ...t9, x: x9, comps: [...newComps9.values()].filter((c9) => c9.exp !== 0) });
+        numFxRecipe9.push(atoms9);
       }
       return out9;
-    })();
-    return { ...mkQ(rMul(qx(rt2), fx), to), ...conv9 && { terms: conv9 }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+    };
+    const conv9 = convTerms9();
+    const fxNum9 = rt2.terms === void 0 ? [[fx.atom]] : numFxRecipe9;
+    const fxDen9 = (rt2.termsDen ?? ONE_TERMS()).map(() => []);
+    const target92 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
+    const legacyFx9 = (ownerCtx9) => {
+      const legacyOut9 = { ...mkQ(rMul(qx(rt2), fx.rat), to), ...conv9 && { terms: conv9 }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+      const joinOut9 = ownerCtx9.__fxJoin9 === true || ownerCtx9.__convAuth9 === true ? fxJoinStamp9(legacyOut9, rt2) : legacyOut9;
+      if (ownerCtx9.__fxObserver9 !== void 0) {
+        ownerCtx9.__fxObserver9({ site: fx.route === "direct" ? "convertQuantityDirect" : "convertQuantityInverse", factor: fx.rat, route: fx.route, provenance: { kind: "provider", route: fx.route }, authority: "aux", legacyOut: legacyOut9, candOut: joinOut9, touchedNum: [], touchedDen: [] });
+      }
+      return joinOut9;
+    };
+    if (ctx.__b1ProductionCausal9 !== void 0 && inputCapture9 !== null) {
+      return b1TransformProduction9(ctx, {
+        site: "convertQuantity",
+        host: "convertQuantity",
+        capture: inputCapture9,
+        frameOp: { kind: "reframe", target: target92, factor: fx.rat },
+        meta: { kind: "fx", num: fxNum9, den: fxDen9 }
+      }, legacyFx9);
+    }
+    return finish9(
+      legacyFx9(ctx),
+      { kind: "reframe", target: target92, factor: fx.rat },
+      { kind: "fx", num: fxNum9, den: fxDen9 }
+    );
   }
   const convertible = (u2) => u2.factor !== void 0 || u2.factorDec !== void 0 || u2.affine !== void 0;
   if (!convertible(from) || !convertible(to)) {
@@ -31160,12 +33795,18 @@ function convertQuantity(rt2, to, ctx) {
   }
   const x2 = convertRat(qx(rt2), from, to);
   if (x2 === null) {
-    const shadow9 = rt2.terms ?? [{ x: qx(rt2), comps: (compsOf(rt2) ?? [{ def: from, exp: 1 }]).map((c9) => ({ ...c9 })), aux: rnorm(qx(rt2)).d !== 1n }];
+    const shadowA9 = shadowTermsA9(rt2, ctx);
+    if (!Array.isArray(shadowA9)) return shadowA9;
+    const shadow9 = rt2.terms !== void 0 ? shadowA9 : shadowA9.map((t9) => t9.comps.length === 0 ? { ...t9, comps: [{ def: from, exp: 1 }] } : t9);
     const cvOut9 = { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, terms: shadow9, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
-    return capScaleConv9(cvOut9, rt2, decToRat(convertExact(new DecC(1), from, to)));
+    const scaled9 = capScaleConv9(cvOut9, rt2, decToRat(convertExact(new DecC(1), from, to)));
+    const target92 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
+    return finish9(scaled9, { kind: "convert", target: target92 }, { kind: "reframe" });
   }
   const cvOut8 = { ...mkQ(x2, to), ...rt2.terms && { terms: rt2.terms }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
-  return capScaleConv9(cvOut8, rt2, qx(rt2).n === 0n ? null : rDiv(x2, qx(rt2)));
+  const exactOut9 = alR9(rt2, capScaleConv9(cvOut8, rt2, qx(rt2).n === 0n ? null : rDiv(x2, qx(rt2))));
+  const target9 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
+  return finish9(exactOut9, { kind: "convert", target: target9 }, { kind: "reframe" });
 }
 var capScaleConv9 = (out9, in9, ratio9) => {
   const f9 = capFOf9(in9);
@@ -31201,6 +33842,51 @@ function basePartOf(comps, ctx) {
   return { rat, dec: dec2 };
 }
 var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
+var shadowFracA9 = (q2, ctx, authoritySource9) => {
+  if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
+  if (ctx.__convAuth9 !== true && authoritySource9 === void 0) {
+    return { kind: "frac", den9: "valid", num: termsOf(q2), den: q2.termsDen ?? ONE_TERMS() };
+  }
+  const legacy9 = ShadowFraction.fromLegacy(q2.terms, q2.termsDen, ctx.monthToDays === "30");
+  if (legacy9.kind === "invalid-denominator") {
+    return { kind: "refuse", why: "invalid-denominator", err: err("division-by-zero", `the denominator shadow of \u201C${q2.symbol}\u201D is structurally zero`) };
+  }
+  if (legacy9.kind === "undecidable-denominator") {
+    return { kind: "refuse", why: "undecidable-denominator", err: err("undecidable-authority", `the denominator shadow of \u201C${q2.symbol}\u201D cedes to an auxiliary zero \u2014 undecidable, refused`) };
+  }
+  if (q2.terms !== void 0) return { kind: "frac", den9: "valid", num: q2.terms, den: q2.termsDen ?? ONE_TERMS() };
+  if (q2.termsDen !== void 0) return { kind: "frac", den9: "valid", num: ONE_TERMS(), den: q2.termsDen };
+  const cls9 = authStateOf9((authoritySource9 ?? q2).foldA9, false);
+  if (cls9 === "auth" || cls9 === "aux") {
+    return { kind: "frac", den9: "valid", num: [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c9) => ({ ...c9 })), aux: cls9 === "aux" }], den: ONE_TERMS() };
+  }
+  return { kind: "refuse", why: "uncertified", err: err("undecidable-authority", `cannot synthesize a shadow term from the uncertified value \u201C${q2.symbol}\u201D \u2014 provenance is never inferred from the value`) };
+};
+var shadowTermsA9 = (q2, ctx) => {
+  if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
+  const v9 = shadowFracA9(q2, ctx);
+  return v9.kind === "frac" ? v9.num : v9.err;
+};
+var shadowTermsFromSourceA9 = (source9, projection9, ctx) => {
+  const v9 = shadowFracA9(projection9, ctx, source9);
+  return v9.kind === "frac" ? v9.num : v9.err;
+};
+var shadowNeed9 = (parts9) => parts9.some((p9) => p9.terms !== void 0 || p9.termsDen !== void 0);
+var shadowViewIfNeeded9 = (parts9, q9, ctx) => {
+  if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
+  return ctx.__convAuth9 === true && !shadowNeed9(parts9) ? termsOf(q9) : shadowTermsA9(q9, ctx);
+};
+var shadowAggregateView9 = (parts9, source9, projection9, ctx) => {
+  if (ctx.__b1EligibilityPartition9 !== true || !shadowNeed9(parts9)) {
+    return shadowViewIfNeeded9(parts9, projection9, ctx);
+  }
+  return shadowTermsFromSourceA9(source9, projection9, ctx);
+};
+var shadowFracViewIfNeeded9 = (parts9, q9, ctx) => {
+  if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
+  if (ctx.__convAuth9 === true && !shadowNeed9(parts9)) return { kind: "frac", den9: "valid", num: termsOf(q9), den: q9.termsDen ?? ONE_TERMS() };
+  return shadowFracA9(q9, ctx);
+};
 function fracReduceTerm(q2, thirty) {
   if (q2.terms === void 0 && q2.termsDen === void 0) return null;
   const N2 = q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
@@ -31392,13 +34078,33 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   return err("inexact", "division by a value that only projects to zero is not computable at the engine\u2019s precision");
 };
 var isCarrier = (rt2) => rt2.t === "q" && rt2.symbol === "" && (rt2.comps === void 0 || rt2.comps.length === 0);
-var carrierNum = (rt2, ctx) => {
+var legacyCarrierNum9 = (rt2, ctx) => {
   if (!isCarrier(rt2)) return rt2;
   if (rt2.terms === void 0 && rt2.termsDen === void 0) return { t: "d", v: rt2.v, ...rt2.vx && { vx: rt2.vx } };
   const k9 = fracReduce(rt2, ctx.monthToDays === "30");
   if (k9 !== null) return { t: "d", ...qv(k9) };
   ctx.capNotes?.push("carrier");
   return { t: "d", v: rt2.v, capped: true };
+};
+var carrierNum = (rt2, ctx, site) => {
+  if (ctx.__foldCandidateWorld9 === true) {
+    if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
+    return publishCandFold9(candidateCarrierNum9(rt2, ctx.monthToDays === "30"), ctx, "carrierNum", site);
+  }
+  const before9 = ctx.capNotes?.length ?? 0;
+  const out = legacyCarrierNum9(rt2, ctx);
+  const pushedN9 = (ctx.capNotes?.length ?? 0) - before9;
+  if (ctx.__foldEffectLog9 !== void 0) {
+    for (let i9 = 0; i9 < pushedN9; i9++) ctx.__foldEffectLog9.push(`carrierNum:${site}:carrier`);
+  }
+  if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.legacy++;
+  const ob9 = ctx.__foldObserver9;
+  if (ob9 !== void 0) {
+    if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
+    const pushed9 = pushedN9 > 0 ? [{ kind: "capNote", note: "carrier" }] : [];
+    ob9("carrierNum", site, rt2, out, pushed9, candidateCarrierNum9(rt2, ctx.monthToDays === "30"), ctx.monthToDays === "30");
+  }
+  return out;
 };
 var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ ...t2, x: rMul(t2.x, k2) })) } : {};
 var negateShadow9 = (rt2) => {
@@ -31408,13 +34114,23 @@ var negateShadow9 = (rt2) => {
     ...r9.termsDen && { termsDen: r9.termsDen }
   };
 };
-var pctScale9 = (base9, factor9, cap9, ctx, factor) => routeScale9(ctx, "pctScale", base9, factor9, ctx.monthToDays === "30", { m: "uniform" }, cap9, factor, () => {
-  const out9 = { ...base9, ...qv(rMul(qx(base9), factor9)), ...scaleTerms(base9, factor9), ...cap9 && { capped: true } };
-  const cf9 = capFScale9(capFOf9(base9) ?? [], factor9);
-  if (cf9.length > 0) out9.capF = cf9;
-  else delete out9.capF;
-  return out9;
-});
+var pctScale9 = (base9, factor9, cap9, ctx, factor, source9) => routeScale9(
+  ctx,
+  "pctScale",
+  base9,
+  factor9,
+  ctx.monthToDays === "30",
+  { m: "uniform" },
+  cap9,
+  { proof: factor, authoritySource: source9 },
+  () => {
+    const out9 = { ...base9, ...qv(rMul(qx(base9), factor9)), ...scaleTerms(base9, factor9), ...cap9 && { capped: true } };
+    const cf9 = capFScale9(capFOf9(base9) ?? [], factor9);
+    if (cf9.length > 0) out9.capF = cf9;
+    else delete out9.capF;
+    return out9;
+  }
+);
 var legacyReemitFromShadow9 = (rt2, thirty) => {
   if (rt2.t !== "d" && rt2.t !== "p" && rt2.t !== "q") return rt2;
   const terms = rt2.terms;
@@ -31427,7 +34143,7 @@ var legacyReemitFromShadow9 = (rt2, thirty) => {
     let affine9 = null;
     const fdDisp9 = [];
     if (rt2.t === "q") {
-      const comps9 = compsOf(rt2) ?? [];
+      const comps9 = (compsOf(rt2) ?? []).map((c9) => ({ def: snapshotUnitDefForReemit9(c9.def), exp: c9.exp }));
       if (comps9.length === 1 && comps9[0].exp === 1 && comps9[0].def.affine) {
         affine9 = comps9[0].def.affine;
       } else {
@@ -31547,10 +34263,30 @@ var legacyReemitFromShadow9 = (rt2, thirty) => {
   }
   return { ...rt2, ...qv(val) };
 };
-var reemitFromShadow9 = (rt2, thirty, site, observe) => {
+var reemitFromShadow9 = (rt2, thirty, site, observe, causal) => {
   const res = candidateReemit9(rt2, thirty);
   const out = applyCandReemit9(rt2, res);
-  if (observe !== void 0) observe(site, rt2, legacyReemitFromShadow9(rt2, thirty), { res, out }, thirty);
+  causal?.(site, rt2, { res, out }, thirty);
+  if (observe !== void 0) {
+    const snapshots9 = /* @__PURE__ */ new Map();
+    const snapshot9 = (value9) => {
+      const old9 = snapshots9.get(value9);
+      if (old9 !== void 0) return old9;
+      const descriptors9 = Object.getOwnPropertyDescriptors(value9);
+      if (Object.prototype.hasOwnProperty.call(descriptors9, "capF")) {
+        descriptors9.capF = {
+          enumerable: descriptors9.capF?.enumerable ?? false,
+          configurable: false,
+          writable: false,
+          value: b1CopyCapF9(value9.capF)
+        };
+      }
+      const owned9 = Object.freeze(Object.create(Object.getPrototypeOf(value9), descriptors9));
+      snapshots9.set(value9, owned9);
+      return owned9;
+    };
+    observe(site, snapshot9(rt2), snapshot9(legacyReemitFromShadow9(rt2, thirty)), { res, out: snapshot9(out) }, thirty);
+  }
   return out;
 };
 var candidateReemit9 = (rt2, thirty) => {
@@ -31564,6 +34300,9 @@ var candidateReemit9 = (rt2, thirty) => {
     return { kind: "inexact", why: "this reading cannot be certified to 40 significant figures (ill-conditioned cancellation or undecided denominator sign)" };
   }
   const shadow = sf.value;
+  if (!shadow.currencyLabelsValidForReemit9()) {
+    return { kind: "unsupported", why: "contradictory-currency-shadow-comp" };
+  }
   const approx9 = shadow.hasApproxFactor();
   const capped92 = rt2.capped === true;
   if (approx9 && !capped92) {
@@ -31571,12 +34310,20 @@ var candidateReemit9 = (rt2, thirty) => {
     let affine9 = null;
     const fdDisp9 = [];
     if (rt2.t === "q") {
-      const comps9 = compsOf(rt2) ?? [];
+      const comps9 = (compsOf(rt2) ?? []).map((c9) => ({ def: snapshotUnitDefForReemit9(c9.def), exp: c9.exp }));
+      for (const c9 of comps9) {
+        if (c9.def.currency !== void 0 && !pureCurrencyLabelForReemit9(c9.def)) {
+          return { kind: "unsupported", why: "contradictory-currency-display-comp" };
+        }
+      }
       if (comps9.length === 1 && comps9[0].exp === 1 && comps9[0].def.affine) {
         affine9 = comps9[0].def.affine;
       } else {
         for (const c9 of comps9) {
-          if (c9.def.currency !== void 0) continue;
+          if (c9.def.currency !== void 0) {
+            if (!pureCurrencyLabelForReemit9(c9.def)) return { kind: "unsupported", why: "contradictory-currency-display-comp" };
+            continue;
+          }
           if (isPureLinear(c9.def)) {
             fRat9 = rMul(fRat9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
             const calM9 = c9.def.dim["calmonths"];
@@ -31664,13 +34411,17 @@ var candidateReemit9 = (rt2, thirty) => {
     if (valD9.isZero() && auxiliary9) return { kind: "unchanged" };
     return { kind: "reemit-decimal", v: new DecC(sd40(valD9)) };
   }
-  const ex9 = shadow.projectExact();
+  const ex9 = shadow.projectExactForReemit();
   if (ex9 === null || ex9.den.n === 0n) return { kind: "unchanged" };
   let val = rDiv(ex9.num, ex9.den);
   if (rt2.t === "q") {
-    const comps = compsOf(rt2) ?? [];
+    const comps = (compsOf(rt2) ?? []).map((c9) => ({ def: snapshotUnitDefForReemit9(c9.def), exp: c9.exp }));
     let f2 = { n: 1n, d: 1n };
     for (const c2 of comps) {
+      if (c2.def.currency !== void 0) {
+        if (!pureCurrencyLabelForReemit9(c2.def)) return { kind: "unsupported", why: "contradictory-currency-display-comp" };
+        continue;
+      }
       if (!isPureLinear(c2.def)) return { kind: "unchanged" };
       f2 = rMul(f2, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
       const calM = c2.def.dim["calmonths"];
@@ -31703,31 +34454,591 @@ var applyCandReemit9 = (rt2, res) => {
       return err("inexact", res.why);
   }
 };
-var promoteShadowScalar9 = (o2) => {
-  if (o2.t !== "d" && o2.t !== "f") return o2;
-  const o9 = o2;
-  if (o9.terms === void 0 && o9.termsDen === void 0) return o2;
-  const base9 = o2.t === "d" ? { v: o9.v, ...o9.vx && { vx: o9.vx } } : qv(numRat(o2));
-  return {
+var promoteShadowScalar9 = (o2, force9 = false, preserveAuthority9 = false) => {
+  const type9 = o2.t;
+  if (type9 !== "d" && type9 !== "f") return o2;
+  const capF9 = o2.capF;
+  const capped92 = o2.capped;
+  const foldA9 = o2.foldA9;
+  const base9 = type9 === "d" ? (() => {
+    const v9 = o2.v;
+    const vx9 = o2.vx;
+    const out9 = { v: v9 };
+    if (vx9 !== void 0) out9.vx = vx9;
+    return out9;
+  })() : (() => {
+    const n9 = o2.n;
+    const d9 = o2.d;
+    const value9 = qv(rnorm({ n: n9, d: d9 }));
+    const out9 = { v: value9.v };
+    if (value9.vx !== void 0) out9.vx = value9.vx;
+    return out9;
+  })();
+  const carrier9 = {
     t: "q",
     ...base9,
     dim: {},
     symbol: "",
     comps: [],
-    ...o9.terms && { terms: o9.terms },
-    ...o9.termsDen && { termsDen: o9.termsDen },
-    ...o9.capF && { capF: o9.capF },
-    ...o9.capped === true && { capped: true }
+    ...capF9 !== void 0 && { capF: capF9 },
+    ...capped92 === true && { capped: true }
+  };
+  const transported9 = transportShadowToCarrier9(o2, carrier9);
+  if (transported9 !== null) return transported9;
+  return force9 ? preserveAuthority9 && foldA9 !== void 0 ? stampAuth9(carrier9, foldA9) : carrier9 : o2;
+};
+var nextB1Boundary9 = (ctx, fallbackOrdinal9) => {
+  const a9 = ctx.__b1Attempt9 ?? (ctx.__b1Attempt9 = { run: "standalone", attempt: 0, line: 0, ordinal: fallbackOrdinal9 });
+  if (!Number.isSafeInteger(a9.line) || a9.line < 0) throw new Error("B1 boundary emitted before runSheet assigned its line");
+  return { run: a9.run, attempt: a9.attempt, line: a9.line, ordinal: a9.ordinal++ };
+};
+var nextB1FunctionBoundary9 = (ctx) => {
+  if (ctx.__b1ValueTransport9 === void 0 || ctx.__b1Attempt9 === void 0) return null;
+  const attempt9 = ctx.__b1Attempt9;
+  let seq9 = ctx.__b1FunctionSeq9;
+  if (seq9 === void 0 || seq9.run !== attempt9.run || seq9.attempt !== attempt9.attempt || seq9.line !== attempt9.line) {
+    seq9 = { run: attempt9.run, attempt: attempt9.attempt, line: attempt9.line, value: 0 };
+    ctx.__b1FunctionSeq9 = seq9;
+  }
+  return {
+    run: attempt9.run,
+    attempt: attempt9.attempt,
+    line: attempt9.line,
+    ordinal: seq9.value++
   };
 };
+var nextB1BinaryBoundary9 = (ctx) => {
+  if (ctx.__b1ValueTransport9 === void 0 || ctx.__b1Attempt9 === void 0) return null;
+  const attempt9 = ctx.__b1Attempt9;
+  let seq9 = ctx.__b1BinarySeq9;
+  if (seq9 === void 0 || seq9.run !== attempt9.run || seq9.attempt !== attempt9.attempt || seq9.line !== attempt9.line) {
+    seq9 = { run: attempt9.run, attempt: attempt9.attempt, line: attempt9.line, value: 0 };
+    ctx.__b1BinarySeq9 = seq9;
+  }
+  return {
+    run: attempt9.run,
+    attempt: attempt9.attempt,
+    line: attempt9.line,
+    ordinal: seq9.value++
+  };
+};
+var b1BinaryAuthoritySnapshot9 = (capture9, op9, allowMechanismAuxPurge9 = false) => Object.freeze(capture9.kind === "ok" ? {
+  left: capture9.left.authority,
+  right: capture9.right.authority,
+  algebraVerdict: b1StructuralZeroVerdict9(op9, capture9.left, capture9.right, allowMechanismAuxPurge9)
+} : { left: void 0, right: void 0, algebraVerdict: void 0 });
+var b1StructuralZeroVerdict9 = (op9, left9, right9, allowMechanismAuxPurge9) => {
+  if (op9 === void 0 || left9?.kind !== "ok" || right9?.kind !== "ok" || left9.shadow.kind !== "ok" || right9.shadow.kind !== "ok" || left9.sourceAtom !== null || right9.sourceAtom !== null || left9.shadow.value.provResidue9() !== null || right9.shadow.value.provResidue9() !== null) return void 0;
+  const leftZero9 = left9.shadow.value.zeroState();
+  const rightZero9 = right9.shadow.value.zeroState();
+  const composed9 = op9 === "+" ? left9.shadow.value.add(right9.shadow.value) : op9 === "-" ? left9.shadow.value.sub(right9.shadow.value) : op9 === "*" ? left9.shadow.value.mul(right9.shadow.value) : left9.shadow.value.div(right9.shadow.value);
+  if (composed9.kind !== "ok") return void 0;
+  const resultZero9 = composed9.value.zeroState();
+  return resultZero9 === "authoritative-zero" || allowMechanismAuxPurge9 && (op9 === "+" || op9 === "-") && leftZero9 === "nonzero" && rightZero9 === "nonzero" && resultZero9 === "auxiliary-zero" ? Object.freeze({ kind: "purged", authority: AUTH9 }) : void 0;
+};
+var emitB1BinaryOutput9 = (ctx9, boundary9, sources9, output9, capturedAuthority9, op9) => {
+  let published9 = output9;
+  if (ctx9.__b1EligibilityPartition9 === true && capturedAuthority9 !== void 0 && output9.t !== "e" && !hasShadowFromRT(output9) && output9.foldA9 === void 0 && sources9.length >= 2) {
+    const joined9 = authJoin9(capturedAuthority9.left, capturedAuthority9.right) ?? capturedAuthority9.algebraVerdict?.authority;
+    if (joined9 !== void 0) {
+      published9 = stampAuth9(
+        output9,
+        joined9
+      );
+    }
+  }
+  if (ctx9.__b1ValueTransport9 === void 0 || boundary9 === null || boundary9 === void 0) return published9;
+  const attempt9 = { run: boundary9.run, attempt: boundary9.attempt };
+  for (const source9 of /* @__PURE__ */ new Set([...sources9, output9, published9])) {
+    ctx9.__b1ValueTransport9(attempt9, "binaryOutput", source9, published9, boundary9);
+  }
+  return published9;
+};
+var emitB1PercentageOutput9 = (ctx9, sources9, output9) => {
+  if (ctx9.__b1ValueTransport9 === void 0 || ctx9.__b1Attempt9 === void 0) return output9;
+  const attempt9 = { run: ctx9.__b1Attempt9.run, attempt: ctx9.__b1Attempt9.attempt };
+  for (const source9 of /* @__PURE__ */ new Set([...sources9, output9])) {
+    ctx9.__b1ValueTransport9(attempt9, "percentageOutput", source9, output9);
+  }
+  return output9;
+};
+var b1ObserverDeepFrozen9 = (value9, memo9 = /* @__PURE__ */ new WeakMap(), visiting9 = /* @__PURE__ */ new WeakSet()) => {
+  if (value9 === null || typeof value9 !== "object" && typeof value9 !== "function") return true;
+  if (typeof value9 === "function") return true;
+  const source9 = value9;
+  const known9 = memo9.get(source9);
+  if (known9 !== void 0) return known9;
+  if (!Object.isFrozen(source9)) {
+    memo9.set(source9, false);
+    return false;
+  }
+  if (visiting9.has(source9)) return true;
+  visiting9.add(source9);
+  let safe9 = true;
+  for (const key9 of Reflect.ownKeys(source9)) {
+    const desc9 = Object.getOwnPropertyDescriptor(source9, key9);
+    if (desc9 === void 0 || !("value" in desc9) || !b1ObserverDeepFrozen9(desc9.value, memo9, visiting9)) {
+      safe9 = false;
+      break;
+    }
+  }
+  visiting9.delete(source9);
+  memo9.set(source9, safe9);
+  return safe9;
+};
+var b1ObserverClone9 = (value9, seen9 = /* @__PURE__ */ new WeakMap(), shareable9 = /* @__PURE__ */ new WeakMap()) => {
+  if (value9 === null || typeof value9 !== "object" && typeof value9 !== "function") return value9;
+  if (typeof value9 === "function") return value9;
+  const source9 = value9;
+  if (b1ObserverDeepFrozen9(source9, shareable9)) return value9;
+  const old9 = seen9.get(source9);
+  if (old9 !== void 0) return old9;
+  if (Array.isArray(source9)) {
+    const out92 = [];
+    seen9.set(source9, out92);
+    for (const item9 of source9) out92.push(b1ObserverClone9(item9, seen9, shareable9));
+    return Object.freeze(out92);
+  }
+  const out9 = Object.create(Object.getPrototypeOf(source9));
+  seen9.set(source9, out9);
+  for (const key9 of Reflect.ownKeys(source9)) {
+    const desc9 = Object.getOwnPropertyDescriptor(source9, key9);
+    if (desc9 === void 0) continue;
+    const raw9 = "value" in desc9 ? desc9.value : Reflect.get(source9, key9);
+    Object.defineProperty(out9, key9, {
+      value: b1ObserverClone9(raw9, seen9, shareable9),
+      enumerable: desc9.enumerable === true,
+      writable: true,
+      configurable: true
+    });
+  }
+  return Object.freeze(out9);
+};
+var b1ObserverFreeze9 = (value9, seen9 = /* @__PURE__ */ new WeakSet()) => {
+  if (value9 === null || typeof value9 !== "object") return value9;
+  const object9 = value9;
+  if (seen9.has(object9)) return value9;
+  seen9.add(object9);
+  for (const key9 of Reflect.ownKeys(object9)) b1ObserverFreeze9(Reflect.get(object9, key9), seen9);
+  return Object.freeze(value9);
+};
+var b1ObserverRT9 = (rt9, thirty9) => {
+  const captured9 = snapshotShadowRT9(rt9, thirty9);
+  if (captured9.kind !== "ok" || captured9.shadow.kind !== "ok") {
+    const out92 = b1ObserverClone9(captured9.kind === "ok" ? captured9.rt : rt9);
+    transportCaptureValue9(rt9, out92);
+    return out92;
+  }
+  const envelope9 = b1ObserverClone9(stripShadowFromRT9(captured9.rt));
+  const out9 = b1ObserverFreeze9(replaceShadowFromFraction9(envelope9, captured9.shadow.value));
+  transportCaptureValue9(rt9, out9);
+  return out9;
+};
+var b1ObservePublication9 = (ctx9, event9) => {
+  if (ctx9.__b1ValueTransport9 !== void 0 && ctx9.__b1Attempt9 !== void 0) {
+    ctx9.__b1ValueTransport9(
+      { run: ctx9.__b1Attempt9.run, attempt: ctx9.__b1Attempt9.attempt },
+      "routePublication",
+      event9.legacyOut,
+      event9.published,
+      event9.boundary
+    );
+  }
+  const observe9 = ctx9.__b1RoutePublication9;
+  if (observe9 === void 0) return;
+  const cache9 = /* @__PURE__ */ new WeakMap();
+  const snapshot9 = (rt9) => {
+    const old9 = cache9.get(rt9);
+    if (old9 !== void 0) return old9;
+    const out9 = b1ObserverRT9(rt9, ctx9.monthToDays === "30");
+    cache9.set(rt9, out9);
+    return out9;
+  };
+  observe9(Object.freeze({
+    ...event9,
+    legacyOut: snapshot9(event9.legacyOut),
+    candidateOut: event9.candidateOut === null ? null : snapshot9(event9.candidateOut),
+    published: snapshot9(event9.published)
+  }));
+};
+var b1NormalizeHook9 = (value9, legacy9) => {
+  if (value9 === B1_MECHANISM_ROUTE9) {
+    return Object.freeze({ candidate: null, published: legacy9, fallback: false, route: "mechanism" });
+  }
+  if (value9 === void 0) {
+    return Object.freeze({ candidate: null, published: legacy9, fallback: true, route: "fallback" });
+  }
+  return Object.freeze({ candidate: value9, published: value9, fallback: false, route: "candidate" });
+};
+var b1FrameRT9 = (rt9, thirty9, ownerDecision9) => {
+  const snap9 = snapshotShadowRT9(rt9, thirty9);
+  return snap9.kind === "invalid-authority-state" ? { kind: "unavailable", reason: "invalid-authority-state" } : { kind: "captured-output", shell: snap9.rt, ...ownerDecision9 !== void 0 && { ownerDecision: ownerDecision9 } };
+};
+var b1ExactCarrier9 = (captured9, exact9) => {
+  let source9 = stripShadowFromRT9(captured9.rt);
+  if (source9.t === "q" && source9.def === void 0 && captured9.envelope !== null && captured9.envelope.denComps === null && captured9.envelope.numComps.length === 1 && captured9.envelope.numComps[0].exp === 1) {
+    source9 = { ...source9, def: captured9.envelope.numComps[0].def };
+  }
+  const value9 = qv(exact9);
+  if (source9.t === "f") return makeFrac(value9.vx?.n ?? exact9.n, value9.vx?.d ?? exact9.d, source9.origin);
+  if (source9.t === "d" || source9.t === "p" || source9.t === "q") {
+    const { v: _oldV9, vx: _oldVx9, ...tail9 } = source9;
+    return value9.vx === void 0 ? { ...tail9, v: value9.v } : { ...tail9, v: value9.v, vx: value9.vx };
+  }
+  return source9;
+};
+var b1ReframedCarrier9 = (source9, target9, exact9, factor9) => {
+  if (source9.rt.t !== "q" || target9.kind !== "ok" || target9.rt.t !== "q") return null;
+  const targetEnv9 = target9.envelope;
+  const targetDef9 = targetEnv9 !== null && targetEnv9.denComps === null && targetEnv9.numComps.length === 1 && targetEnv9.numComps[0].exp === 1 ? targetEnv9.numComps[0].def : void 0;
+  const targetRT9 = {
+    ...stripShadowFromRT9(target9.rt),
+    ...targetDef9 !== void 0 && { def: targetDef9 }
+  };
+  const value9 = qv(exact9);
+  const { v: _oldV9, vx: _oldVx9, ...targetTail9 } = targetRT9;
+  const out9 = value9.vx === void 0 ? { ...targetTail9, v: value9.v } : { ...targetTail9, v: value9.v, vx: value9.vx };
+  delete out9.foldA9;
+  delete out9.capped;
+  delete out9.capF;
+  if (source9.rt.capped === true) out9.capped = true;
+  return factor9 === null ? capCoarse9(out9, [source9.rt], "b1Reframe") : capScaleConv9(out9, source9.rt, factor9);
+};
+var b1SynthesizeTransformFrame9 = (captured9, op9, ctx9) => {
+  if (captured9.kind !== "ok") return { kind: "unavailable", reason: "invalid-authority-state" };
+  const exact9 = captured9.exactRead;
+  let shell9 = null;
+  let ownerDecision9;
+  switch (op9.kind) {
+    case "identity":
+      shell9 = materializeB1CapturedOperand9(captured9);
+      break;
+    case "refuse":
+      shell9 = { t: "e", code: op9.code, detail: op9.detail };
+      break;
+    case "attach-unit": {
+      if (op9.unit.kind !== "ok") break;
+      const operation9 = Object.freeze({ kind: "ok", left: captured9, right: op9.unit });
+      const frame9 = b1MulDivFrame9(captured9, op9.unit, "*", ctx9);
+      const boundedFrame9 = captured9.boundedCause !== void 0 && frame9.kind === "numeric" ? { ...frame9, shell: capProdTransport9(
+        { ...frame9.shell, capped: true },
+        [captured9.rt, op9.unit.rt],
+        "b1:bounded:attach"
+      ) } : frame9;
+      return Object.freeze({
+        kind: "quantity-compose",
+        op: "*",
+        capture: operation9,
+        frame: boundedFrame9
+      });
+    }
+    case "affine-attach": {
+      if (exact9 === null || op9.unit.kind !== "ok" || op9.unit.rt.t !== "q") break;
+      const targetEnv9 = op9.unit.envelope;
+      const targetDef9 = targetEnv9 !== null && targetEnv9.denComps === null && targetEnv9.numComps.length === 1 && targetEnv9.numComps[0].exp === 1 ? targetEnv9.numComps[0].def : void 0;
+      if (targetDef9 === void 0 || targetDef9.affine === void 0) break;
+      const sourceRT9 = materializeB1CapturedOperand9(captured9);
+      if (sourceRT9 === null) break;
+      shell9 = capCopy9(mkQ(exact9, targetDef9), sourceRT9);
+      if (captured9.shadow.kind === "ok") {
+        const { a: a9, b: b9, c: c9 } = targetDef9.affine;
+        const [num9, den9] = fractionFaces9(captured9.shadow.value);
+        const scaleTerms9 = (terms9, k9) => terms9.map((term9) => ({
+          ...term9,
+          x: rMul(term9.x, { n: k9, d: 1n }),
+          comps: term9.comps.map((comp9) => ({ ...comp9 }))
+        }));
+        const kelvinNum9 = mergeTerms(scaleTerms9(num9, a9), scaleTerms9(den9, b9), 1n, ctx9.monthToDays === "30");
+        const kelvinDen9 = scaleTerms9(den9, c9);
+        const kelvin9 = ShadowFraction.fromLegacy(kelvinNum9, kelvinDen9, ctx9.monthToDays === "30");
+        if (kelvin9.kind !== "ok" || shell9 === null) break;
+        shell9 = replaceShadowFromFraction9(shell9, kelvin9.value);
+      }
+      break;
+    }
+    case "negate": {
+      const materialized9 = materializeB1CapturedOperand9(captured9);
+      if (materialized9 === null) break;
+      const neg9 = candidateNegate9(materialized9, ctx9.monthToDays === "30");
+      shell9 = neg9.kind === "ok" ? neg9.rt : null;
+      break;
+    }
+    case "bounded-output": {
+      shell9 = materializeB1CapturedOperand9(op9.output);
+      break;
+    }
+    case "scale": {
+      if (exact9 === null) break;
+      const materialized9 = materializeB1CapturedOperand9(captured9);
+      if (materialized9 === null) break;
+      shell9 = b1ExactCarrier9(captured9, rMul(exact9, op9.factor));
+      const sf9 = scaleShadowFromRT(materialized9, op9.factor, ctx9.monthToDays === "30");
+      if (sf9.kind === "ok" && shell9.t !== "e") writeShadowSlots9(shell9, sf9.slots);
+      const cap9 = capFScale9(capFOf9(materialized9), op9.factor);
+      if (cap9.length > 0) shell9.capF = cap9;
+      break;
+    }
+    case "reframe": {
+      if (exact9 === null) break;
+      shell9 = b1ReframedCarrier9(captured9, op9.target, op9.exact ?? rMul(exact9, op9.factor), op9.factor);
+      break;
+    }
+    case "convert": {
+      const fromEnv9 = captured9.envelope;
+      const toEnv9 = op9.target.kind === "ok" ? op9.target.envelope : null;
+      const fromDef9 = fromEnv9 !== null && fromEnv9.denComps === null && fromEnv9.numComps.length === 1 && fromEnv9.numComps[0].exp === 1 ? fromEnv9.numComps[0].def : void 0;
+      const toDef9 = toEnv9 !== null && toEnv9.denComps === null && toEnv9.numComps.length === 1 && toEnv9.numComps[0].exp === 1 ? toEnv9.numComps[0].def : void 0;
+      if (exact9 === null || captured9.rt.t !== "q" || op9.target.kind !== "ok" || op9.target.rt.t !== "q" || fromEnv9 === null || fromDef9 === void 0 || toDef9 === void 0) break;
+      const mapped9 = convertRat(exact9, fromDef9, toDef9);
+      if (mapped9 !== null) {
+        const one9 = convertRat({ n: 1n, d: 1n }, fromDef9, toDef9);
+        shell9 = b1ReframedCarrier9(captured9, op9.target, mapped9, one9);
+      } else {
+        const factor9 = decToRat(convertExact(new DecC(1), fromDef9, toDef9));
+        const displayRead9 = captured9.rt.t === "q" ? decToRat(convertExact(captured9.rt.v, fromDef9, toDef9)) : rMul(exact9, factor9);
+        shell9 = b1ReframedCarrier9(captured9, op9.target, displayRead9, factor9);
+        if (shell9 !== null && shell9.t !== "e") {
+          const aux9 = authStateOf9(captured9.authority, false) !== "auth";
+          const num9 = [{ x: exact9, comps: [...fromEnv9.numComps], aux: aux9 }];
+          const den9 = fromEnv9.denComps === null ? void 0 : [{ x: { n: 1n, d: 1n }, comps: [...fromEnv9.denComps], aux: false }];
+          const symbolic9 = ShadowFraction.fromLegacy(num9, den9, ctx9.monthToDays === "30");
+          if (symbolic9.kind === "ok") shell9 = replaceShadowFromFraction9(shell9, symbolic9.value);
+          else shell9 = err("undecidable-authority", `cannot preserve an irrational conversion shadow: ${symbolic9.kind}`);
+        }
+      }
+      break;
+    }
+    case "pow": {
+      if (exact9 === null || op9.exponent.d !== 1n) break;
+      const exp9 = Number(op9.exponent.n);
+      if (!Number.isSafeInteger(exp9)) break;
+      if (exact9.n === 0n && exp9 < 0) {
+        shell9 = err("not-understood", "exact arithmetic: zero denominator");
+        break;
+      }
+      shell9 = b1ExactCarrier9(captured9, rPowInt(exact9, exp9));
+      if (shell9.t === "q" && captured9.rt.t === "q") {
+        const comps9 = (captured9.rt.comps ?? (captured9.rt.def === void 0 ? [] : [{ def: captured9.rt.def, exp: 1 }])).map((c9) => ({ def: c9.def, exp: c9.exp * exp9 })).filter((c9) => c9.exp !== 0);
+        shell9 = { ...shell9, dim: dimOfComps(comps9), symbol: compsSymbol(comps9), comps: comps9 };
+      }
+      break;
+    }
+    case "calendar": {
+      if (op9.plan.kind === "refuse") {
+        shell9 = err(op9.plan.code, op9.plan.detail);
+        ownerDecision9 = {
+          kind: "calendar-refuse",
+          reason: op9.plan.reason,
+          code: op9.plan.code
+        };
+        break;
+      }
+      if (op9.plan.kind === "quantity-compose") {
+        if (op9.plan.left.kind !== "ok" || op9.plan.right.kind !== "ok") break;
+        const operation9 = Object.freeze({ kind: "ok", left: op9.plan.left, right: op9.plan.right });
+        const quantityFrame9 = b1MulDivFrame9(op9.plan.left, op9.plan.right, op9.plan.op, ctx9);
+        const framedWithChosen9 = quantityFrame9.kind === "numeric" && quantityFrame9.shell.t === "q" && captured9.rt.t === "q" && captured9.rt.chosen === true ? { ...quantityFrame9, shell: { ...quantityFrame9.shell, chosen: true } } : quantityFrame9;
+        return Object.freeze({
+          kind: "quantity-compose",
+          op: op9.plan.op,
+          capture: operation9,
+          frame: framedWithChosen9
+        });
+      }
+      const span9 = op9.plan.span;
+      if (span9.kind !== "ok" || span9.rt.t !== "ts") break;
+      if (op9.plan.kind === "zero-absorb") {
+        const zeroSpan9 = !span9.rt.c.years && !span9.rt.c.months && !span9.rt.c.weeks && !span9.rt.c.days;
+        if (!zeroSpan9 || span9.rt.capped === true || authStateOf9(span9.authority, false) !== "auth") break;
+        shell9 = {
+          t: "ts",
+          c: { ...span9.rt.c },
+          ...captured9.rt.capped === true && { capped: true }
+        };
+      } else {
+        shell9 = tsScaleByRT9(span9.rt, captured9.rt, op9.plan.op, ctx9);
+      }
+      break;
+    }
+  }
+  return shell9 === null ? { kind: "unavailable", reason: "invalid-authority-state" } : b1FrameRT9(shell9, ctx9.monthToDays === "30", ownerDecision9);
+};
+var b1Transform9 = (ctx, route9) => {
+  const hook9 = ctx.__b1Transform9;
+  if (hook9 === void 0) return route9.out;
+  if (route9.host === void 0) throw new Error(`B1 transform host missing at ${route9.site}`);
+  const boundary9 = nextB1Boundary9(ctx, 0);
+  const inputCapture9 = route9.capture ?? { kind: "unavailable", stage: "outer" };
+  const frame9 = route9.frameOp === void 0 ? { kind: "unavailable", reason: "invalid-authority-state" } : b1SynthesizeTransformFrame9(inputCapture9, route9.frameOp, ctx);
+  const legacyOut9 = route9.out;
+  const { out: _oracle9, capture: _oldCapture9, frameOp: _frameOp9, candidateFrame: _compat9, ...candidateRoute9 } = route9;
+  const call9 = { ...candidateRoute9, capture: inputCapture9, boundary: boundary9, legacyOut: legacyOut9, frame: frame9 };
+  const routed9 = b1NormalizeHook9(hook9(call9), legacyOut9);
+  b1ObservePublication9(ctx, {
+    kind: "transform",
+    boundary: boundary9,
+    legacyOut: legacyOut9,
+    candidateOut: routed9.candidate,
+    published: routed9.published,
+    fallback: routed9.fallback,
+    route: routed9.route
+  });
+  return routed9.published;
+};
+var b1FrozenContext9 = (ctx9, observing9) => {
+  const out9 = { ...ctx9, __convAuth9: false };
+  for (const key9 of Object.keys(out9)) {
+    if (key9.startsWith("__b1") || key9.endsWith("Observer") || key9.endsWith("Observer9") || key9.endsWith("Counts9") || key9 === "__candScale9Entry" || key9 === "__foldEffectLog9") {
+      delete out9[key9];
+    }
+  }
+  if (observing9) {
+    out9.capNotes = [];
+    out9.assume = [];
+    out9.fxTrace = [];
+    out9.fxReads = [];
+    out9.holidayReads = [];
+    out9.deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
+  }
+  return out9;
+};
+var b1PublishProduction9 = (ctx9, owner9, decision9, legacyThunk9) => {
+  if (decision9.effect === "unexpected-loss") throw new Error("CAPTURE_CAUSAL_UNEXPECTED_LOSS");
+  if (decision9.output === B1_MECHANISM_ROUTE9) {
+    if (decision9.eligibility !== "mechanism") throw new Error("CAPTURE_CAUSAL_INVALID_ROUTE");
+    const out92 = legacyThunk9(b1FrozenContext9(ctx9, false));
+    ctx9.__b1ProductionObserver9?.({ ...owner9, decision: decision9, published: out92, legacyOut: out92 });
+    return out92;
+  }
+  const out9 = decision9.output;
+  if (ctx9.__b1ProductionObserver9 !== void 0) {
+    const legacyOut9 = legacyThunk9(b1FrozenContext9(ctx9, true));
+    ctx9.__b1ProductionObserver9({ ...owner9, decision: decision9, published: out9, legacyOut: legacyOut9 });
+  }
+  return out9;
+};
+var b1TransformProduction9 = (ctx9, route9, legacyThunk9) => {
+  if (ctx9.__b1ProductionCausal9 === void 0) throw new Error("CAPTURE_CAUSAL_RUNTIME_MISSING");
+  ctx9.__b1Capture9?.(route9.site === "unaryNeg" ? "unaryNeg" : route9.site === "power" ? "power" : "transform");
+  const capture9 = route9.capture ?? { kind: "unavailable", stage: "outer" };
+  const frame9 = route9.frameOp === void 0 ? { kind: "unavailable", reason: "invalid-authority-state" } : b1SynthesizeTransformFrame9(capture9, route9.frameOp, ctx9);
+  const { capture: _capture9, frameOp: _frameOp9, candidateFrame: _compat9, ...owned9 } = route9;
+  const call9 = {
+    ...owned9,
+    capture: capture9,
+    frame: frame9,
+    boundary: nextB1Boundary9(ctx9, 0)
+  };
+  const decision9 = ctx9.__b1ProductionCausal9.transform(call9);
+  return b1PublishProduction9(ctx9, { kind: "transform", call: call9 }, decision9, legacyThunk9);
+};
+var transportB1TransformOutput9 = (ctx9, source9, output9) => {
+  if (ctx9.__b1ValueTransport9 !== void 0 && ctx9.__b1Attempt9 !== void 0) {
+    ctx9.__b1ValueTransport9(ctx9.__b1Attempt9, "transformOutput", source9, output9);
+  }
+  return output9;
+};
 function alignForAdd(l2, r3, ctx) {
+  if (ctx.__b1ProductionCausal9 !== void 0) {
+    const lc9 = compsOf(l2);
+    const rc9 = compsOf(r3);
+    const currency9 = [...lc9 ?? [], ...rc9 ?? []].some((c9) => c9.def.currency !== void 0);
+    if (currency9) {
+      if (l2.symbol === r3.symbol) {
+        return b1TransformProduction9(ctx, {
+          site: "alignForAdd",
+          host: "alignForAdd",
+          capture: b1CaptureOperand9(r3, ctx.monthToDays === "30"),
+          frameOp: { kind: "identity" },
+          meta: { kind: "reframe", structuralIdentity: true }
+        }, () => r3);
+      }
+      return alignForAddInner9(
+        l2,
+        r3,
+        ctx,
+        void 0,
+        void 0,
+        b1CaptureOperand9(l2, ctx.monthToDays === "30")
+      );
+    }
+    if (!currency9) {
+      const target9 = b1CaptureOperand9(l2, ctx.monthToDays === "30");
+      let plan9 = null;
+      let identity9 = l2.symbol === r3.symbol;
+      if (identity9) plan9 = { kind: "identity" };
+      else if (lc9 && rc9 && (lc9.length !== 1 || rc9.length !== 1 || lc9[0].exp !== 1 || rc9[0].exp !== 1)) {
+        const lb9 = basePartOf(lc9, ctx);
+        const rb9 = basePartOf(rc9, ctx);
+        if (lb9 && rb9) {
+          const ratio9 = rDiv(rb9.rat, lb9.rat);
+          if (lb9.dec === null && rb9.dec === null) {
+            plan9 = { kind: "reframe", target: target9, factor: ratio9 };
+            identity9 = rnorm(ratio9).n === rnorm(ratio9).d;
+          } else {
+            const dec9 = (rb9.dec ?? new DecC(1)).div(lb9.dec ?? new DecC(1));
+            const factor9 = decToRat(ratToDec(ratio9).times(dec9));
+            const exact9 = decToRat(ratToDec(rMul(qx(r3), ratio9)).times(dec9));
+            plan9 = { kind: "reframe", target: target9, factor: factor9, exact: exact9 };
+            identity9 = rnorm(factor9).n === rnorm(factor9).d && rCmp(exact9, qx(r3)) === 0;
+          }
+        }
+      } else if (l2.def !== void 0 && r3.def !== void 0) {
+        plan9 = { kind: "convert", target: target9 };
+      }
+      if (plan9 !== null) {
+        return b1TransformProduction9(ctx, {
+          site: "alignForAdd",
+          host: "alignForAdd",
+          capture: b1CaptureOperand9(r3, ctx.monthToDays === "30"),
+          frameOp: plan9,
+          meta: { kind: "reframe", ...identity9 && { structuralIdentity: true } }
+        }, (legacyCtx9) => alignForAddInner9(l2, r3, legacyCtx9));
+      }
+    }
+  }
+  if (ctx.__b1Transform9 === void 0) return alignForAddInner9(l2, r3, ctx);
+  ctx.__b1Capture9?.("transform");
+  const inputCapture9 = b1CaptureOperand9(r3, ctx.monthToDays === "30");
+  const targetCapture9 = b1CaptureOperand9(l2, ctx.monthToDays === "30");
+  let meta9 = { kind: "reframe" };
+  let frameOp9 = { kind: "identity" };
+  const out9 = alignForAddInner9(l2, r3, ctx, (m9) => {
+    meta9 = m9;
+  }, (op9) => {
+    frameOp9 = op9;
+  }, targetCapture9);
+  if (meta9.kind === "reframe" && out9.t === "q") {
+    const faceKey9 = (q9) => {
+      const comps9 = compsOf(q9);
+      if (comps9 === void 0 || comps9 === null) return null;
+      return termCanon({ x: { n: 1n, d: 1n }, comps: [...comps9], aux: false }, ctx.monthToDays === "30").key;
+    };
+    const leftFace9 = faceKey9(l2);
+    const rightFace9 = faceKey9(r3);
+    const frameIdentity9 = (op9) => op9.kind === "identity" || op9.kind === "reframe" && rnorm(op9.factor).n === rnorm(op9.factor).d && rCmp(qx(out9), qx(r3)) === 0;
+    const operationIdentity9 = frameIdentity9(frameOp9);
+    if (operationIdentity9 || leftFace9 !== null && leftFace9 === rightFace9 && rCmp(qx(out9), qx(r3)) === 0) {
+      meta9 = { kind: "reframe", structuralIdentity: true };
+    }
+  }
+  return b1Transform9(ctx, {
+    site: "alignForAdd",
+    host: "alignForAdd",
+    capture: inputCapture9,
+    out: out9,
+    frameOp: frameOp9,
+    meta: meta9
+  });
+}
+function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
   if (l2.symbol === r3.symbol) return r3;
   const lc = compsOf(l2);
   const rc = compsOf(r3);
   if (lc && rc && (lc.length !== 1 || rc.length !== 1 || lc[0].exp !== 1 || rc[0].exp !== 1 || lc[0].def.currency !== void 0 && rc[0].def.currency !== void 0 && lc[0].def.currency !== rc[0].def.currency)) {
     const shadowed = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
     const needShadow = () => shadowed(r3) || shadowed(l2);
-    const keepShadow = () => needShadow() ? termsOf(r3) : void 0;
+    const keepShadow = () => needShadow() ? shadowTermsA9(r3, ctx) : void 0;
     const lBase = basePartOf(lc, ctx);
     const rBase = basePartOf(rc, ctx);
     if (lBase && rBase) {
@@ -31743,15 +35054,41 @@ function alignForAdd(l2, r3, ctx) {
         }
         return q9;
       };
-      if (lBase.dec === null && rBase.dec === null) return alSet9({ ...l2, ...qv(rMul(qx(r3), ratio2)), terms: keepShadow(), termsDen: r3.termsDen });
+      const sh9 = keepShadow();
+      if (sh9 !== void 0 && !Array.isArray(sh9)) return sh9;
+      const { vx: _leftVx9, terms: _leftTerms9, termsDen: _leftTermsDen9, ...leftShell9 } = l2;
+      const alignedQ9 = (value9, exact9) => ({
+        ...leftShell9,
+        v: value9,
+        ...exact9 !== void 0 && { vx: exact9 },
+        ...sh9 !== void 0 && { terms: sh9 },
+        ...r3.termsDen !== void 0 && { termsDen: r3.termsDen }
+      });
+      if (lBase.dec === null && rBase.dec === null) {
+        if (targetCapture9 !== void 0) setFrameOp9?.({ kind: "reframe", target: targetCapture9, factor: ratio2 });
+        const exactAligned9 = qv(rMul(qx(r3), ratio2));
+        return alSet9(alR9(r3, alignedQ9(exactAligned9.v, exactAligned9.vx)));
+      }
       const dec2 = (rBase.dec ?? new DecC(1)).div(lBase.dec ?? new DecC(1));
-      return alSet9({ ...l2, v: ratToDec(rMul(qx(r3), ratio2)).times(dec2), vx: void 0, terms: keepShadow(), termsDen: r3.termsDen });
+      const alignedDec92 = ratToDec(rMul(qx(r3), ratio2)).times(dec2);
+      if (targetCapture9 !== void 0) setFrameOp9?.({
+        kind: "reframe",
+        target: targetCapture9,
+        factor: decToRat(ratToDec(ratio2).times(dec2)),
+        exact: decToRat(alignedDec92)
+      });
+      return alSet9(alR9(r3, alignedQ9(alignedDec92, void 0)));
     }
     const lCur = lc.filter((c2) => c2.def.currency);
     const rRest = rc.map((c2) => ({ ...c2 })).filter((c2) => !c2.def.currency);
     const rCur = rc.filter((c2) => c2.def.currency).map((c2) => ({ ...c2 }));
     let rateBetween = () => null;
     let pathRatOf = () => null;
+    let atomsBetween9 = () => null;
+    let pathAtomsOf9 = () => null;
+    let graphRoute9 = "pivot";
+    let graphQuoteUsed9 = false;
+    let graphAtoms9 = [];
     const nets = /* @__PURE__ */ new Map();
     const codes = [];
     const addNet = (c2, sign2) => {
@@ -31782,8 +35119,11 @@ function alignForAdd(l2, r3, ctx) {
       }
       return [...m9.values()].filter((c9) => c9.exp !== 0);
     };
+    const rawR9v = shadowViewIfNeeded9([l2, r3], r3, ctx);
+    if (!Array.isArray(rawR9v)) return rawR9v;
+    const rawR9 = rawR9v;
     const canceled9 = (() => {
-      const num0 = termsOf(r3).map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
+      const num0 = rawR9.map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
       const den0 = r3.termsDen?.map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
       if (den0 === void 0 || num0.length === 0 || den0.length === 0) return { num: num0, den: den0 };
       const codes0 = /* @__PURE__ */ new Set();
@@ -31809,7 +35149,16 @@ function alignForAdd(l2, r3, ctx) {
       if (!provider) {
         const to9 = needed[1] ?? codes.find((c9) => c9 !== needed[0]) ?? needed[0];
         ctx.fxReads?.push({ from: needed[0], to: to9, obs: "\u2205;\u2205" });
-        return err("rates-unavailable", `no rate provider to relate ${needed.join(" \u2194 ")}`);
+        const detail9 = `no rate provider to relate ${needed.join(" \u2194 ")}`;
+        const frame9 = { kind: "refuse", code: "rates-unavailable", detail: detail9 };
+        setFrameOp9?.(frame9);
+        return ctx.__b1ProductionCausal9 === void 0 ? err("rates-unavailable", detail9) : b1TransformProduction9(ctx, {
+          site: "alignForAdd",
+          host: "alignForAdd",
+          capture: b1CaptureOperand9(r3, ctx.monthToDays === "30"),
+          frameOp: frame9,
+          meta: { kind: "reframe" }
+        }, () => err("rates-unavailable", detail9));
       }
       const edges = /* @__PURE__ */ new Map();
       const probe = (a2, b2) => {
@@ -31823,9 +35172,13 @@ function alignForAdd(l2, r3, ctx) {
           edges.set(`${b2}\u2192${a2}`, null);
           return null;
         }
-        const fwd = { rat: fx, traces: local };
+        const fwd = { rat: fx.rat, traces: local, atoms: [fx.atom] };
         edges.set(key, fwd);
-        edges.set(`${b2}\u2192${a2}`, { rat: rDiv({ n: 1n, d: 1n }, fx), traces: local });
+        edges.set(`${b2}\u2192${a2}`, {
+          rat: rDiv({ n: 1n, d: 1n }, fx.rat),
+          traces: local,
+          atoms: [{ ...fx.atom, exp: -fx.atom.exp }]
+        });
         return fwd;
       };
       const HUBS = ["USD", "EUR", "GBP", "CHF", "JPY"];
@@ -31838,7 +35191,7 @@ function alignForAdd(l2, r3, ctx) {
         for (const start of nodes) {
           if (compOf.has(start)) continue;
           compOf.set(start, compId);
-          paths.set(start, { rat: { n: 1n, d: 1n }, traces: [] });
+          paths.set(start, { rat: { n: 1n, d: 1n }, traces: [], atoms: [] });
           const queue = [start];
           while (queue.length > 0) {
             const cur = queue.shift();
@@ -31848,7 +35201,11 @@ function alignForAdd(l2, r3, ctx) {
               if (edge === null) continue;
               compOf.set(nxt, compId);
               const viaCur = paths.get(cur);
-              paths.set(nxt, { rat: rMul(edge.rat, viaCur.rat), traces: [...edge.traces, ...viaCur.traces] });
+              paths.set(nxt, {
+                rat: rMul(edge.rat, viaCur.rat),
+                traces: [...edge.traces, ...viaCur.traces],
+                atoms: [...edge.atoms, ...viaCur.atoms]
+              });
               queue.push(nxt);
             }
           }
@@ -31868,16 +35225,28 @@ function alignForAdd(l2, r3, ctx) {
         const expanded = [...codes, ...HUBS.filter((h9) => !codes.includes(h9))];
         runBfs(expanded);
         if (!netsResolved()) {
-          return err("rates-unavailable", `no rate path to relate ${needed.join(" \u2194 ")} (${l2.symbol} vs ${r3.symbol})`);
+          const detail9 = `no rate path to relate ${needed.join(" \u2194 ")} (${l2.symbol} vs ${r3.symbol})`;
+          const frame9 = { kind: "refuse", code: "rates-unavailable", detail: detail9 };
+          return ctx.__b1ProductionCausal9 === void 0 ? err("rates-unavailable", detail9) : b1TransformProduction9(ctx, {
+            site: "alignForAdd",
+            host: "alignForAdd",
+            capture: b1CaptureOperand9(r3, ctx.monthToDays === "30"),
+            frameOp: frame9,
+            meta: { kind: "reframe" }
+          }, () => err("rates-unavailable", detail9));
         }
       }
       const usedTraces = /* @__PURE__ */ new Map();
       for (const c9 of needed) {
         const path9 = paths.get(c9);
-        ratio = rMul(ratio, rPowInt(path9.rat, nets.get(c9).net));
+        const net9 = nets.get(c9).net;
+        ratio = rMul(ratio, rPowInt(path9.rat, net9));
+        graphAtoms9.push(...path9.atoms.map((a9) => ({ ...a9, exp: a9.exp * BigInt(net9) })));
         for (const t9 of path9.traces) usedTraces.set(`${t9.from}\u2192${t9.to}@${t9.via}`, t9);
       }
       for (const [, t9] of usedTraces) ctx.fxTrace?.push(t9);
+      graphRoute9 = usedTraces.size === 1 ? [...usedTraces.values()][0].via : usedTraces.size > 1 ? "pivot" : graphRoute9;
+      graphQuoteUsed9 = usedTraces.size > 0;
       rateBetween = (a9, b9) => {
         if (a9 === b9) return { n: 1n, d: 1n };
         const pa9 = paths.get(a9);
@@ -31886,11 +35255,23 @@ function alignForAdd(l2, r3, ctx) {
         return rDiv(pa9.rat, pb9.rat);
       };
       pathRatOf = (a9) => paths.get(a9)?.rat ?? null;
+      atomsBetween9 = (a9, b9) => {
+        if (a9 === b9) return [];
+        const pa9 = paths.get(a9);
+        const pb9 = paths.get(b9);
+        if (!pa9 || !pb9 || compOf.get(a9) !== compOf.get(b9)) return null;
+        return [...pa9.atoms, ...pb9.atoms.map((x9) => ({ ...x9, exp: -x9.exp }))];
+      };
+      pathAtomsOf9 = (a9) => paths.get(a9)?.atoms.map((x9) => ({ ...x9 })) ?? null;
     }
     const lBase2 = basePartOf(lc.filter((c2) => !c2.def.currency), ctx);
     const rBase2 = basePartOf(rRest, ctx);
     if (lBase2 === null || rBase2 === null) return err("unsupported-pair", `cannot combine ${l2.symbol} and ${r3.symbol}`);
     ratio = rMul(ratio, rDiv(rBase2.rat, lBase2.rat));
+    const numConv9 = [];
+    const denConv9 = [];
+    const numFxRecipe9 = [];
+    const denFxRecipe9 = [];
     const termShadow = (() => {
       if (!needShadow()) return void 0;
       const lCodes9 = [...new Set(lCur.map((c9) => c9.def.currency))];
@@ -31909,13 +35290,17 @@ function alignForAdd(l2, r3, ctx) {
         const curs9 = t9.comps.filter((c9) => c9.def.currency !== void 0);
         if (curs9.length === 0 && lCur.length === 0) {
           out9.push({ ...t9 });
+          numConv9.push(false);
+          numFxRecipe9.push([]);
           continue;
         }
-        if (curs9.length === 0 && lCur.reduce((s9, c9) => s9 + c9.exp, 0) !== 0) return termsOf(r3);
+        if (curs9.length === 0 && lCur.reduce((s9, c9) => s9 + c9.exp, 0) !== 0) return rawR9;
         if (curs9.length > 0 && lCodes9.length === 1) {
           const lDef9 = lCur.find((c9) => c9.def.currency === lCodes9[0]).def;
           let x92 = t9.x;
           let bad92 = false;
+          let cv9 = false;
+          const atoms92 = [];
           const newComps9 = /* @__PURE__ */ new Map();
           const push9 = (d9, e9) => {
             const p9 = newComps9.get(d9.id);
@@ -31932,30 +35317,48 @@ function alignForAdd(l2, r3, ctx) {
               bad92 = true;
               break;
             }
+            const aa9 = atomsBetween9(c9.def.currency, lDef9.currency);
+            if (aa9 === null) {
+              bad92 = true;
+              break;
+            }
             x92 = rMul(x92, rPowInt(k9, c9.exp));
+            atoms92.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(c9.exp) })));
+            cv9 = true;
             push9(lDef9, c9.exp);
           }
-          if (bad92) return termsOf(r3);
+          if (bad92) return rawR9;
           out9.push({ ...t9, x: x92, comps: [...newComps9.values()].filter((c9) => c9.exp !== 0) });
+          numConv9.push(cv9);
+          numFxRecipe9.push(atoms92);
           continue;
         }
         const dimOf9 = (list9) => list9.reduce((s9, c9) => s9 + c9.exp, 0);
         const lPos9 = lCur.filter((c9) => c9.exp > 0);
         if (curs9.length === 0) {
           out9.push({ ...t9 });
+          numConv9.push(false);
+          numFxRecipe9.push([]);
           continue;
         }
         const tgt9 = dimOf9(curs9) === dimOf9(lPos9) ? lPos9 : dimOf9(curs9) === dimOf9(lCur) ? lCur : null;
-        if (tgt9 === null) return termsOf(r3);
+        if (tgt9 === null) return rawR9;
         let x9 = t9.x;
         let bad9 = false;
+        const atoms9 = [];
         for (const c9 of curs9) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
             break;
           }
+          const aa9 = pathAtomsOf9(c9.def.currency);
+          if (aa9 === null) {
+            bad9 = true;
+            break;
+          }
           x9 = rMul(x9, rPowInt(k9, c9.exp));
+          atoms9.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(c9.exp) })));
         }
         for (const c9 of tgt9) {
           const k9 = pathRatOf(c9.def.currency);
@@ -31963,9 +35366,15 @@ function alignForAdd(l2, r3, ctx) {
             bad9 = true;
             break;
           }
+          const aa9 = pathAtomsOf9(c9.def.currency);
+          if (aa9 === null) {
+            bad9 = true;
+            break;
+          }
           x9 = rMul(x9, rPowInt(k9, -c9.exp));
+          atoms9.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(-c9.exp) })));
         }
-        if (bad9) return termsOf(r3);
+        if (bad9) return rawR9;
         out9.push({
           ...t9,
           x: x9,
@@ -31974,6 +35383,8 @@ function alignForAdd(l2, r3, ctx) {
             ...tgt9.map((c9) => ({ def: c9.def, exp: c9.exp }))
           ]
         });
+        numConv9.push(true);
+        numFxRecipe9.push(atoms9);
       }
       return out9;
     })();
@@ -32002,6 +35413,8 @@ function alignForAdd(l2, r3, ctx) {
             if (p9) p9.exp += e9;
             else comps8.set(d9.id, { def: d9, exp: e9 });
           };
+          let cv8 = false;
+          const atoms82 = [];
           for (const c9 of t9.comps) {
             if (c9.def.currency === void 0 || c9.def.currency === lDef8.currency) {
               push8(c9.def, c9.exp);
@@ -32012,11 +35425,20 @@ function alignForAdd(l2, r3, ctx) {
               bad9 = true;
               break;
             }
+            const aa9 = atomsBetween9(c9.def.currency, lDef8.currency);
+            if (aa9 === null) {
+              bad9 = true;
+              break;
+            }
             x9 = rMul(x9, rPowInt(k9, c9.exp));
+            atoms82.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(c9.exp) })));
+            cv8 = true;
             push8(lDef8, c9.exp);
           }
           if (bad9) return r3.termsDen;
           out8.push({ ...t9, x: x9, comps: [...comps8.values()].filter((c9) => c9.exp !== 0) });
+          denConv9.push(cv8);
+          denFxRecipe9.push(atoms82);
           continue;
         }
         const curs8 = t9.comps.filter((c9) => c9.def.currency !== void 0);
@@ -32024,17 +35446,26 @@ function alignForAdd(l2, r3, ctx) {
         const lNeg8 = lCur.filter((c9) => c9.exp < 0).map((c9) => ({ def: c9.def, exp: -c9.exp }));
         if (curs8.length === 0) {
           out8.push({ ...t9 });
+          denConv9.push(false);
+          denFxRecipe9.push([]);
           continue;
         }
         const tgt8 = dimOf8(curs8) === dimOf8(lNeg8) ? lNeg8 : dimOf8(curs8) === -dimOf8(lCur) ? lCur.map((c9) => ({ def: c9.def, exp: -c9.exp })) : null;
         if (tgt8 === null) return r3.termsDen;
+        const atoms8 = [];
         for (const c9 of curs8) {
           const k9 = pathRatOf(c9.def.currency);
           if (k9 === null) {
             bad9 = true;
             break;
           }
+          const aa9 = pathAtomsOf9(c9.def.currency);
+          if (aa9 === null) {
+            bad9 = true;
+            break;
+          }
           x9 = rMul(x9, rPowInt(k9, c9.exp));
+          atoms8.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(c9.exp) })));
         }
         for (const c9 of tgt8) {
           const k9 = pathRatOf(c9.def.currency);
@@ -32042,7 +35473,13 @@ function alignForAdd(l2, r3, ctx) {
             bad9 = true;
             break;
           }
+          const aa9 = pathAtomsOf9(c9.def.currency);
+          if (aa9 === null) {
+            bad9 = true;
+            break;
+          }
           x9 = rMul(x9, rPowInt(k9, -c9.exp));
+          atoms8.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(-c9.exp) })));
         }
         if (bad9) return r3.termsDen;
         out8.push({
@@ -32053,6 +35490,8 @@ function alignForAdd(l2, r3, ctx) {
             ...tgt8.map((c9) => ({ def: c9.def, exp: c9.exp }))
           ]
         });
+        denConv9.push(true);
+        denFxRecipe9.push(atoms8);
       }
       return out8;
     })();
@@ -32067,23 +35506,82 @@ function alignForAdd(l2, r3, ctx) {
       }
       return obj9;
     };
-    if (lBase2.dec === null && rBase2.dec === null) return alStampC9({ ...l2, ...qv(rMul(qx(r3), ratio)), terms: termShadow, termsDen: denShadow }, ratio);
+    const touchedOf9 = (list9, conv9) => list9 === void 0 || list9.length !== conv9.length ? [] : conv9.flatMap((c9, i9) => c9 ? [i9] : []);
+    const alFx9 = (mk9, frameOp9) => {
+      const faceRecipe9 = (face9, recipe9) => recipe9.length === face9.length ? recipe9 : face9.map(() => []);
+      const fxMeta9 = graphQuoteUsed9 ? {
+        kind: "fx",
+        num: termShadow === void 0 ? [graphAtoms9] : faceRecipe9(termShadow, numFxRecipe9),
+        den: denShadow === void 0 ? [[]] : faceRecipe9(denShadow, denFxRecipe9)
+      } : { kind: "reframe", ...frameOp9.kind === "reframe" && rCmp(frameOp9.factor, { n: 1n, d: 1n }) === 0 && { structuralIdentity: true } };
+      const legacyFx9 = (ownerCtx9) => {
+        const out9 = mk9(termShadow, denShadow);
+        const join9 = graphQuoteUsed9 ? ownerCtx9.__fxJoin9 === true || ownerCtx9.__convAuth9 === true ? fxJoinStamp9(out9, r3) : out9 : alR9(r3, out9);
+        if (ownerCtx9.__fxObserver9 !== void 0) {
+          const tn9 = touchedOf9(termShadow, numConv9);
+          const td9 = touchedOf9(denShadow, denConv9);
+          const prov9 = graphQuoteUsed9 ? { kind: "provider", route: graphRoute9 } : { kind: "none" };
+          if (td9.length > 0) ownerCtx9.__fxObserver9({ site: "alignForAddPivotDenominator", factor: ratio, route: graphRoute9, provenance: prov9, authority: "aux", legacyOut: out9, candOut: join9, touchedNum: tn9, touchedDen: td9 });
+          if (td9.length === 0 || tn9.length > 0) ownerCtx9.__fxObserver9({ site: "alignForAddPivotNumerator", factor: ratio, route: graphRoute9, provenance: prov9, authority: "aux", legacyOut: out9, candOut: join9, touchedNum: tn9, touchedDen: td9 });
+        }
+        if (graphQuoteUsed9) {
+          const faceRecipe92 = (face9, recipe9) => recipe9.length === face9.length ? recipe9 : face9.map(() => []);
+          const fxNum9 = termShadow === void 0 ? [graphAtoms9] : faceRecipe92(termShadow, numFxRecipe9);
+          const fxDen9 = denShadow === void 0 ? [[]] : faceRecipe92(denShadow, denFxRecipe9);
+          setMeta9?.({ kind: "fx", num: fxNum9, den: fxDen9 });
+        }
+        return join9;
+      };
+      if (ctx.__b1ProductionCausal9 !== void 0) {
+        return b1TransformProduction9(ctx, {
+          site: "alignForAdd",
+          host: "alignForAdd",
+          capture: b1CaptureOperand9(r3, ctx.monthToDays === "30"),
+          frameOp: frameOp9,
+          meta: fxMeta9
+        }, legacyFx9);
+      }
+      return legacyFx9(ctx);
+    };
+    if (lBase2.dec === null && rBase2.dec === null) {
+      if (targetCapture9 !== void 0) setFrameOp9?.({ kind: "reframe", target: targetCapture9, factor: ratio });
+      return alFx9(
+        (tt9, dd9) => alStampC9({ ...l2, ...qv(rMul(qx(r3), ratio)), terms: tt9, termsDen: dd9 }, ratio),
+        { kind: "reframe", target: targetCapture9 ?? b1CaptureOperand9(l2, ctx.monthToDays === "30"), factor: ratio }
+      );
+    }
     const decR = (rBase2.dec ?? new DecC(1)).div(lBase2.dec ?? new DecC(1));
-    return alStampC9({ ...l2, v: ratToDec(rMul(qx(r3), ratio)).times(decR), vx: void 0, terms: termShadow, termsDen: denShadow }, decToRat(ratToDec(ratio).times(decR)));
+    const alignedDec9 = ratToDec(rMul(qx(r3), ratio)).times(decR);
+    if (targetCapture9 !== void 0) setFrameOp9?.({
+      kind: "reframe",
+      target: targetCapture9,
+      factor: decToRat(ratToDec(ratio).times(decR)),
+      exact: decToRat(alignedDec9)
+    });
+    return alFx9(
+      (tt9, dd9) => alStampC9({ ...l2, v: alignedDec9, vx: void 0, terms: tt9, termsDen: dd9 }, decToRat(ratToDec(ratio).times(decR))),
+      {
+        kind: "reframe",
+        target: targetCapture9 ?? b1CaptureOperand9(l2, ctx.monthToDays === "30"),
+        factor: decToRat(ratToDec(ratio).times(decR)),
+        exact: decToRat(alignedDec9)
+      }
+    );
   }
   if (!l2.def || !r3.def) return err("unsupported-pair", "compound units cannot be combined yet");
-  const conv = convertQuantity(r3, l2.def, ctx);
+  if (targetCapture9 !== void 0) setFrameOp9?.({ kind: "convert", target: targetCapture9 });
+  const conv = convertQuantityInner9(r3, l2.def, ctx, null);
   if (conv.t === "e") return conv;
-  const alR9 = { ...l2, ...qv(qx(conv)), terms: conv.terms, termsDen: conv.termsDen };
+  const alQ9 = { ...l2, ...qv(qx(conv)), terms: conv.terms, termsDen: conv.termsDen };
   const cfR9 = capFOf9(conv);
   if (cfR9 !== void 0 && cfR9.length > 0) {
-    alR9.capF = cfR9;
-    alR9.capped = true;
+    alQ9.capF = cfR9;
+    alQ9.capped = true;
   } else {
-    delete alR9.capF;
-    if (conv.capped !== true) delete alR9.capped;
+    delete alQ9.capF;
+    if (conv.capped !== true) delete alQ9.capped;
   }
-  return alR9;
+  return alR9(conv, alQ9);
 }
 var isOffsetScale = (q2) => q2.def?.affine !== void 0 && q2.def.affine.b !== 0n;
 var isPureLinear = (u2) => u2.factor !== void 0 && !u2.affine && !u2.currency && !u2.factorDec;
@@ -32119,6 +35617,42 @@ var dimOfComps = (comps) => {
   }
   return out;
 };
+var quantityEnvelope9 = (x9, dim9, comps9) => {
+  const pos9 = comps9.filter((c9) => c9.exp === 1);
+  const neg9 = comps9.filter((c9) => c9.exp === -1);
+  const rate9 = comps9.length === 2 && pos9.length === 1 && neg9.length === 1 ? { num: pos9[0].def, den: neg9[0].def } : void 0;
+  let def9;
+  let symbol9;
+  if (comps9.length === 1 && comps9[0].exp === 1) {
+    def9 = comps9[0].def;
+    symbol9 = def9.symbol;
+  } else if (comps9.every((c9) => isPureLinear(c9.def))) {
+    let factor9 = { n: 1n, d: 1n };
+    for (const c9 of comps9) factor9 = rMul(factor9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+    const canonical9 = findUnitByDimFactor(dim9, factor9);
+    if (canonical9 !== void 0) {
+      def9 = canonical9;
+      symbol9 = canonical9.symbol;
+    } else {
+      symbol9 = compsSymbol(comps9);
+      def9 = { id: comps9.map((c9) => `${c9.def.id}^${c9.exp}`).join("\xB7"), symbol: symbol9, dim: dim9, factor: factor9 };
+    }
+  } else {
+    symbol9 = compsSymbol(comps9);
+  }
+  const reading9 = qv(x9);
+  return {
+    t: "q",
+    v: reading9.v,
+    ...reading9.vx !== void 0 && { vx: reading9.vx },
+    dim: dim9,
+    symbol: symbol9,
+    ...def9 !== void 0 && { def: def9 },
+    ...rate9 !== void 0 && { rate: rate9 },
+    comps: comps9
+  };
+};
+var materializeB1MonomialShell9 = (term9) => quantityEnvelope9(term9.x, dimOfComps(term9.comps), term9.comps.map((c9) => ({ ...c9 })));
 function effFactor(c2, ctx) {
   let f2 = rPowInt(ratOfFactor(c2.def.factor), c2.exp);
   const calM = c2.def.dim["calmonths"];
@@ -32126,6 +35660,9 @@ function effFactor(c2, ctx) {
   return f2;
 }
 function combineQuantities(l2, r3, op, ctx) {
+  return combineQuantitiesInner9(l2, r3, op, ctx);
+}
+function combineQuantitiesInner9(l2, r3, op, ctx) {
   const capIn9 = l2.capped === true || r3.capped === true;
   if (op === "/" && qx(r3).n === 0n) return err("division-by-zero");
   const lc = compsOf(l2);
@@ -32191,10 +35728,10 @@ function combineQuantities(l2, r3, op, ctx) {
           decScaleR9 = rMul(decScaleR9, rPowInt(decToRat(new DecC(c2.def.factorDec)), c2.exp));
         } else return err("unsupported-pair", `cannot cancel ${compsSymbol(comps)} to a number`);
       }
-      const pos2 = curLeft.filter((c2) => c2.exp === 1);
-      const neg2 = curLeft.filter((c2) => c2.exp === -1);
-      const rateMeta = curLeft.length === 2 && pos2.length === 1 && neg2.length === 1 ? { rate: { num: pos2[0].def, den: neg2[0].def } } : {};
-      const ordered = [...pos2, ...curLeft.filter((c2) => c2.exp !== 1 && c2.exp !== -1), ...neg2];
+      const pos = curLeft.filter((c2) => c2.exp === 1);
+      const neg = curLeft.filter((c2) => c2.exp === -1);
+      const rateMeta = curLeft.length === 2 && pos.length === 1 && neg.length === 1 ? { rate: { num: pos[0].def, den: neg[0].def } } : {};
+      const ordered = [...pos, ...curLeft.filter((c2) => c2.exp !== 1 && c2.exp !== -1), ...neg];
       const base2 = { t: "q", dim: dimOfComps(ordered), symbol: compsSymbol(ordered), comps: ordered, ...rateMeta };
       if (decScale2 !== null) {
         const sym9 = comps.filter((c9) => !c9.def.currency).map((c9) => ({ ...c9 }));
@@ -32230,20 +35767,25 @@ function combineQuantities(l2, r3, op, ctx) {
       return true;
     };
     const monoPair9 = (() => {
-      if (op === "/" && qx(l2).n === 0n && (l2.terms === void 0 || l2.terms.every((t9) => t9.x.n === 0n))) return true;
-      if (!(l2.terms !== void 0 || r3.terms !== void 0)) return false;
+      const flv9 = shadowFracViewIfNeeded9([l2, r3], l2, ctx);
+      if (flv9.kind === "refuse") return { k9: "refuse", e9: flv9.err };
+      const frv9 = shadowFracViewIfNeeded9([l2, r3], r3, ctx);
+      if (frv9.kind === "refuse") return { k9: "refuse", e9: frv9.err };
+      if (op === "/" && qx(l2).n === 0n && (l2.terms === void 0 || l2.terms.every((t9) => t9.x.n === 0n))) return { k9: "proved" };
+      if (!(l2.terms !== void 0 || r3.terms !== void 0)) return { k9: "not-proved" };
       const t30q = ctx.monthToDays === "30";
-      const fl9 = fracOf(l2);
-      const fr9 = fracOf(r3);
+      const fl9 = flv9;
+      const fr9 = frv9;
       const n9 = distributeTerms(fl9.num, op === "/" ? fr9.den : fr9.num, t30q);
       const d9 = distributeTerms(fl9.den, op === "/" ? fr9.num : fr9.den, t30q);
-      if (n9 === null || d9 === null) return false;
-      if (mergeTerms(n9, d9, -1n, t30q).length === 0) return true;
+      if (n9 === null || d9 === null) return { k9: "not-proved" };
+      if (mergeTerms(n9, d9, -1n, t30q).length === 0) return { k9: "proved" };
       const q9d = polyDiv(n9, d9, t30q);
-      if (q9d === null || q9d.length !== 1 || q9d[0].x.n === 0n) return false;
-      return q9d[0].comps.every((c9) => c9.def.factorDec === void 0);
+      if (q9d === null || q9d.length !== 1 || q9d[0].x.n === 0n) return { k9: "not-proved" };
+      return q9d[0].comps.every((c9) => c9.def.factorDec === void 0) ? { k9: "proved" } : { k9: "not-proved" };
     })();
-    if (!monoPair9 && (dirtySpan9(l2) || dirtySpan9(r3))) {
+    if (monoPair9.k9 === "refuse") return monoPair9.e9;
+    if (monoPair9.k9 !== "proved" && (dirtySpan9(l2) || dirtySpan9(r3))) {
       return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
     }
     const inBase = rMul(x2, ratOfFactor(comps[0].def.factor));
@@ -32267,31 +35809,7 @@ function combineQuantities(l2, r3, op, ctx) {
       ctx.monthToDays === "30"
     );
   }
-  let def;
-  let symbol;
-  let outComps = comps;
-  if (comps.length === 1 && comps[0].exp === 1) {
-    def = comps[0].def;
-    symbol = def.symbol;
-  } else if (comps.every((c2) => isPureLinear(c2.def))) {
-    let factor = { n: 1n, d: 1n };
-    for (const c2 of comps) factor = rMul(factor, rPowInt(ratOfFactor(c2.def.factor), c2.exp));
-    const canonical = findUnitByDimFactor(dim, factor);
-    if (canonical) {
-      def = canonical;
-      symbol = canonical.symbol;
-    } else {
-      symbol = compsSymbol(comps);
-      def = { id: comps.map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7"), symbol, dim, factor };
-    }
-  } else {
-    symbol = compsSymbol(comps);
-    def = void 0;
-  }
-  const pos = outComps.filter((c2) => c2.exp === 1);
-  const neg = outComps.filter((c2) => c2.exp === -1);
-  const rate = outComps.length === 2 && pos.length === 1 && neg.length === 1 ? { num: pos[0].def, den: neg[0].def } : void 0;
-  return { t: "q", ...qv(x2), dim, symbol, ...def && { def }, ...rate && { rate }, comps: outComps };
+  return quantityEnvelope9(x2, dim, comps);
 }
 var isSummable = (rt2) => rt2 !== null && (rt2.t === "d" || rt2.t === "f" || rt2.t === "q" || rt2.t === "ts");
 var spanCanon = (c2) => ({
@@ -32302,6 +35820,17 @@ var spanGroups = (c2) => ({
   hasM: c2.months !== void 0 || c2.years !== void 0,
   hasD: c2.days !== void 0 || c2.weeks !== void 0
 });
+var spanStructuralZero9 = (span9) => !span9.c.years && !span9.c.months && !span9.c.weeks && !span9.c.days;
+var stampTimespan9 = (out9, cert9) => out9.t === "ts" && cert9 !== void 0 ? stampAuth9(out9, cert9) : out9;
+var capTimespan9 = (out9, capped92) => {
+  if (!capped92 || out9.t !== "ts") return out9;
+  return stampTimespan9({ ...out9, capped: true }, authPreserve9(out9.foldA9));
+};
+var tsScaleWithAuthority9 = (span9, k9, factor9, ctx9) => {
+  const out9 = tsScale(span9, k9, ctx9);
+  const cert9 = spanStructuralZero9(span9) ? authAbsorbZero9(span9.foldA9) : authJoin9(span9.foldA9, factor9.foldA9);
+  return stampTimespan9(out9, cert9);
+};
 var spanEmit = (months, days, groups, thirty) => {
   const MAXI = 9007199254740991n;
   const clamp2 = (v2) => v2 > MAXI ? MAXI : v2 < -MAXI ? -MAXI : v2;
@@ -32341,17 +35870,34 @@ var spanEmit = (months, days, groups, thirty) => {
   }
   return { t: "ts", c: c2 };
 };
-var spanHalf = (months, days, groups, n2, ctx) => {
+function materializeCalendarProjection9(x9, axis9, zeroUnit9, thirty9) {
+  const xN9 = rnorm(x9);
+  if (xN9.n === 0n) return { t: "ts", c: { [zeroUnit9]: 0 } };
+  if (axis9 === "months") {
+    if (thirty9) {
+      const months9 = rDiv(xN9, { n: 30n, d: 1n });
+      if (months9.d === 1n) return spanEmit(months9.n, 0n, { hasM: true, hasD: false }, true);
+      if (xN9.d === 1n) return spanEmit(0n, xN9.n, { hasM: false, hasD: true }, true);
+    } else if (xN9.d === 1n) {
+      return spanEmit(xN9.n, 0n, { hasM: true, hasD: false });
+    }
+  } else if (xN9.d === 1n) {
+    return spanEmit(0n, xN9.n, { hasM: false, hasD: true }, thirty9);
+  }
+  return err("anchor-required", "this result is a fractional timespan \u2014 anchor to a date first");
+}
+var spanHalf = (months, days, groups, n2, ctx, cert9) => {
+  const done9 = (out9) => stampTimespan9(out9, authPreserve9(cert9));
   if (ctx.monthToDays === "30") {
     const total = months * 30n + days;
     if (total % n2 !== 0n) return err("anchor-required", "this result is a fractional timespan \u2014 anchor to a date first");
     const q9 = total / n2;
-    if (groups.hasM && !groups.hasD && q9 % 30n === 0n) return spanEmit(q9 / 30n, 0n, groups, true);
-    return spanEmit(0n, q9, { hasM: false, hasD: true }, true);
+    if (groups.hasM && !groups.hasD && q9 % 30n === 0n) return done9(spanEmit(q9 / 30n, 0n, groups, true));
+    return done9(spanEmit(0n, q9, { hasM: false, hasD: true }, true));
   }
   const mOk = months % n2 === 0n;
   const dOk = days % n2 === 0n;
-  if (mOk && dOk) return spanEmit(months / n2, days / n2, groups);
+  if (mOk && dOk) return done9(spanEmit(months / n2, days / n2, groups));
   return err("anchor-required", "this result is a fractional timespan \u2014 anchor to a date first");
 };
 var pctFigure = (p9, thirty) => {
@@ -32403,7 +35949,7 @@ var capFDig9 = (f9) => f9 === void 0 || f9.length === 0 ? "0" : capFnv9(f9.map((
 var capped9 = (rt2) => rt2.capped === true;
 var hasCapF9 = (rt2) => (capFOf9(rt2) ?? []).length > 0;
 var orderable9 = (rt2) => isCarrier(rt2) || rt2.t === "d" || rt2.t === "f";
-var candPrep9 = (rt2, thirty) => rt2.t === "q" && !isCarrier(rt2) ? foldIrrationalResidue(rt2, thirty) : rt2;
+var candPrep9 = (rt2, thirty, ctx) => rt2.t === "q" && !isCarrier(rt2) ? foldIrrationalResidue(rt2, thirty, ctx, "orderPrep") : rt2;
 var candReadRat9 = (rt2) => isCarrier(rt2) ? qx(rt2) : numRat(rt2);
 var negVx9 = (vx9) => vx9 ? { vx: { n: -vx9.n, d: vx9.d } } : {};
 var candNum9 = (v9, asFrac9) => {
@@ -32442,11 +35988,11 @@ function orderRefusalMessage9(reason, fn) {
   if (reason === "undecidable-order") return "cannot order these values exactly \u2014 they tie at the engine\u2019s precision";
   return `${fn}() decides from its argument \u2014 a capped value decides nothing; exactness was dropped upstream`;
 }
-function candOrderCmp9(a9raw, b9raw, thirty9, fn9) {
+function candOrderCmp9(a9raw, b9raw, thirty9, fn9, ctx9) {
   const rawCapped9 = capped9(a9raw) || capped9(b9raw);
   const rawCapF9 = hasCapF9(a9raw) || hasCapF9(b9raw);
-  const a9 = candPrep9(a9raw, thirty9);
-  const b9 = candPrep9(b9raw, thirty9);
+  const a9 = candPrep9(a9raw, thirty9, ctx9);
+  const b9 = candPrep9(b9raw, thirty9, ctx9);
   if (!orderable9(a9) || !orderable9(b9)) return { refuse: "unsupported", why: `not an orderable operand (${a9.t} / ${b9.t})` };
   if (rawCapped9 || rawCapF9) return { refuse: "capped", why: rawCapped9 ? "capped operand \u2014 exactness dropped, no order decidable" : "non-empty capF \u2014 a bounded value decides no order" };
   if (capped9(a9) || capped9(b9) || hasCapF9(a9) || hasCapF9(b9)) return { refuse: "capped", why: "capped/capF after fold \u2014 no order decidable" };
@@ -32473,7 +36019,10 @@ function candidateNegate9(rt9, thirty9) {
     applyNegCapF9(e9, negF9);
     return { kind: "ok", rt: negF9 };
   }
-  if (e9.t === "ts") return { kind: "ok", rt: { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } } };
+  if (e9.t === "ts") {
+    const out9 = { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } };
+    return { kind: "ok", rt: stampTimespan9(out9, authPreserve9(e9.foldA9)) };
+  }
   if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return { kind: "unsupported", fn: "neg" };
   const sh9 = negateShadowFromRT(e9);
   if (e9.t === "p") {
@@ -32490,15 +36039,15 @@ function candidateNegate9(rt9, thirty9) {
   applyNegCapF9(e9, negD9);
   return { kind: "ok", rt: negD9 };
 }
-function candidateAbs9(rt9raw, thirty9) {
+function candidateAbs9(rt9raw, thirty9, ctx9) {
   const rawCapped9 = capped9(rt9raw), rawCapF9 = hasCapF9(rt9raw);
-  const rt9 = candPrep9(rt9raw, thirty9);
+  const rt9 = candPrep9(rt9raw, thirty9, ctx9);
   if (!orderable9(rt9)) return { kind: "unsupported", fn: "abs" };
   if (rawCapped9 || rawCapF9) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF \u2014 abs decides nothing" };
   if (capped9(rt9) || hasCapF9(rt9)) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF (after fold) \u2014 abs decides nothing" };
   const shadowed9 = shadowFromRT(rt9, thirty9).kind !== "no-shadow";
   if (isCarrier(rt9) || shadowed9) {
-    const c9 = candOrderCmp9(rt9, { t: "d", v: new DecC(0) }, thirty9, "abs");
+    const c9 = candOrderCmp9(rt9, { t: "d", v: new DecC(0) }, thirty9, "abs", ctx9);
     if ("refuse" in c9) return refuseToUnary9(c9, "abs");
     if (c9.ok >= 0) return { kind: "ok", rt: rt9 };
     return candidateNegate9(rt9, thirty9);
@@ -32506,20 +36055,37 @@ function candidateAbs9(rt9raw, thirty9) {
   const x9 = numRat(rt9);
   return { kind: "ok", rt: candNum9(x9.n < 0n ? { n: -x9.n, d: x9.d } : x9, rt9.t === "f") };
 }
-function candidateOrder9(args9raw, which9, thirty9) {
+var stripSelection9 = (rt2) => ({ ...rt2 });
+function candidateOrder9(args9raw, which9, thirty9, ctx9) {
   if (args9raw.length === 0) return { kind: "unsupported", fn: which9 };
   const rawFlags9 = args9raw.map((a9) => ({ capped: capped9(a9), capF: hasCapF9(a9) }));
-  const args9 = args9raw.map((a9) => candPrep9(a9, thirty9));
+  const args9 = args9raw.map((a9) => candPrep9(a9, thirty9, ctx9));
   for (const a9 of args9) if (!orderable9(a9)) return { kind: "unsupported", fn: which9 };
   for (const f2 of rawFlags9) if (f2.capped || f2.capF) return { kind: "inexact", reason: "capped", fn: which9, why: f2.capped ? "capped operand \u2014 min/max decides nothing" : "non-empty capF \u2014 a bounded value decides no order" };
   for (const a9 of args9) if (capped9(a9) || hasCapF9(a9)) return { kind: "inexact", reason: "capped", fn: which9, why: "capped/capF (after fold) \u2014 no order decidable" };
   let best9 = args9[0];
-  for (const v9 of args9.slice(1)) {
-    const c9 = candOrderCmp9(v9, best9, thirty9, which9);
+  let bestIdx9 = 0;
+  let ties9 = [];
+  for (let i9 = 1; i9 < args9.length; i9++) {
+    const v9 = args9[i9];
+    const c9 = candOrderCmp9(v9, best9, thirty9, which9, ctx9);
     if ("refuse" in c9) return refuseToUnary9(c9, which9);
-    if (which9 === "min" ? c9.ok < 0 : c9.ok > 0) best9 = v9;
+    if (which9 === "min" ? c9.ok < 0 : c9.ok > 0) {
+      best9 = v9;
+      bestIdx9 = i9;
+      ties9 = [];
+    } else if (c9.ok === 0) ties9.push(i9);
   }
-  return { kind: "ok", rt: best9 };
+  const rawIdentity9 = args9raw.length === 1 && ties9.length === 0 && best9 === args9raw[bestIdx9];
+  const exactSelection9 = ctx9?.__b1ProductionCausal9 !== void 0 && !rawIdentity9 && args9.every((a9, i9) => a9 === args9raw[i9] && !hasShadowFromRT(a9) && authStateOf9(a9.foldA9, false) === "auth");
+  const selected9 = rawIdentity9 ? best9 : stripSelection9(best9);
+  return {
+    kind: "ok",
+    rt: exactSelection9 ? stampAuth9(selected9, AUTH9) : selected9,
+    selectedIndex: bestIdx9,
+    tiedIndices: ties9,
+    rawIdentity: rawIdentity9
+  };
 }
 function legacyNegate9(e9) {
   if (e9.t === "e") return e9;
@@ -32536,7 +36102,11 @@ function legacyNegate9(e9) {
       t: "p",
       v: e9.v.neg(),
       vx: e9.vx ? { n: -e9.vx.n, d: e9.vx.d } : void 0,
-      ...e9.terms && { terms: e9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) },
+      // 5b-septies: aux was OMITTED here (undefined = falsy = the same aux
+      // WHITENING the 2b catalogue pins at whatPctOfX100); aux: false is the
+      // byte-identical explicit form — the capture typing now refuses the
+      // contract violation, the whitening itself stays a catalogued fact.
+      ...e9.terms && { terms: e9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps, aux: false })) },
       ...e9.termsDen && { termsDen: e9.termsDen },
       ...e9.capped === true && { capped: true }
     };
@@ -32544,7 +36114,10 @@ function legacyNegate9(e9) {
     if (fN92.length > 0) negP9.capF = fN92;
     return negP9;
   }
-  if (e9.t === "ts") return { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } };
+  if (e9.t === "ts") {
+    const out9 = { t: "ts", c: addSpans({}, e9.c, -1), ...e9.capped === true && { capped: true } };
+    return stampTimespan9(out9, authPreserve9(e9.foldA9));
+  }
   if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return err("unsupported-pair", "this value cannot be negated");
   if (e9.t === "q") {
     const negQ9 = { ...e9, v: e9.v.neg(), vx: e9.vx ? { n: -e9.vx.n, d: e9.vx.d } : void 0, ...negateShadow9(e9) };
@@ -32559,7 +36132,7 @@ function legacyNegate9(e9) {
   return negD9;
 }
 function legacyOrderFn9(fn9, evaluated9, thirty9) {
-  const folded9 = evaluated9.map((v9) => v9.t === "q" ? foldIrrationalResidue(v9, thirty9) : v9);
+  const folded9 = evaluated9.map((v9) => v9.t === "q" ? legacyFold9(v9, thirty9) : v9);
   if (folded9.some((v9) => isCarrier(v9)) && folded9.every((v9) => isCarrier(v9) || v9.t === "d" || v9.t === "f")) {
     const ratOf9 = (v9) => isCarrier(v9) ? qx(v9) : numRat(v9);
     const liftV9 = (v9) => isCarrier(v9) ? v9 : { t: "q", ...qv(ratOf9(v9)), dim: {}, symbol: "", comps: [], terms: [{ x: ratOf9(v9), comps: [], aux: rnorm(ratOf9(v9)).d !== 1n }] };
@@ -32577,7 +36150,7 @@ function legacyOrderFn9(fn9, evaluated9, thirty9) {
           ...a9,
           v: a9.v.neg(),
           vx: a9.vx ? { n: -a9.vx.n, d: a9.vx.d } : void 0,
-          ...a9.terms && { terms: a9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps })) }
+          ...a9.terms && { terms: a9.terms.map((t9) => ({ x: { n: -t9.x.n, d: t9.x.d }, comps: t9.comps, aux: false })) }
         };
         return { site: "carrierAbs", out: absOut9 };
       }
@@ -32603,7 +36176,7 @@ function legacyOrderFn9(fn9, evaluated9, thirty9) {
   const sink9 = { monthToDays: thirty9 ? "30" : void 0, capNotes: [] };
   const rts9 = [];
   for (const v9 of evaluated9) {
-    const c9 = carrierNum(v9.t === "q" ? foldIrrationalResidueRaw(v9, thirty9) : v9, sink9);
+    const c9 = legacyCarrierNum9(v9.t === "q" ? legacyFoldRaw9(v9, thirty9) : v9, sink9);
     if (c9.t !== "d" && c9.t !== "f") return reject9;
     rts9.push(c9);
   }
@@ -32693,7 +36266,9 @@ function candScale9(base, k2, thirty, capf, extraCapped, factor, onEntry) {
   if (sh.kind === "invalid-denominator") return { kind: "invalid-denominator" };
   if (sh.kind === "undecidable-denominator") return { kind: "undecidable-denominator" };
   if (factor.num === "refuse") return { kind: "refuse", code: "inexact", message: factor.message };
-  const out = { ...base, ...qv(rMul(bx, k2)) };
+  const scaledReading9 = qv(rMul(bx, k2));
+  const { t: baseT9, v: _baseV9, vx: _baseVx9, ...baseTail9 } = base;
+  const out = scaledReading9.vx === void 0 ? { t: baseT9, v: scaledReading9.v, ...baseTail9 } : { t: baseT9, v: scaledReading9.v, vx: scaledReading9.vx, ...baseTail9 };
   if (cappedZeroFactor) writeShadowSlots9(out, ShadowFraction.scalar({ n: 0n, d: 1n }, true, thirty).writeLegacy());
   else writeShadowSlots9(out, sh.kind === "ok" ? sh.slots : {});
   if (cappedOut) out.capped = true;
@@ -32721,16 +36296,66 @@ var financeDurationProved9 = (yearsRT, yQ, thirty) => {
   if (r9.kind !== "ok") return false;
   return r9.value.compare(ShadowFraction.scalar(yQ, false, thirty)) === 0;
 };
-var routeScale9 = (ctx, site, base, k2, thirty, capf, extraCapped, factor, legacyThunk) => {
-  const res = candScale9(base, k2, thirty, capf, extraCapped, factor, ctx.__candScale9Entry);
-  const out = applyCandScale9(res);
-  if (ctx.__scaleCounts9 !== void 0) ctx.__scaleCounts9.cand++;
-  if (ctx.scaleObserver !== void 0) {
-    const legacyOut = legacyThunk();
-    if (ctx.__scaleCounts9 !== void 0) ctx.__scaleCounts9.legacy++;
-    ctx.scaleObserver(site, base, k2, legacyOut, { res, out }, thirty, factor);
+var scaleSourceSnapshot9 = (source9, thirty9) => {
+  const snap9 = snapshotShadowRT9(source9, thirty9);
+  if (snap9.kind === "invalid-authority-state") return { authority: void 0, authoritative: false };
+  const rt9 = snap9.rt;
+  const foldA9 = rt9.foldA9;
+  if (rt9.capped === true) return { authority: foldA9, authoritative: false };
+  if (snap9.shadow.kind === "no-shadow") return { authority: foldA9, authoritative: authStateOf9(foldA9, false) === "auth" };
+  return { authority: foldA9, authoritative: snap9.shadow.kind === "ok" && snap9.shadow.value.zeroState() === "authoritative-zero" };
+};
+var routeScale9 = (ctx, site, base, k2, thirty, capf, extraCapped, factorArg9, legacyThunk) => {
+  const factor = "proof" in factorArg9 ? factorArg9.proof : factorArg9;
+  const b1Capture9 = ctx.__b1Transform9 === void 0 && ctx.__b1ProductionCausal9 === void 0 ? null : (() => {
+    if (ctx.__b1ProductionCausal9 === void 0) ctx.__b1Capture9?.("transform");
+    return b1CaptureOperand9(base, thirty);
+  })();
+  const materializedBase9 = b1Capture9 === null || ctx.__b1EligibilityPartition9 === true ? null : materializeB1CapturedOperand9(b1Capture9);
+  const ownedBase9 = materializedBase9 ?? base;
+  const authoritySource9 = "proof" in factorArg9 ? factorArg9.authoritySource : void 0;
+  const authoritySnapshot9 = authoritySource9 === void 0 ? null : scaleSourceSnapshot9(authoritySource9, thirty);
+  const joinedScaleAuthority9 = authoritySnapshot9 === null ? void 0 : authJoin9(ownedBase9.foldA9, authoritySnapshot9.authority);
+  const scaleKernel9 = (ownerCtx9) => {
+    const rawRes9 = candScale9(ownedBase9, k2, thirty, capf, extraCapped, factor, ownerCtx9.__candScale9Entry);
+    const res = rawRes9.kind === "ok" && joinedScaleAuthority9 !== void 0 && !hasShadowFromRT(rawRes9.rt) ? { kind: "ok", rt: stampAuth9(rawRes9.rt, joinedScaleAuthority9) } : rawRes9;
+    const out9 = applyCandScale9(res);
+    if (ownerCtx9.__scaleCounts9 !== void 0) ownerCtx9.__scaleCounts9.cand++;
+    if (ownerCtx9.scaleObserver !== void 0) {
+      const legacyOut9 = legacyThunk();
+      if (ownerCtx9.__scaleCounts9 !== void 0) ownerCtx9.__scaleCounts9.legacy++;
+      ownerCtx9.scaleObserver(site, base, k2, legacyOut9, { res, out: out9 }, thirty, factor);
+    }
+    return out9;
+  };
+  const out = ctx.__b1ProductionCausal9 === void 0 ? scaleKernel9(ctx) : null;
+  if (ctx.__b1Transform9 === void 0 && ctx.__b1ProductionCausal9 === void 0) return out;
+  const causalFactorScale9 = site === "qTimesScalar" || site === "scalarTimesQ" ? { n: 1n, d: 1n } : site === "qTimesPct" || site === "pctTimesQ" ? { n: 1n, d: 100n } : null;
+  const factorCapture9 = authoritySource9 === void 0 || causalFactorScale9 === null ? void 0 : (() => {
+    const captured9 = b1CaptureOperand9(authoritySource9, thirty);
+    if (captured9.kind !== "ok") return captured9;
+    if (captured9.sourceAtom === null && captured9.shadow.kind === "no-shadow") return void 0;
+    return Object.freeze({ ...captured9, causalScale: causalFactorScale9 });
+  })();
+  const scaleAuthority9 = authoritySource9 === void 0 ? { kind: "preserve" } : { kind: "join", factor: authoritySnapshot9.authority, ...factorCapture9 !== void 0 && { factorCapture: factorCapture9 } };
+  const effect9 = factor.num === "exact" && rnorm(k2).n === 0n && authoritySnapshot9?.authoritative === true ? "annihilate" : "carry";
+  if (ctx.__b1ProductionCausal9 !== void 0) {
+    return b1TransformProduction9(ctx, {
+      site: "scale",
+      host: "routeScale9",
+      capture: b1Capture9,
+      frameOp: { kind: "scale", factor: k2 },
+      meta: { kind: "scale", scaleSite: site, factor: k2, effect: effect9, authority: scaleAuthority9 }
+    }, scaleKernel9);
   }
-  return out;
+  return b1Transform9(ctx, {
+    site: "scale",
+    host: "routeScale9",
+    capture: b1Capture9,
+    out,
+    frameOp: { kind: "scale", factor: k2 },
+    meta: { kind: "scale", scaleSite: site, factor: k2, effect: effect9, authority: scaleAuthority9 }
+  });
 };
 var capScaleByValue9 = (res9, src9) => {
   const f9 = capFOf9(src9);
@@ -32781,6 +36406,27 @@ var capCoarse9 = (res9, parts9, key9) => {
   const b9 = rMul(rAdd(rAbs9M(v9), { n: 1n, d: 10n ** 30n }), { n: 1n, d: 10n ** 39n });
   res9.capF = [{ s: `case:${key9}(${digs9.join(";")};${capFnv9(`${v9.n}/${v9.d}`)})`, x: { n: 1n, d: 1n }, b: b9 }];
   return res9;
+};
+var convOut9 = (ctx9, src9, out9) => {
+  const transported9 = out9 === src9 || out9.t === "e" ? out9 : (() => {
+    const cert9 = authPreserve9(src9.foldA9);
+    return cert9 === void 0 ? out9 : stampAuth9(out9, cert9);
+  })();
+  if (ctx9.__b1ValueTransport9 !== void 0 && ctx9.__b1Attempt9 !== void 0) {
+    ctx9.__b1ValueTransport9(
+      { run: ctx9.__b1Attempt9.run, attempt: ctx9.__b1Attempt9.attempt },
+      "convertOutput",
+      src9,
+      transported9
+    );
+  }
+  return transported9;
+};
+var alR9 = (src9, out9) => {
+  if (out9 === src9 || out9.t === "e") return out9;
+  if (out9.terms !== void 0 || out9.termsDen !== void 0) return out9;
+  const cert9 = authPreserve9(src9.foldA9);
+  return cert9 === void 0 ? out9 : stampAuth9(out9, cert9);
 };
 var capFBound9 = (f9) => f9.reduce((s9, t9) => rAdd(s9, rMul(rAbs9M(t9.x), t9.b)), { n: 0n, d: 1n });
 var capProdTransport9 = (res9, ops9, key9) => {
@@ -33091,6 +36737,13 @@ var carrierFaithful = (q9, thirty) => {
   };
   return okSide9(q9.terms) && okSide9(q9.termsDen);
 };
+var capturedExponentFaithful9 = (captured9, thirty9) => {
+  if (captured9.kind !== "ok" || captured9.shadow.kind !== "ok") return true;
+  const materialized9 = materializeB1CapturedOperand9(captured9);
+  if (materialized9 === null) return false;
+  const carrier9 = materialized9.t === "d" || materialized9.t === "f" ? promoteShadowScalar9(materialized9) : materialized9;
+  return carrier9.t !== "q" || !dimIsEmpty(carrier9.dim) || carrierFaithful(carrier9, thirty9);
+};
 var pctFactorFrac = (p9, mode9, thirty) => {
   if (p9.terms === void 0 && p9.termsDen === void 0) return null;
   const pn9 = p9.terms ?? [{ x: p9.vx ?? decToRat(p9.v), comps: [], aux: rnorm(p9.vx ?? decToRat(p9.v)).d !== 1n }];
@@ -33124,7 +36777,9 @@ var applyFracFactor = (base9, x9, ff9, ctx, cap9) => {
     return out;
   };
   if (base9.t === "q") {
-    const f9 = fracOf(base9);
+    const fv9 = shadowFracA9(base9, ctx);
+    if (fv9.kind === "refuse") return fv9.err;
+    const f9 = fv9;
     const n92 = distributeTerms(f9.num, ff9.num, t30);
     const d9 = distributeTerms(f9.den, ff9.den, t30);
     if (n92 === null || d9 === null) {
@@ -33147,7 +36802,8 @@ var tsScalarOf = (o2, ctx) => {
     return pf9 === "irr" ? "irr" : rDiv(pf9, { n: 100n, d: 1n });
   }
   if (o2.t === "q") {
-    const f2 = foldIrrationalResidue(o2, ctx.monthToDays === "30");
+    const f2 = foldIrrationalResidue(o2, ctx.monthToDays === "30", ctx, "tsScalar");
+    if (f2.t === "e") return "irr";
     if (isCarrier(f2) && (f2.terms !== void 0 || f2.termsDen !== void 0)) return "irr";
     if (f2.t === "d") return f2.vx ?? decToRat(f2.v);
     if (f2.t === "q" && dimIsEmpty(f2.dim) && (compsOf(f2) ?? []).every((c2) => isPureLinear(c2.def))) {
@@ -33157,6 +36813,16 @@ var tsScalarOf = (o2, ctx) => {
     }
   }
   return null;
+};
+var tsScaleByRT9 = (span, factor, op, ctx) => {
+  const k9 = tsScalarOf(factor, ctx);
+  if (k9 === "irr") return err("inexact", TS_IRR_MSG);
+  if (k9 === null) return null;
+  if (op === "/") {
+    if (rnorm(k9).n === 0n) return err("division-by-zero");
+    return tsScaleWithAuthority9(span, rDiv({ n: 1n, d: 1n }, k9), factor, ctx);
+  }
+  return tsScaleWithAuthority9(span, k9, factor, ctx);
 };
 var tsScale = (span, k2, ctx) => {
   const t30 = ctx.monthToDays === "30";
@@ -33177,25 +36843,33 @@ var tsScale = (span, k2, ctx) => {
 var tsRatio = (a2, b2, ctx) => {
   if (b2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
   const capA9 = a2.capped === true;
+  const ratioOut9 = (x9) => {
+    const out9 = { t: "d", ...qv(rnorm(x9)), ...capA9 && { capped: true } };
+    const cert9 = authJoin9(a2.foldA9, b2.foldA9);
+    return cert9 === void 0 ? out9 : stampAuth9(out9, cert9);
+  };
   const ca = spanCanon(a2.c);
   const cb = spanCanon(b2.c);
   if (cb.months === 0n && cb.days === 0n) return err("division-by-zero");
   if (ctx.monthToDays === "30") {
     const den30 = cb.months * 30n + cb.days;
     if (den30 === 0n) return err("division-by-zero");
-    return { t: "d", ...qv(rnorm({ n: ca.months * 30n + ca.days, d: den30 })), ...capA9 && { capped: true } };
+    return ratioOut9({ n: ca.months * 30n + ca.days, d: den30 });
   }
   const ga = spanGroups(a2.c);
   const gb = spanGroups(b2.c);
   const pureM9 = (g9) => g9.hasM && !g9.hasD;
   const pureD9 = (g9) => !g9.hasM;
-  if (pureM9(ga) && pureM9(gb) && cb.months !== 0n) return { t: "d", ...qv(rnorm({ n: ca.months, d: cb.months })), ...capA9 && { capped: true } };
-  if (pureD9(ga) && pureD9(gb) && cb.days !== 0n) return { t: "d", ...qv(rnorm({ n: ca.days, d: cb.days })), ...capA9 && { capped: true } };
+  if (pureM9(ga) && pureM9(gb) && cb.months !== 0n) return ratioOut9({ n: ca.months, d: cb.months });
+  if (pureD9(ga) && pureD9(gb) && cb.days !== 0n) return ratioOut9({ n: ca.days, d: cb.days });
   return err("anchor-required", "months/years and days/weeks only compare around a date");
 };
 function addSummable(acc, v2, ctx) {
   if (acc.capped === true || v2.capped === true) {
-    const s9 = addSummableInner(acc, v2, ctx);
+    let effectiveRhs9;
+    const s9 = addSummableInner(acc, v2, ctx, (rhs9) => {
+      effectiveRhs9 = rhs9;
+    });
     if (s9.t === "e") return s9;
     if ((acc.t === "d" || acc.t === "f") && (v2.t === "d" || v2.t === "f") && (s9.t === "d" || s9.t === "f")) {
       const g9 = capAddGate9(acc, v2, numRat(s9), 1n);
@@ -33203,8 +36877,7 @@ function addSummable(acc, v2, ctx) {
       return capStamp9({ ...s9, capped: true }, g9);
     }
     if (acc.t === "q" && v2.t === "q" && s9.t === "q") {
-      const vAl9 = alignForAdd(acc, v2, ctx);
-      const vGate9 = vAl9.t === "q" ? vAl9 : v2;
+      const vGate9 = effectiveRhs9 ?? v2;
       const g9 = capAddGate9(acc, vGate9, qx(s9), 1n);
       if (g9.err) return g9.err;
       return capStamp9({ ...s9, capped: true }, g9);
@@ -33216,7 +36889,55 @@ function addSummable(acc, v2, ctx) {
   }
   return addSummableInner(acc, v2, ctx);
 }
-function addSummableInner(acc, v2, ctx) {
+function addSummableInner(acc, v2, ctx, onEffectiveRhs9) {
+  if (ctx.__b1ProductionCausal9 !== void 0 && acc.t === "q" && v2.t === "q") {
+    if (!dimsCompatible(acc.dim, v2.dim, ctx) || dimEquals(acc.dim, { temperature: 1 })) {
+      return addSummableInnerCore9(acc, v2, ctx, onEffectiveRhs9);
+    }
+    const aligned9 = alignForAdd(acc, v2, ctx);
+    if (aligned9.t === "e") return aligned9;
+    const rhs9 = aligned9;
+    onEffectiveRhs9?.(rhs9);
+    const frame9 = (capture9) => {
+      if (capture9.left.rt.t !== "q" || capture9.left.exactRead === null || capture9.right.exactRead === null) {
+        return { kind: "unavailable", reason: "non-numeric-mechanism" };
+      }
+      const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+      return b1NumericFrame9(b1QValue9(capture9.left.rt, exact9), exact9);
+    };
+    const owned9 = b1PreOwn9(
+      ctx,
+      { site: "addSummableInner", host: "addSummableInnerCore9", op: "+" },
+      acc,
+      rhs9,
+      frame9,
+      (legacyCtx9) => addSummableInnerCore9(acc, rhs9, legacyCtx9)
+    );
+    if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_AGGREGATE_OWNER_MISSING");
+    return owned9.published;
+  }
+  if (ctx.__b1ProductionCausal9 !== void 0 && (acc.t === "d" || acc.t === "f") && (v2.t === "d" || v2.t === "f")) {
+    const frame9 = (capture9) => {
+      if (capture9.left.exactRead === null || capture9.right.exactRead === null) {
+        return { kind: "unavailable", reason: "non-numeric-mechanism" };
+      }
+      const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+      return b1NumericFrame9(dOf9(exact9), exact9);
+    };
+    const owned9 = b1PreOwn9(
+      ctx,
+      { site: "addSummableInner", host: "addSummableInnerCore9", op: "+" },
+      acc,
+      v2,
+      frame9,
+      (legacyCtx9) => addSummableInnerCore9(acc, v2, legacyCtx9)
+    );
+    if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_AGGREGATE_OWNER_MISSING");
+    return owned9.published;
+  }
+  return addSummableInnerCore9(acc, v2, ctx, onEffectiveRhs9);
+}
+function addSummableInnerCore9(acc, v2, ctx, onEffectiveRhs9) {
   if (acc.t === "ts" || v2.t === "ts") {
     if (acc.t !== "ts" || v2.t !== "ts") return err("unit-mismatch", "a total cannot mix timespans and other values");
     const a9 = spanCanon(acc.c);
@@ -33224,7 +36945,7 @@ function addSummableInner(acc, v2, ctx) {
     const g9 = spanGroups(acc.c);
     const h9 = spanGroups(v2.c);
     const out9 = spanEmit(a9.months + b9.months, a9.days + b9.days, { hasM: g9.hasM || h9.hasM, hasD: g9.hasD || h9.hasD }, ctx.monthToDays === "30");
-    return out9;
+    return stampTimespan9(out9, authJoin9(acc.foldA9, v2.foldA9));
   }
   if (acc.t === "q" || v2.t === "q") {
     if (acc.t !== "q" || v2.t !== "q") {
@@ -33236,48 +36957,86 @@ function addSummableInner(acc, v2, ctx) {
     }
     const rhs = alignForAdd(acc, v2, ctx);
     if (rhs.t === "e") return rhs;
+    const rhsQ9 = rhs;
+    onEffectiveRhs9?.(rhsQ9);
+    const sumX9 = rAdd(qx(acc), qx(rhsQ9));
+    const finishQ9 = (out9) => b1Own9(
+      ctx,
+      { site: "addSummableInner", host: "addSummableInnerCore9", op: "+" },
+      acc,
+      rhsQ9,
+      (capture9) => {
+        if (capture9.left.rt.t !== "q" || capture9.left.exactRead === null || capture9.right.exactRead === null) {
+          return { kind: "unavailable", reason: "non-numeric-mechanism" };
+        }
+        const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+        return b1NumericFrame9(b1QValue9(capture9.left.rt, exact9), exact9);
+      },
+      out9
+    );
     const irr9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
     if (acc.termsDen !== void 0 || v2.termsDen !== void 0 || rhs.termsDen !== void 0) {
       const t30 = ctx.monthToDays === "30";
       const rr9 = rhs.terms !== void 0 || rhs.termsDen !== void 0 ? rhs : v2;
-      const fa9 = fracOf(acc);
-      const fb9 = fracOf(rr9);
+      const fav9 = shadowFracA9(acc, ctx);
+      if (fav9.kind === "refuse") return fav9.err;
+      const fbv9 = shadowFracA9(rr9, ctx);
+      if (fbv9.kind === "refuse") return fbv9.err;
+      const fa9 = fav9;
+      const fb9 = fbv9;
       const a9 = distributeTerms(fa9.num, fb9.den, t30);
       const b9 = distributeTerms(fb9.num, fa9.den, t30);
       const dd9 = distributeTerms(fa9.den, fb9.den, t30);
       if (a9 !== null && b9 !== null && dd9 !== null) {
         const nn9 = mergeTerms(a9, b9, 1n, t30);
-        if (nn9.length === 0) return { ...acc, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
-        return attachFrac({ ...acc, ...qv(rAdd(qx(acc), qx(rhs))) }, nn9, dd9);
+        if (nn9.length === 0) return finishQ9(b1QValue9(acc, { n: 0n, d: 1n }, { terms: null, termsDen: null }));
+        return finishQ9(attachFrac(b1QValue9(acc, sumX9), nn9, dd9));
       }
       ctx.capNotes?.push("aggregate");
-      return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))), terms: void 0, termsDen: void 0 };
+      return finishQ9(b1QValue9(acc, sumX9, { terms: null, termsDen: null }));
     }
     if (irr9(acc) || irr9(v2) || rhs.terms !== void 0) {
-      const merged9 = mergeTerms(termsOf(acc), termsOf(rhs.terms !== void 0 ? rhs : v2), 1n, ctx.monthToDays === "30");
+      const vPick9 = rhs.terms !== void 0 ? rhs : v2;
+      const taA9 = shadowViewIfNeeded9([acc, vPick9], acc, ctx);
+      if (!Array.isArray(taA9)) return taA9;
+      const tbA9 = shadowViewIfNeeded9([acc, vPick9], vPick9, ctx);
+      if (!Array.isArray(tbA9)) return tbA9;
+      const merged9 = mergeTerms(taA9, tbA9, 1n, ctx.monthToDays === "30");
       if (merged9.length === 1 && !merged9[0].comps.some((c9) => c9.def.currency !== void 0)) {
         const t9 = merged9[0];
         const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
-        return combineQuantities(one9, {
+        return finishQ9(combineQuantities(one9, {
           t: "q",
           ...qv(t9.x),
           dim: dimOfComps(t9.comps),
           symbol: compsSymbol(t9.comps),
           comps: t9.comps
-        }, "*", ctx);
+        }, "*", ctx));
       }
-      return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))), terms: merged9 };
+      return finishQ9(b1QValue9(acc, sumX9, { terms: merged9 }));
     }
-    return { ...acc, ...qv(rAdd(qx(acc), qx(rhs))), terms: void 0 };
+    return finishQ9(b1QValue9(acc, sumX9, { terms: null }));
   }
   const a2 = numRat(acc);
   const b2 = numRat(v2);
   const sum2 = rAdd(a2, b2);
-  if (acc.t === "f" || v2.t === "f") return makeFrac(sum2.n, sum2.d, "derived");
-  return { t: "d", ...qv(sum2) };
+  const legacyOut9 = acc.t === "f" || v2.t === "f" ? makeFrac(sum2.n, sum2.d, "derived") : dOf9(sum2);
+  const shell9 = dOf9(sum2);
+  return b1Own9(
+    ctx,
+    { site: "addSummableInner", host: "addSummableInnerCore9", op: "+" },
+    acc,
+    v2,
+    (capture9) => {
+      if (capture9.left.exactRead === null || capture9.right.exactRead === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+      const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+      return b1NumericFrame9(dOf9(exact9), exact9);
+    },
+    legacyOut9
+  );
 }
-function foldIrrationalResidue(rt2, thirty) {
-  const out9 = foldIrrationalResidueRaw(rt2, thirty);
+function legacyFold9(rt2, thirty) {
+  const out9 = legacyFoldRaw9(rt2, thirty);
   const prov9 = capFOf9(rt2);
   if (prov9 === void 0 || prov9.length === 0) return out9;
   if (out9.t !== "d" && out9.t !== "f" && out9.t !== "q") return out9;
@@ -33290,7 +37049,7 @@ function foldIrrationalResidue(rt2, thirty) {
   stamped9.capped = true;
   return stamped9;
 }
-function foldIrrationalResidueRaw(rt2, thirty) {
+function legacyFoldRaw9(rt2, thirty) {
   const dimZero9 = dimIsEmpty(rt2.dim) || thirty === true && Object.entries(rt2.dim).every(([k9, v9]) => v9 === 0 || k9 === "calmonths" || k9 === "caldays") && (rt2.dim["calmonths"] ?? 0) + (rt2.dim["caldays"] ?? 0) === 0;
   if (dimZero9 && (rt2.terms !== void 0 || rt2.termsDen !== void 0)) {
     const k0 = fracReduce(rt2, thirty);
@@ -33385,13 +37144,290 @@ function foldIrrationalResidueRaw(rt2, thirty) {
   if (rest.length === 0) return foldOut(v2);
   return withDef({ t: "q", v: v2, dim: dimOfComps(rest), symbol: compsSymbol(rest), comps: rest });
 }
+function foldIrrationalResidue(rt2, thirty, ctx, site) {
+  if (ctx?.__foldCandidateWorld9 === true) {
+    if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
+    return publishCandFold9(candidateFold9(rt2, thirty === true), ctx, "fold", site);
+  }
+  const out = legacyFold9(rt2, thirty);
+  if (ctx?.__foldCounts9 !== void 0) ctx.__foldCounts9.legacy++;
+  const ob9 = ctx?.__foldObserver9;
+  if (ob9 !== void 0) {
+    if (ctx?.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
+    ob9("fold", site, rt2, out, [], candidateFold9(rt2, thirty === true), thirty === true);
+  }
+  return out;
+}
+function foldIrrationalResidueRaw(rt2, thirty, ctx, site) {
+  if (ctx?.__foldCandidateWorld9 === true) {
+    if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
+    return publishCandFold9(candidateFoldRaw9(rt2, thirty === true), ctx, "foldRaw", site);
+  }
+  const out = legacyFoldRaw9(rt2, thirty);
+  if (ctx?.__foldCounts9 !== void 0) ctx.__foldCounts9.legacy++;
+  const ob9 = ctx?.__foldObserver9;
+  if (ob9 !== void 0) {
+    if (ctx?.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
+    ob9("foldRaw", site, rt2, out, [], candidateFoldRaw9(rt2, thirty === true), thirty === true);
+  }
+  return out;
+}
+var dOf9 = (x2) => {
+  const q9 = qv(x2);
+  return q9.vx !== void 0 ? { t: "d", v: q9.v, vx: q9.vx } : { t: "d", v: q9.v };
+};
+var dimlessQOf9 = (x9) => {
+  const q9 = qv(x9);
+  return {
+    t: "q",
+    v: q9.v,
+    ...q9.vx !== void 0 && { vx: q9.vx },
+    dim: {},
+    symbol: "",
+    comps: []
+  };
+};
+var candFoldSeed9 = (rt2, thirty) => {
+  const comps = compsOf(rt2) ?? [];
+  const seed = foldSeedFromRT(rt2, qx(rt2), comps, thirty);
+  switch (seed.kind) {
+    case "shadow": {
+      return { kind: "ok", terms0: slotsNum9(foldSlotsVerbatim9(rt2)) ?? ONE_TERMS() };
+    }
+    case "undecidable-authority":
+      return { kind: "undecidable-authority" };
+    case "invalid-denominator":
+      return { kind: "invalid-denominator" };
+    case "undecidable-denominator":
+      return { kind: "undecidable-denominator" };
+  }
+};
+function candidateFoldRaw9(rt2, thirty) {
+  if (rt2.t !== "q") return { kind: "unsupported" };
+  const dimZero9 = dimIsEmpty(rt2.dim) || thirty && Object.entries(rt2.dim).every(([k9, v9]) => v9 === 0 || k9 === "calmonths" || k9 === "caldays") && (rt2.dim["calmonths"] ?? 0) + (rt2.dim["caldays"] ?? 0) === 0;
+  if (dimZero9 && hasShadowFromRT(rt2)) {
+    const sf9 = shadowFromRT(rt2, thirty);
+    if (sf9.kind === "invalid-denominator") return { kind: "invalid-denominator" };
+    if (sf9.kind === "undecidable-denominator") return { kind: "undecidable-denominator" };
+    if (sf9.kind === "ok") {
+      const r9 = sf9.value.reduceScalar();
+      if (r9.kind === "reduced" && sf9.value.provResidue9() !== null) {
+        return { kind: "ok", out: rt2, route: "scalar-opaque-kept", effects: [] };
+      }
+      if (r9.kind === "reduced") return { kind: "ok", out: dOf9(r9.x), route: "scalar-reduced", effects: [] };
+      if (r9.kind === "reduced-aux") return { kind: "ok", out: { ...dOf9(r9.x), capped: true }, route: "scalar-reduced-aux", effects: [] };
+    }
+  }
+  const comps = compsOf(rt2);
+  if (!comps || !comps.some((c9) => c9.def.factorDec !== void 0)) {
+    return { kind: "ok", out: rt2, route: "no-irrational", effects: [] };
+  }
+  const seed9 = candFoldSeed9(rt2, thirty);
+  if (seed9.kind !== "ok") return seed9;
+  const terms0 = seed9.terms0;
+  const slots9$ = foldSlotsVerbatim9(rt2);
+  const hadShadow9 = slotsPresent9(slots9$);
+  const foldOut9 = (v9) => {
+    if (!hadShadow9) return { t: "d", v: v9 };
+    const out9 = { t: "q", v: v9, dim: {}, symbol: "", comps: [] };
+    writeShadowSlots9(out9, slots9$);
+    return out9;
+  };
+  const withDef9 = (out) => {
+    if (out.t !== "q") return out;
+    const oc = compsOf(out);
+    const def0 = oc && oc.length === 1 && oc[0].exp === 1 ? oc[0].def : void 0;
+    const res9 = { ...out, ...def0 && { def: def0 } };
+    writeShadowSlots9(res9, slotsWithNum9(slots9$, terms0));
+    return res9;
+  };
+  const ok9 = (out, route) => ({ kind: "ok", out, route, effects: [] });
+  if (comps.length > 12) {
+    const work = comps.map((c9) => ({ ...c9 }));
+    let dec0 = null;
+    let rat0 = { n: 1n, d: 1n };
+    for (let a9 = 0; a9 < work.length; a9++) {
+      for (let b9 = a9 + 1; b9 < work.length; b9++) {
+        const ca = work[a9];
+        const cb = work[b9];
+        if (ca.exp === 0 || cb.exp === 0) continue;
+        if (ca.def.factorDec === void 0 && cb.def.factorDec === void 0) continue;
+        if (!dimIsEmpty(dimOfComps([ca, cb]))) continue;
+        if (ca.def.factorDec === void 0 && !isPureLinear(ca.def) || cb.def.factorDec === void 0 && !isPureLinear(cb.def)) continue;
+        for (const c9 of [ca, cb]) {
+          if (c9.def.factorDec !== void 0) dec0 = (dec0 ?? new DecC(1)).times(new DecC(c9.def.factorDec).pow(c9.exp));
+          else rat0 = rMul(rat0, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+        }
+        ca.exp = 0;
+        cb.exp = 0;
+      }
+    }
+    for (let a9 = 0; a9 < work.length; a9++) {
+      for (let b9 = a9 + 1; b9 < work.length; b9++) {
+        for (let g9 = b9 + 1; g9 < work.length; g9++) {
+          const trio = [work[a9], work[b9], work[g9]];
+          if (trio.some((c9) => c9.exp === 0)) continue;
+          if (!trio.some((c9) => c9.def.factorDec !== void 0)) continue;
+          if (!dimIsEmpty(dimOfComps(trio))) continue;
+          if (trio.some((c9) => c9.def.factorDec === void 0 && !isPureLinear(c9.def))) continue;
+          for (const c9 of trio) {
+            if (c9.def.factorDec !== void 0) dec0 = (dec0 ?? new DecC(1)).times(new DecC(c9.def.factorDec).pow(c9.exp));
+            else rat0 = rMul(rat0, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+            c9.exp = 0;
+          }
+        }
+      }
+    }
+    if (dec0 !== null) {
+      const rest0 = work.filter((c9) => c9.exp !== 0);
+      const v0 = ratToDec(rMul(qx(rt2), rat0)).times(dec0);
+      if (rest0.length === 0) return ok9(foldOut9(v0), "pairwise-full");
+      return ok9(withDef9({ t: "q", v: v0, dim: dimOfComps(rest0), symbol: compsSymbol(rest0), comps: rest0 }), "pairwise-partial");
+    }
+    if (!dimIsEmpty(dimOfComps(comps)) || comps.some((c9) => !isPureLinear(c9.def) && c9.def.factorDec === void 0)) {
+      return ok9(rt2, "beyond-12-unfoldable");
+    }
+    let rat9 = { n: 1n, d: 1n };
+    let dec9 = new DecC(1);
+    for (const c9 of comps) {
+      if (c9.def.factorDec !== void 0) dec9 = dec9.times(new DecC(c9.def.factorDec).pow(c9.exp));
+      else rat9 = rMul(rat9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+    }
+    return ok9(foldOut9(ratToDec(rMul(qx(rt2), rat9)).times(dec9)), "beyond-12-whole");
+  }
+  let best = 0;
+  let bestSize = 0;
+  for (let mask = 1; mask < 1 << comps.length; mask++) {
+    const subset = comps.filter((_2, k9) => mask >> k9 & 1);
+    if (!subset.some((c9) => c9.def.factorDec !== void 0)) continue;
+    if (subset.some((c9) => !isPureLinear(c9.def) && c9.def.factorDec === void 0)) continue;
+    if (!dimIsEmpty(dimOfComps(subset))) continue;
+    if (subset.length > bestSize) {
+      best = mask;
+      bestSize = subset.length;
+    }
+  }
+  if (best === 0) return ok9(rt2, "no-dimzero-subset");
+  let rat = { n: 1n, d: 1n };
+  let dec2 = new DecC(1);
+  const rest = [];
+  comps.forEach((c9, k9) => {
+    if (!(best >> k9 & 1)) {
+      rest.push(c9);
+      return;
+    }
+    if (c9.def.factorDec !== void 0) dec2 = dec2.times(new DecC(c9.def.factorDec).pow(c9.exp));
+    else rat = rMul(rat, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+  });
+  const v2 = ratToDec(rMul(qx(rt2), rat)).times(dec2);
+  if (rest.length === 0) return ok9(foldOut9(v2), "subset-full");
+  return ok9(withDef9({ t: "q", v: v2, dim: dimOfComps(rest), symbol: compsSymbol(rest), comps: rest }), "subset-partial");
+}
+function candidateFold9(rt2, thirty) {
+  const raw9 = candidateFoldRaw9(rt2, thirty);
+  if (raw9.kind !== "ok") return raw9;
+  const out9 = raw9.out;
+  if (out9 === rt2) return raw9;
+  if (out9.t !== "d" && out9.t !== "f" && out9.t !== "q") return raw9;
+  const prov9 = capFOf9(rt2);
+  const wasCapped9 = rt2.capped === true;
+  const ok9$ = (o2, route) => {
+    if (wasCapped9) o2.capped = true;
+    return { kind: "ok", out: o2, route, effects: raw9.effects };
+  };
+  if (prov9 === void 0) {
+    if (!wasCapped9) return raw9;
+    return ok9$({ ...out9 }, `${raw9.route}+capped-kept`);
+  }
+  if (prov9.length === 0) {
+    const o9 = { ...out9 };
+    o9.capF = [];
+    return ok9$(o9, `${raw9.route}+capf-empty-kept`);
+  }
+  const xOld9 = qx(rt2);
+  const xNew9 = out9.t === "q" ? qx(out9) : numRat(out9);
+  if (xOld9.n !== 0n) {
+    const sc9 = capFScale9(prov9, rDiv(xNew9, xOld9));
+    const o9 = { ...out9 };
+    if (sc9.length === 0) {
+      o9.capF = [];
+      return ok9$(o9, `${raw9.route}+capf-cancelled`);
+    }
+    o9.capF = sc9;
+    o9.capped = true;
+    return { kind: "ok", out: o9, route: `${raw9.route}+capf-scaled`, effects: raw9.effects };
+  }
+  if (xNew9.n === 0n) {
+    const o9 = { ...out9 };
+    o9.capF = prov9;
+    o9.capped = true;
+    return { kind: "ok", out: o9, route: `${raw9.route}+capf-zero-kept`, effects: raw9.effects };
+  }
+  const dropped9 = { ...out9 };
+  dropped9.capped = true;
+  return { kind: "ok", out: dropped9, route: `${raw9.route}+capf-zero-to-nonzero`, effects: raw9.effects };
+}
+function candidateCarrierNum9(rt2, thirty) {
+  if (!isCarrier(rt2)) return { kind: "ok", out: rt2, route: "not-carrier", effects: [] };
+  const prov9 = capFOf9(rt2);
+  const wasCapped9 = rt2.capped === true;
+  const wrap9 = (out, route, effects, forceCapped) => {
+    const o9 = { ...out };
+    if (prov9 !== void 0) o9.capF = prov9;
+    if (wasCapped9 || forceCapped) o9.capped = true;
+    return { kind: "ok", out: o9, route, effects };
+  };
+  if (!hasShadowFromRT(rt2)) {
+    const plain9 = rt2.vx !== void 0 ? { t: "d", v: rt2.v, vx: rt2.vx } : { t: "d", v: rt2.v };
+    return wrap9(plain9, "plain", [], false);
+  }
+  const sf9 = shadowFromRT(rt2, thirty);
+  if (sf9.kind === "invalid-denominator") return { kind: "invalid-denominator" };
+  if (sf9.kind === "undecidable-denominator") return { kind: "undecidable-denominator" };
+  if (sf9.kind === "ok") {
+    const r9 = sf9.value.reduceScalar();
+    if (r9.kind === "reduced" && sf9.value.provResidue9() !== null) {
+      return wrap9(dOf9(r9.x), "reduced-opaque", [{ kind: "capNote", note: "carrier" }], true);
+    }
+    if (r9.kind === "reduced") return wrap9(dOf9(r9.x), "reduced", [], false);
+    if (r9.kind === "reduced-aux") return wrap9(dOf9(r9.x), "reduced-aux", [{ kind: "capNote", note: "carrier" }], true);
+  }
+  return wrap9({ t: "d", v: rt2.v }, "irreducible", [{ kind: "capNote", note: "carrier" }], true);
+}
+function applyCandFold9(cand) {
+  switch (cand.kind) {
+    case "ok":
+      return cand.out;
+    case "invalid-denominator":
+      return err("division-by-zero", "the denominator is a proven zero");
+    case "undecidable-denominator":
+      return err("inexact", "the denominator is an auxiliary zero \u2014 order/sign not decidable");
+    case "undecidable-authority":
+      return err("inexact", "the authority of this value\u2019s shadow seed is not decidable \u2014 its provenance was lost upstream");
+    case "unsupported":
+      return err("unsupported-pair", "this value cannot be folded");
+    case "budget-exhausted":
+      return err("inexact", "the fold exceeds the engine\u2019s certified budget");
+    case "inexact":
+      return err("inexact", cand.reason);
+  }
+}
+var publishCandFold9 = (cand, ctx, wrapper9, site9) => {
+  if (cand.kind === "ok") {
+    for (const e9 of cand.effects) {
+      ctx.capNotes?.push(e9.note);
+      ctx.__foldEffectLog9?.push(`${wrapper9}:${site9}:${e9.note}`);
+    }
+  }
+  return applyCandFold9(cand);
+};
 function finalizeCurrencies(rt2, ctx) {
   if (rt2.t !== "q") return rt2;
   if (compsOf(rt2)?.some((c9) => Math.abs(c9.exp) > 999)) {
     return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
   }
   if (rt2.chosen) return rt2;
-  rt2 = foldIrrationalResidue(rt2, ctx.monthToDays === "30");
+  rt2 = foldIrrationalResidue(rt2, ctx.monthToDays === "30", ctx, "lineBoundary");
   if (rt2.t !== "q") return rt2;
   const comps = compsOf(rt2);
   if (!comps) return rt2;
@@ -33424,18 +37460,925 @@ function finalizeCurrencies(rt2, ctx) {
   const out9 = combineQuantities(one, aligned, "*", ctx);
   const at9 = aligned.terms;
   const ad9 = aligned.termsDen;
-  return out9.t === "q" && at9 !== void 0 ? { ...out9, terms: at9, ...ad9 && { termsDen: ad9 } } : out9;
+  const final9 = out9.t === "q" && at9 !== void 0 ? { ...out9, terms: at9, ...ad9 && { termsDen: ad9 } } : out9;
+  if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+    ctx.__b1ValueTransport9(
+      { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
+      "finalizeCurrencies",
+      aligned,
+      final9
+    );
+  }
+  return final9;
 }
+var b1QValue9 = (base9, x9, edit9 = {}) => {
+  const f9 = qv(x9);
+  const { t: _t9, v: _v9, vx: _vx9, ...tail9 } = base9;
+  const out9 = f9.vx === void 0 ? { t: "q", v: f9.v, ...tail9 } : { t: "q", v: f9.v, vx: f9.vx, ...tail9 };
+  return editShadowSlots9(out9, edit9);
+};
+var b1CopyRat9 = (x9) => Object.freeze({ n: x9.n, d: x9.d });
+var b1CopyCapF9 = (raw9) => {
+  if (raw9 === void 0) return void 0;
+  if (!Array.isArray(raw9)) throw new Error("B1 capture: capF must be an array");
+  return Object.freeze(raw9.map((entryX9) => {
+    if (entryX9 === null || typeof entryX9 !== "object") throw new Error("B1 capture: capF entry must be an object");
+    const entry9 = entryX9;
+    const s9 = entry9.s;
+    const x9 = entry9.x;
+    const b9 = entry9.b;
+    if (typeof s9 !== "string" || x9 === null || typeof x9 !== "object" || b9 === null || typeof b9 !== "object") {
+      throw new Error("B1 capture: malformed capF entry");
+    }
+    const xn9 = x9.n;
+    const xd9 = x9.d;
+    const bn9 = b9.n;
+    const bd9 = b9.d;
+    if (typeof xn9 !== "bigint" || typeof xd9 !== "bigint" || typeof bn9 !== "bigint" || typeof bd9 !== "bigint") {
+      throw new Error("B1 capture: malformed capF entry");
+    }
+    if (xd9 === 0n || bd9 === 0n) throw new Error("B1 capture: capF rational denominator must be non-zero");
+    return Object.freeze({ s: s9, x: b1CopyRat9({ n: xn9, d: xd9 }), b: b1CopyRat9({ n: bn9, d: bd9 }) });
+  }));
+};
+var b1CaptureEnvelope9 = (q9, pool9) => {
+  const mechanism9 = selectB1UnitEnvelope9(q9);
+  if (mechanism9.kind === "invalid-unit-envelope") return mechanism9;
+  const cache9 = /* @__PURE__ */ new Map();
+  const snapDef92 = (raw9) => {
+    let out9 = cache9.get(raw9);
+    if (out9 === void 0) {
+      out9 = snapshotUnitDefInPool9(pool9, raw9);
+      cache9.set(raw9, out9);
+    }
+    return out9;
+  };
+  const snapComp9 = (raw9) => {
+    return snapshotQCompInPool9(pool9, raw9);
+  };
+  let numComps9;
+  let denComps9 = null;
+  let selected9;
+  if (mechanism9.kind === "comps") {
+    const comps9 = Object.freeze(Array.from(mechanism9.comps, snapComp9));
+    numComps9 = comps9;
+    const defDesc9 = Object.getOwnPropertyDescriptor(q9, "def");
+    const rateDesc9 = Object.getOwnPropertyDescriptor(q9, "rate");
+    const defPresent9 = defDesc9 !== void 0 && (!("value" in defDesc9) || defDesc9.value !== void 0);
+    const simpleDef9 = comps9.length === 1 && comps9[0].exp === 1 ? comps9[0].def : void 0;
+    const rawDef9 = defDesc9 !== void 0 && "value" in defDesc9 ? defDesc9.value : void 0;
+    const presentationDef9 = rawDef9 === void 0 ? defPresent9 ? simpleDef9 : void 0 : snapDef92(rawDef9);
+    let presentationRate9;
+    if (rateDesc9 !== void 0 && "value" in rateDesc9 && rateDesc9.value !== void 0) {
+      const rawRate9 = rateDesc9.value;
+      const rawNum9 = rawRate9.num;
+      const rawDen9 = rawRate9.den;
+      presentationRate9 = Object.freeze({ num: snapDef92(rawNum9), den: snapDef92(rawDen9) });
+    }
+    selected9 = Object.freeze({
+      comps: comps9,
+      ...presentationDef9 !== void 0 && { def: presentationDef9 },
+      ...presentationRate9 !== void 0 && { rate: presentationRate9 }
+    });
+  } else if (mechanism9.kind === "rate") {
+    const num9 = snapDef92(mechanism9.rate.num);
+    const den9 = snapDef92(mechanism9.rate.den);
+    numComps9 = Object.freeze([Object.freeze({ def: num9, exp: 1 })]);
+    denComps9 = Object.freeze([Object.freeze({ def: den9, exp: 1 })]);
+    selected9 = Object.freeze({ rate: Object.freeze({ num: num9, den: den9 }) });
+  } else if (mechanism9.kind === "def") {
+    const def9 = snapDef92(mechanism9.def);
+    numComps9 = Object.freeze([Object.freeze({ def: def9, exp: 1 })]);
+    selected9 = Object.freeze({ def: def9 });
+  } else {
+    numComps9 = Object.freeze([]);
+    selected9 = Object.freeze({ comps: numComps9 });
+  }
+  const defs9 = denComps9 === null ? numComps9 : [...numComps9, ...denComps9];
+  const currencyLabelsValid9 = defs9.every((c9) => c9.def.currency === void 0 || pureCurrencyLabelForReemit9(c9.def));
+  const hasAffine9 = defs9.some((c9) => c9.def.affine !== void 0);
+  const unrepresentable9 = defs9.some((c9) => c9.def.currency === void 0 && c9.def.affine === void 0 && c9.def.factor === void 0 && c9.def.factorDec === void 0 && c9.def.constSym === void 0);
+  const admission92 = !currencyLabelsValid9 ? "dirty-currency" : hasAffine9 ? "affine-unproven" : unrepresentable9 ? "unrepresentable-unit" : "ok";
+  return Object.freeze({
+    kind: "ok",
+    envelope: Object.freeze({
+      numComps: numComps9,
+      denComps: denComps9,
+      currencyLabelsValid: currencyLabelsValid9,
+      requiresShadow: defs9.some((c9) => c9.def.currency === void 0 && (c9.def.factorDec !== void 0 || c9.def.constSym !== void 0)),
+      admission: admission92
+    }),
+    selected: selected9
+  });
+};
+var b1CaptureOperand9 = (source9, thirty9, pool9 = createUnitDefSnapshotPool9()) => {
+  let stage9 = "shadow";
+  try {
+    const shadow9 = snapshotShadowRT9(source9, thirty9, pool9);
+    stage9 = "outer";
+    const t9 = source9.t;
+    const capped92 = source9.capped;
+    const foldA9 = shadow9.kind === "ok" ? shadow9.rt.foldA9 : void 0;
+    stage9 = "capF";
+    const rawCapF9 = source9.capF;
+    const capF9 = b1CopyCapF9(rawCapF9);
+    let boundedCause9;
+    const common9 = (out9) => {
+      if (capF9 !== void 0) out9.capF = capF9;
+      const copied9 = copyCaptureBoundedReserve9(source9, out9);
+      if (!copied9.ok) throw new Error(`B1 capture: invalid bounded reserve (${copied9.reason})`);
+      if (copied9.value !== null) boundedCause9 = copied9.value.cause;
+      return Object.freeze(out9);
+    };
+    if (t9 === "q") {
+      const v9 = source9.v;
+      const vxRaw9 = source9.vx;
+      const vx9 = vxRaw9 === void 0 ? void 0 : b1CopyRat9(vxRaw9);
+      const sourceLexical9 = captureLexicalDecimal9(v9, vx9);
+      const sourceAtom9 = sourceLexical9?.atom ?? null;
+      if (vx9 === void 0 && sourceLexical9 === null) throw new Error("B1 capture: unsealed decimal carrier");
+      const exact9 = vx9 ?? sourceLexical9.exactRead;
+      const dimRaw9 = source9.dim;
+      const dim9 = {};
+      for (const [key9, value9] of Object.entries(dimRaw9)) {
+        if (typeof value9 !== "number") throw new Error("B1 capture: dim value must be a number");
+        dim9[key9] = value9;
+      }
+      Object.freeze(dim9);
+      const symbol9 = source9.symbol;
+      if (typeof symbol9 !== "string") throw new Error("B1 capture: symbol must be a string");
+      stage9 = "envelope";
+      const env9 = b1CaptureEnvelope9(source9, pool9);
+      if (env9.kind === "invalid-unit-envelope") {
+        return Object.freeze({ kind: "unavailable", stage: "envelope", reason: "invalid-unit-envelope" });
+      }
+      const chosen9 = source9.chosen;
+      const out9 = {
+        t: "q",
+        v: v9,
+        dim: dim9,
+        symbol: symbol9,
+        ...vx9 !== void 0 && { vx: vx9 },
+        ...chosen9 !== void 0 && { chosen: chosen9 },
+        ...capped92 !== void 0 && { capped: capped92 },
+        ...env9.selected
+      };
+      return Object.freeze({
+        kind: "ok",
+        rt: common9(out9),
+        exactRead: rnorm(exact9),
+        shadow: shadow9.kind === "ok" ? shadow9.shadow : shadow9,
+        sourceAtom: sourceAtom9,
+        authority: foldA9,
+        envelope: env9.envelope,
+        ...boundedCause9 !== void 0 && { boundedCause: boundedCause9 }
+      });
+    }
+    if (t9 === "d" || t9 === "p") {
+      const v9 = source9.v;
+      const vxRaw9 = source9.vx;
+      const vx9 = vxRaw9 === void 0 ? void 0 : b1CopyRat9(vxRaw9);
+      const sourceLexical9 = captureLexicalDecimal9(v9, vx9);
+      const sourceAtom9 = sourceLexical9?.atom ?? null;
+      if (vx9 === void 0 && sourceLexical9 === null) throw new Error("B1 capture: unsealed decimal carrier");
+      const exact9 = vx9 ?? sourceLexical9.exactRead;
+      const base9 = t9 === "d" ? source9.base : void 0;
+      const out9 = t9 === "d" ? { t: "d", v: v9, ...base9 !== void 0 && { base: base9 }, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } } : { t: "p", v: v9, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } };
+      const capturedRT9 = common9(out9);
+      return Object.freeze({
+        kind: "ok",
+        rt: capturedRT9,
+        exactRead: rnorm(exact9),
+        shadow: shadow9.kind === "ok" ? shadow9.shadow : shadow9,
+        authority: foldA9,
+        envelope: null,
+        sourceAtom: sourceAtom9,
+        ...boundedCause9 !== void 0 && { boundedCause: boundedCause9 }
+      });
+    }
+    if (t9 === "f") {
+      const n9 = source9.n;
+      const d9 = source9.d;
+      const origin9 = source9.origin;
+      if (typeof n9 !== "bigint" || typeof d9 !== "bigint" || origin9 !== "literal" && origin9 !== "derived") throw new Error("B1 capture: malformed fraction");
+      const out9 = { t: "f", n: n9, d: d9, origin: origin9, ...capped92 !== void 0 && { capped: capped92 } };
+      const capturedRT9 = common9(out9);
+      return Object.freeze({
+        kind: "ok",
+        rt: capturedRT9,
+        exactRead: rnorm({ n: n9, d: d9 }),
+        shadow: shadow9.kind === "ok" ? shadow9.shadow : shadow9,
+        authority: foldA9,
+        envelope: null,
+        sourceAtom: null,
+        ...boundedCause9 !== void 0 && { boundedCause: boundedCause9 }
+      });
+    }
+    return Object.freeze({ kind: "ok", rt: source9, exactRead: null, shadow: shadow9.kind === "ok" ? shadow9.shadow : shadow9, authority: foldA9, envelope: null, sourceAtom: null });
+  } catch {
+    return Object.freeze({ kind: "unavailable", stage: stage9 });
+  }
+};
+var B1_MATERIALIZED_CAPTURE9 = /* @__PURE__ */ new WeakMap();
+var materializeB1CapturedOperand9 = (captured9) => {
+  if (captured9.kind !== "ok") return null;
+  const cached9 = B1_MATERIALIZED_CAPTURE9.get(captured9);
+  if (cached9 !== void 0) return cached9;
+  let out9;
+  if (captured9.shadow.kind === "ok") out9 = replaceShadowFromFraction9(captured9.rt, captured9.shadow.value);
+  else {
+    if (captured9.shadow.kind !== "no-shadow") return null;
+    out9 = captured9.authority === void 0 ? captured9.rt : stampAuth9(captured9.rt, captured9.authority);
+  }
+  B1_MATERIALIZED_CAPTURE9.set(captured9, out9);
+  return out9;
+};
+var materializeB1CapturedQuantityForConversion9 = (captured9) => {
+  const materialized9 = materializeB1CapturedOperand9(captured9);
+  if (materialized9?.t !== "q" || captured9.kind !== "ok" || captured9.envelope === null) return null;
+  const env9 = captured9.envelope;
+  const simpleDef9 = env9.denComps === null && env9.numComps.length === 1 && env9.numComps[0].exp === 1 ? env9.numComps[0].def : void 0;
+  return simpleDef9 === void 0 || materialized9.def !== void 0 ? materialized9 : { ...materialized9, def: simpleDef9 };
+};
+var b1OperationCaptureInPool9 = (left9, right9, thirty9, pool9) => {
+  const leftCaptured9 = b1CaptureOperand9(left9, thirty9, pool9);
+  if (leftCaptured9.kind === "unavailable") return Object.freeze({
+    kind: "unavailable",
+    side: "left",
+    stage: leftCaptured9.stage,
+    ...leftCaptured9.reason !== void 0 && { reason: leftCaptured9.reason }
+  });
+  const rightCaptured9 = b1CaptureOperand9(right9, thirty9, pool9);
+  if (rightCaptured9.kind === "unavailable") return Object.freeze({
+    kind: "unavailable",
+    side: "right",
+    stage: rightCaptured9.stage,
+    ...rightCaptured9.reason !== void 0 && { reason: rightCaptured9.reason }
+  });
+  return Object.freeze({ kind: "ok", left: leftCaptured9, right: rightCaptured9 });
+};
+var b1FrameCapture9 = (shell9) => {
+  const captured9 = b1CaptureOperand9(shell9, false);
+  if (captured9.kind === "unavailable") return {
+    kind: "unavailable",
+    reason: captured9.reason ?? "capture-unavailable"
+  };
+  if (captured9.exactRead === null) return { kind: "unavailable", reason: "capture-unavailable" };
+  const envelope9 = captured9.envelope;
+  return Object.freeze({
+    kind: "ok",
+    shell: captured9.rt,
+    currencyLabelsValid: envelope9?.currencyLabelsValid ?? true,
+    requiresShadow: envelope9?.requiresShadow ?? false,
+    admission: envelope9?.admission ?? "ok"
+  });
+};
+var b1NumericFrame9 = (shell9, exactRead9, undefinedSlots9) => {
+  const captured9 = b1FrameCapture9(shell9);
+  if (captured9.kind === "unavailable") return {
+    kind: "unavailable",
+    reason: captured9.reason === "invalid-unit-envelope" ? "invalid-unit-envelope" : "non-numeric-mechanism"
+  };
+  const cleanShell9 = stripShadowFromRT9(shell9);
+  return {
+    kind: "numeric",
+    shell: cleanShell9,
+    exactRead: rnorm(exactRead9),
+    currencyLabelsValid: captured9.currencyLabelsValid,
+    requiresShadow: captured9.requiresShadow,
+    admission: captured9.admission,
+    ...undefinedSlots9 !== void 0 && { undefinedSlots: Object.freeze([...undefinedSlots9]) }
+  };
+};
+var b1CapturedCompsOf9 = (captured9) => {
+  if (captured9.kind !== "ok") return null;
+  if ((captured9.rt.t === "d" || captured9.rt.t === "f" || captured9.rt.t === "p") && captured9.envelope === null) return [];
+  if (captured9.rt.t !== "q" || captured9.envelope === null) return null;
+  return canonComps([
+    ...captured9.envelope.numComps.map((c9) => ({ def: c9.def, exp: c9.exp })),
+    ...(captured9.envelope.denComps ?? []).map((c9) => ({ def: c9.def, exp: -c9.exp }))
+  ]);
+};
+var b1CalendarFrameOf9 = (lc9, rc9, lx9, rx9, op9, ctx) => {
+  let x9 = op9 === "*" ? rMul(lx9, rx9) : rDiv(lx9, rx9);
+  const merged9 = lc9.map((c9) => ({ ...c9 }));
+  const sign9 = op9 === "*" ? 1 : -1;
+  for (const c9 of rc9) {
+    const e9 = c9.exp * sign9;
+    const same9 = merged9.find((m9) => m9.def.id === c9.def.id && m9.exp !== 0);
+    if (same9 !== void 0) {
+      same9.exp += e9;
+      continue;
+    }
+    const kin9 = merged9.find((m9) => m9.exp !== 0 && dimsCompatible(m9.def.dim, c9.def.dim, ctx) && isPureLinear(m9.def) && isPureLinear(c9.def));
+    if (kin9 !== void 0) {
+      x9 = rMul(x9, rDiv(effFactor({ def: c9.def, exp: e9 }, ctx), effFactor({ def: kin9.def, exp: e9 }, ctx)));
+      kin9.exp += e9;
+      continue;
+    }
+    merged9.push({ def: c9.def, exp: e9 });
+  }
+  const live9 = merged9.filter((c9) => c9.exp !== 0);
+  if (live9.length !== 1 || live9[0].exp !== 1) return null;
+  const def9 = live9[0].def;
+  const isMonths9 = (def9.dim["calmonths"] ?? 0) !== 0 && Object.keys(def9.dim).every((k9) => k9 === "calmonths");
+  const isDays9 = (def9.dim["caldays"] ?? 0) !== 0 && Object.keys(def9.dim).every((k9) => k9 === "caldays");
+  if (!isMonths9 && !isDays9) return null;
+  const f9 = def9.factor === void 0 ? { n: 1n, d: 1n } : ratOfFactor(def9.factor);
+  const zeroUnit9 = isMonths9 ? f9.n === 12n && f9.d === 1n ? "years" : "months" : f9.n === 7n && f9.d === 1n ? "weeks" : "days";
+  const exactProjection9 = rMul(x9, effFactor(live9[0], ctx));
+  return {
+    kind: "calendar",
+    axis: isMonths9 ? "months" : "days",
+    zeroUnit: zeroUnit9,
+    thirty: ctx.monthToDays === "30",
+    exactProjection: rnorm(exactProjection9)
+  };
+};
+var b1MulDivFrame9 = (left9, right9, op9, ctx) => {
+  const lc9 = b1CapturedCompsOf9(left9);
+  const rc9 = b1CapturedCompsOf9(right9);
+  if (lc9 === null || rc9 === null || left9.kind !== "ok" || right9.kind !== "ok" || left9.exactRead === null || right9.exactRead === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const lx9 = left9.exactRead;
+  const rx9 = right9.exactRead;
+  const projectedZeroInverse9 = op9 === "/" && rx9.n === 0n && right9.shadow.kind === "ok";
+  const calendar9 = projectedZeroInverse9 ? null : b1CalendarFrameOf9(lc9, rc9, lx9, rx9, op9, ctx);
+  if (calendar9 !== null) return calendar9;
+  const sign9 = op9 === "*" ? 1 : -1;
+  let x9 = op9 === "*" ? rMul(lx9, rx9) : projectedZeroInverse9 ? { n: 0n, d: 1n } : rDiv(lx9, rx9);
+  const withProjectedZero9 = (frame9) => projectedZeroInverse9 && frame9.kind === "numeric" ? { ...frame9, projectedZeroInverse: true } : frame9;
+  let comps9 = lc9.map((c9) => ({ def: c9.def, exp: c9.exp }));
+  for (const c9 of rc9) {
+    const e9 = c9.exp * sign9;
+    const same9 = comps9.find((m9) => m9.exp !== 0 && m9.def.id === c9.def.id);
+    if (same9 !== void 0) {
+      same9.exp += e9;
+      continue;
+    }
+    const kin9 = comps9.find((m9) => m9.exp !== 0 && dimsCompatible(m9.def.dim, c9.def.dim, ctx) && isPureLinear(m9.def) && isPureLinear(c9.def));
+    if (kin9 !== void 0) {
+      x9 = rMul(x9, rDiv(effFactor({ def: c9.def, exp: e9 }, ctx), effFactor({ def: kin9.def, exp: e9 }, ctx)));
+      kin9.exp += e9;
+      continue;
+    }
+    comps9.push({ def: c9.def, exp: e9 });
+  }
+  comps9 = comps9.filter((c9) => c9.exp !== 0);
+  if (comps9.some((c9) => Math.abs(c9.exp) > 1e6)) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const dimZero9 = (d9) => dimIsEmpty(ctx.monthToDays === "30" ? calDim(d9) : d9);
+  for (; ; ) {
+    const pure9 = comps9.filter((c9) => isPureLinear(c9.def));
+    if (pure9.length < 2 || pure9.length > 12) break;
+    let best9 = 0;
+    for (let mask9 = 1; mask9 < 1 << pure9.length; mask9++) {
+      const subset9 = pure9.filter((_c9, i9) => (mask9 >> i9 & 1) !== 0);
+      if (subset9.length < 2 || !dimZero9(dimOfComps(subset9))) continue;
+      const bits9 = (n9) => {
+        let z9 = 0;
+        for (let m9 = n9; m9 !== 0; m9 >>= 1) z9 += m9 & 1;
+        return z9;
+      };
+      if (subset9.length > bits9(best9)) best9 = mask9;
+    }
+    if (best9 === 0) break;
+    const chosen9 = new Set(pure9.filter((_c9, i9) => (best9 >> i9 & 1) !== 0));
+    for (const c9 of chosen9) x9 = rMul(x9, effFactor(c9, ctx));
+    comps9 = comps9.filter((c9) => !chosen9.has(c9));
+  }
+  const dim9 = dimOfComps(comps9);
+  if (dimZero9(dim9) && !comps9.some((c9) => c9.def.currency !== void 0 || c9.def.factorDec !== void 0 || c9.def.constSym !== void 0)) {
+    for (const c9 of comps9) {
+      if (!isPureLinear(c9.def)) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+      x9 = rMul(x9, effFactor(c9, ctx));
+    }
+    return withProjectedZero9(b1NumericFrame9(dOf9(x9), x9));
+  }
+  const shell9 = quantityEnvelope9(x9, dim9, comps9.map((c9) => ({ ...c9 })));
+  return withProjectedZero9(b1NumericFrame9(shell9, x9));
+};
+var b1ThermalOperand9 = (source9) => {
+  if (source9.rt.t !== "q" || source9.exactRead === null || source9.envelope === null || source9.envelope.denComps !== null) return null;
+  if (source9.envelope.admission !== "ok" && source9.envelope.admission !== "affine-unproven") return null;
+  const absolute9 = dimEquals(source9.rt.dim, { temperature: 1 });
+  const delta9 = dimEquals(source9.rt.dim, { tempdelta: 1 });
+  if (!absolute9 && !delta9) return null;
+  const roleDim9 = absolute9 ? { temperature: 1 } : { tempdelta: 1 };
+  const thermal9 = source9.envelope.numComps.filter((c9) => c9.exp === 1 && dimEquals(c9.def.dim, roleDim9));
+  if (thermal9.length !== 1) return null;
+  const comp9 = thermal9[0];
+  const decoration9 = source9.envelope.numComps.filter((c9) => c9 !== comp9);
+  if (!dimIsEmpty(dimOfComps(decoration9))) return null;
+  let decorationScale9 = { n: 1n, d: 1n };
+  for (const c9 of decoration9) {
+    if (c9.def.currency !== void 0 || c9.def.affine !== void 0 || c9.def.constSym !== void 0) return null;
+    if (c9.def.factor !== void 0) {
+      if (c9.def.factor.n === 0n || c9.def.factor.d === 0n) return null;
+      decorationScale9 = rMul(decorationScale9, rPowInt(ratOfFactor(c9.def.factor), c9.exp));
+    } else if (c9.def.factorDec !== void 0) {
+      decorationScale9 = rMul(decorationScale9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
+    } else return null;
+  }
+  if (comp9.exp !== 1 || comp9.def.currency !== void 0 || comp9.def.factorDec !== void 0 || comp9.def.constSym !== void 0) return null;
+  const def9 = comp9.def;
+  if (!dimEquals(def9.dim, absolute9 ? { temperature: 1 } : { tempdelta: 1 })) return null;
+  if (absolute9) {
+    const affine9 = def9.affine;
+    const linear9 = def9.factor;
+    if (affine9 === void 0 === (linear9 === void 0)) return null;
+    if (affine9 !== void 0 && (affine9.a === 0n || affine9.c === 0n)) return null;
+    if (linear9 !== void 0 && (linear9.n === 0n || linear9.d === 0n)) return null;
+  } else {
+    if (def9.affine !== void 0 || def9.factor === void 0 || def9.factor.n === 0n || def9.factor.d === 0n) return null;
+  }
+  const thermalScale9 = def9.affine === void 0 ? ratOfFactor(def9.factor) : rnorm({ n: def9.affine.a, d: def9.affine.c });
+  if (decoration9.length > 0 && def9.affine !== void 0) return null;
+  const scale9 = rMul(thermalScale9, decorationScale9);
+  const exactK9 = def9.affine === void 0 ? rMul(source9.exactRead, scale9) : rnorm({
+    n: def9.affine.a * source9.exactRead.n + def9.affine.b * source9.exactRead.d,
+    d: def9.affine.c * source9.exactRead.d
+  });
+  return Object.freeze({ source: source9, role: absolute9 ? "absolute" : "delta", def: def9, scaleToK: scale9, exactK: exactK9 });
+};
+var b1ThermalDisplayExact9 = (kelvin9, target9) => {
+  if (target9.affine !== void 0) {
+    return rnorm({
+      n: target9.affine.c * kelvin9.n - target9.affine.b * kelvin9.d,
+      d: target9.affine.a * kelvin9.d
+    });
+  }
+  if (target9.factor === void 0) return null;
+  return rDiv(kelvin9, ratOfFactor(target9.factor));
+};
+var b1ThermalCapConverted9 = (operand9, target9) => {
+  const display9 = b1ThermalDisplayExact9(operand9.exactK, target9);
+  if (display9 === null) return err("unsupported-pair", "B1 thermal cap conversion is not representable");
+  let source9 = operand9.source.rt;
+  let out9 = mkQ(display9, target9);
+  if (operand9.source.shadow.kind === "ok") {
+    source9 = replaceShadowFromFraction9(source9, operand9.source.shadow.value);
+    out9 = replaceShadowFromFraction9(out9, operand9.source.shadow.value);
+  }
+  if (operand9.source.rt.capped === true) out9.capped = true;
+  const ratio9 = operand9.source.exactRead?.n === 0n ? null : rDiv(display9, operand9.source.exactRead);
+  return capScaleConv9(out9, source9, ratio9);
+};
+var b1ThermalLinearCaptured9 = (operand9, pool9) => {
+  const targetRaw9 = lookupUnit(operand9.role === "absolute" ? "K" : "\u0394K");
+  if (targetRaw9 === void 0) throw new Error("B1 thermal registry target missing");
+  const target9 = snapshotUnitDefInPool9(pool9, targetRaw9);
+  const comp9 = Object.freeze({ def: target9, exp: 1 });
+  const cap9 = capFOf9(operand9.source.rt);
+  let rt9 = mkQ(operand9.exactK, target9);
+  if (cap9 !== void 0) rt9.capF = capFScale9(cap9, operand9.scaleToK);
+  if (operand9.source.rt.capped === true) rt9.capped = true;
+  if (operand9.source.shadow.kind === "ok") {
+    rt9 = replaceShadowFromFraction9(rt9, operand9.source.shadow.value);
+  } else if (operand9.source.authority !== void 0) {
+    rt9 = stampAuth9(rt9, operand9.source.authority);
+  }
+  const envelope9 = Object.freeze({
+    numComps: Object.freeze([comp9]),
+    denComps: null,
+    currencyLabelsValid: true,
+    requiresShadow: false,
+    admission: "ok"
+  });
+  return Object.freeze({
+    kind: "ok",
+    rt: Object.freeze(rt9),
+    exactRead: operand9.exactK,
+    shadow: operand9.source.shadow,
+    authority: operand9.source.authority,
+    envelope: envelope9,
+    sourceAtom: null
+  });
+};
+var b1PrepareThermal9 = (capture9, op9, pool9) => {
+  const left9 = b1ThermalOperand9(capture9.left);
+  const right9 = b1ThermalOperand9(capture9.right);
+  if (left9 === null || right9 === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const leftLinear9 = b1ThermalLinearCaptured9(left9, pool9);
+  const rightLinear9 = b1ThermalLinearCaptured9(right9, pool9);
+  const exactK9 = op9 === "+" ? rAdd(left9.exactK, right9.exactK) : rSub(left9.exactK, right9.exactK);
+  let target9;
+  if (left9.role === "absolute" && right9.role === "absolute" && op9 === "-") {
+    const targetRaw9 = lookupUnit(left9.def.id === "fahrenheit" || left9.def.id === "rankine" ? "\u0394\xB0F" : left9.def.id === "celsius" ? "\u0394\xB0C" : "\u0394K");
+    if (targetRaw9 !== void 0) target9 = snapshotUnitDefInPool9(pool9, targetRaw9);
+  } else if (left9.role === "delta" && right9.role === "absolute" && op9 === "+") {
+    target9 = right9.def;
+  } else if (left9.role === "absolute" && right9.role === "delta") {
+    target9 = left9.def;
+  }
+  if (target9 === void 0) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const exactDisplay9 = b1ThermalDisplayExact9(exactK9, target9);
+  if (exactDisplay9 === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const targetScale9 = target9.affine === void 0 ? ratOfFactor(target9.factor) : rnorm({ n: target9.affine.a, d: target9.affine.c });
+  const leftJac9 = rDiv(left9.scaleToK, targetScale9);
+  const rightJac9 = rDiv(right9.scaleToK, targetScale9);
+  const leftCap9 = capFScale9(capFOf9(left9.source.rt), leftJac9);
+  const rightSourceCap9 = left9.role === "absolute" && right9.role === "absolute" ? capFOf9(b1ThermalCapConverted9(right9, left9.def)) : capFOf9(right9.source.rt);
+  const rightFrameJac9 = left9.role === "absolute" && right9.role === "absolute" ? leftJac9 : rightJac9;
+  const rightCap9 = capFScale9(rightSourceCap9, rightFrameJac9);
+  const frameCap9 = capFAdd9(leftCap9, rightCap9, op9 === "+" ? 1n : -1n);
+  const shell9 = mkQ(exactDisplay9, target9);
+  const presenter9 = left9.role === "absolute" && right9.role === "absolute" ? null : left9.role === "delta" ? right9.source.rt : left9.source.rt;
+  if (presenter9?.t === "q") {
+    if (presenter9.chosen !== void 0) shell9.chosen = presenter9.chosen;
+    const inheritedCap9 = capFOf9(presenter9);
+    if (inheritedCap9 !== void 0) shell9.capF = inheritedCap9;
+    if (presenter9.capped !== void 0) shell9.capped = presenter9.capped;
+  }
+  if (frameCap9.length > 0) {
+    shell9.capF = frameCap9;
+    shell9.capped = true;
+  }
+  const hasBoundedCentre9 = [left9, right9].some((operand9) => operand9.source.shadow.kind === "no-shadow" && operand9.source.rt.capped === true && (capFOf9(operand9.source.rt)?.length ?? 0) > 0);
+  const faithfulCentre9 = (operand9) => {
+    const shadow9 = operand9.source.shadow;
+    if (shadow9.kind === "no-shadow") return true;
+    if (shadow9.kind !== "ok" || shadow9.value.hasApproxFactor()) return false;
+    const projected9 = shadow9.value.projectExact();
+    return projected9 !== null && projected9.den.n !== 0n && rCmp(rDiv(projected9.num, projected9.den), operand9.exactK) === 0;
+  };
+  const cancellation9 = frameCap9.length > 0 && hasBoundedCentre9 && faithfulCentre9(left9) && faithfulCentre9(right9) && (exactDisplay9.n === 0n || rCmp(rMul(capFBound9(frameCap9), R10P41), rAbs9M(exactDisplay9)) > 0);
+  const frame9 = {
+    kind: "numeric",
+    shell: shell9,
+    exactRead: exactDisplay9,
+    currencyLabelsValid: true,
+    requiresShadow: false,
+    admission: "ok",
+    ...cancellation9 && { preSiteRefusal: err("inexact", CAP_CANCEL_MSG) }
+  };
+  return Object.freeze({
+    kind: "prepared",
+    capture: Object.freeze({ kind: "ok", left: leftLinear9, right: rightLinear9 }),
+    frame: frame9
+  });
+};
+var b1Own9 = (ctx, owner9, l9, r9, frame9, out9, preCapture9) => {
+  if (ctx.__b1Compose9 === void 0) return out9;
+  const active9 = ctx.__b1Stack9?.at(-1);
+  if (active9 !== void 0 && active9.op9 === owner9.op) {
+    active9.handled9 = true;
+  }
+  if (preCapture9 === void 0) ctx.__b1Capture9?.("compose");
+  const pool9 = createUnitDefSnapshotPool9();
+  const sourceCapture9 = preCapture9 ?? b1OperationCaptureInPool9(l9, r9, ctx.monthToDays === "30", pool9);
+  const seq9 = ctx.__b1LogicalSeq9 ?? { value: 0 };
+  ctx.__b1LogicalSeq9 = seq9;
+  const logicalId9 = seq9.value++;
+  const built9 = sourceCapture9.kind === "ok" ? frame9(sourceCapture9, pool9) : { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const capture9 = built9.kind === "prepared" ? built9.capture : sourceCapture9;
+  const ownedFrame9 = built9.kind === "prepared" ? built9.frame : built9;
+  if (active9 !== void 0 && active9.op9 === owner9.op) {
+    const authoritySnapshot9 = b1BinaryAuthoritySnapshot9(capture9, owner9.op);
+    active9.authoritySnapshot9 = authoritySnapshot9;
+  }
+  const boundary9 = nextB1Boundary9(ctx, logicalId9);
+  const routed9 = b1NormalizeHook9(ctx.__b1Compose9({
+    ...owner9,
+    logicalId: logicalId9,
+    boundary: boundary9,
+    left: l9,
+    right: r9,
+    capture: capture9,
+    frame: ownedFrame9,
+    legacyOut: out9
+  }), out9);
+  b1ObservePublication9(ctx, {
+    kind: "compose",
+    boundary: boundary9,
+    legacyOut: out9,
+    candidateOut: routed9.candidate,
+    published: routed9.published,
+    fallback: routed9.fallback,
+    route: routed9.route
+  });
+  return routed9.published;
+};
+var b1PreOwn9 = (ctx, owner9, l9, r9, frame9, legacyThunk9) => {
+  const production9 = ctx.__b1ProductionCausal9;
+  const historical9 = ctx.__b1PreCompose9;
+  if (production9 === void 0 && historical9 === void 0) return null;
+  if (production9 !== void 0 && historical9 !== void 0) {
+    throw new Error("CAPTURE_CAUSAL_PRE_OWNER_WORLD_COLLISION");
+  }
+  if (production9 !== void 0 && legacyThunk9 === void 0) {
+    throw new Error("CAPTURE_CAUSAL_PRE_OWNER_ORACLE_MISSING");
+  }
+  const active9 = ctx.__b1Stack9?.at(-1);
+  if (active9 !== void 0 && active9.op9 === owner9.op) active9.handled9 = true;
+  if (historical9 !== void 0 || production9 !== void 0) ctx.__b1Capture9?.("compose");
+  const pool9 = createUnitDefSnapshotPool9();
+  const sourceCapture9 = b1OperationCaptureInPool9(l9, r9, ctx.monthToDays === "30", pool9);
+  const seq9 = ctx.__b1LogicalSeq9 ?? { value: 0 };
+  ctx.__b1LogicalSeq9 = seq9;
+  const logicalId9 = seq9.value++;
+  const built9 = sourceCapture9.kind === "ok" ? frame9(sourceCapture9, pool9) : { kind: "unavailable", reason: "non-numeric-mechanism" };
+  const capture9 = built9.kind === "prepared" ? built9.capture : sourceCapture9;
+  const ownedFrame9 = built9.kind === "prepared" ? built9.frame : built9;
+  const boundary9 = nextB1Boundary9(ctx, logicalId9);
+  const call9 = {
+    ...owner9,
+    logicalId: logicalId9,
+    boundary: boundary9,
+    left: l9,
+    right: r9,
+    capture: capture9,
+    frame: ownedFrame9
+  };
+  const decision9 = production9?.compose(call9);
+  const candidate9 = decision9 === void 0 ? historical9(call9) : void 0;
+  if (active9 !== void 0 && active9.op9 === owner9.op) {
+    active9.authoritySnapshot9 = b1BinaryAuthoritySnapshot9(
+      capture9,
+      owner9.op,
+      decision9 === void 0 ? candidate9 === B1_MECHANISM_ROUTE9 : decision9.output === B1_MECHANISM_ROUTE9
+    );
+  }
+  if (decision9 !== void 0) {
+    return {
+      kind: "production",
+      call: call9,
+      decision: decision9,
+      published: b1PublishProduction9(
+        ctx,
+        { kind: "pre-compose", call: call9 },
+        decision9,
+        legacyThunk9
+      )
+    };
+  }
+  return { kind: "historical", call: call9, candidate: candidate9 };
+};
+var b1FinishPreOwn9 = (ctx, pre9, legacyOut9) => {
+  if (pre9.kind === "production") {
+    throw new Error("CAPTURE_CAUSAL_PRE_OWNER_ORACLE_EAGER");
+  }
+  const routed9 = b1NormalizeHook9(pre9.candidate, legacyOut9);
+  ctx.__b1PreComposeObserved9?.(
+    pre9.call,
+    b1ObserverRT9(legacyOut9, ctx.monthToDays === "30"),
+    pre9.candidate === void 0 || pre9.candidate === B1_MECHANISM_ROUTE9 ? pre9.candidate : b1ObserverRT9(pre9.candidate, ctx.monthToDays === "30")
+  );
+  b1ObservePublication9(ctx, {
+    kind: "compose",
+    boundary: pre9.call.boundary,
+    legacyOut: legacyOut9,
+    candidateOut: routed9.candidate,
+    published: routed9.published,
+    fallback: routed9.fallback,
+    route: routed9.route
+  });
+  return routed9.published;
+};
+var b1RatOf9 = (o9) => {
+  if (o9.t === "f") return rnorm({ n: o9.n, d: o9.d });
+  if (o9.t === "d" || o9.t === "p" || o9.t === "q") return o9.vx ?? decToRat(o9.v);
+  return null;
+};
+var classifyB1ScalarOwner9 = (op9, capture9, options9 = {}) => {
+  if (capture9.kind === "unavailable") {
+    return { kind: "capture-unavailable", side: capture9.side, stage: capture9.stage };
+  }
+  const left9 = capture9.left.rt;
+  const right9 = capture9.right.rt;
+  if (left9.t !== "d" && left9.t !== "f" || right9.t !== "d" && right9.t !== "f") {
+    return { kind: "non-scalar" };
+  }
+  if (capture9.left.shadow.kind !== "no-shadow" || capture9.right.shadow.kind !== "no-shadow") {
+    return { kind: "shadow" };
+  }
+  const leftRat9 = capture9.left.exactRead;
+  const rightRat9 = capture9.right.exactRead;
+  if (leftRat9 === null || rightRat9 === null) return { kind: "non-scalar" };
+  const leftCapF9 = left9.capF;
+  const rightCapF9 = right9.capF;
+  const capped92 = left9.capped === true || right9.capped === true;
+  const certifiedBound9 = left9.capped === true && (leftCapF9?.length ?? 0) > 0 || right9.capped === true && (rightCapF9?.length ?? 0) > 0;
+  const ownsCertifiedBound9 = options9.certifiedBoundedCenter === true && (op9 === "+" || op9 === "-") && capped92 && certifiedBound9;
+  const ownsAuthenticatedReserve9 = options9.authenticatedBoundedReserve === true && (op9 === "+" || op9 === "-" || op9 === "*") && (capture9.left.boundedCause !== void 0 || capture9.right.boundedCause !== void 0);
+  if (!ownsCertifiedBound9 && !ownsAuthenticatedReserve9 && (capped92 || leftCapF9 !== void 0 || rightCapF9 !== void 0)) {
+    return { kind: "capped" };
+  }
+  if (op9 === "/" && rightRat9.n === 0n) {
+    return capture9.right.sourceAtom === null ? { kind: "division-by-zero" } : { kind: "causal-zero-divisor" };
+  }
+  const exact9 = op9 === "+" ? rAdd(leftRat9, rightRat9) : op9 === "-" ? rSub(leftRat9, rightRat9) : op9 === "*" ? rMul(leftRat9, rightRat9) : rDiv(leftRat9, rightRat9);
+  const norm9 = rnorm(exact9);
+  let shell9 = (() => {
+    if (left9.t === "f" || right9.t === "f") {
+      return makeFrac(norm9.n, norm9.d, "derived");
+    }
+    const decimal9 = qv(norm9);
+    return { t: "d", v: decimal9.v, vx: decimal9.vx };
+  })();
+  if (shell9.t === "d" && !isRepresentable(shell9.v)) return { kind: "unrepresentable" };
+  if (ownsCertifiedBound9 || ownsAuthenticatedReserve9 && (op9 === "+" || op9 === "-")) {
+    const gate9 = capAddGate9(left9, right9, norm9, op9 === "+" ? 1n : -1n);
+    if (gate9.err !== void 0) return { kind: "pre-site-refusal" };
+    shell9 = capStamp9({ ...shell9, capped: true }, gate9);
+  } else if (ownsAuthenticatedReserve9 && op9 === "*") {
+    shell9 = capProdTransport9({ ...shell9, capped: true }, [left9, right9], "b1:bounded:*");
+  }
+  return { kind: "owned", exactRead: norm9, shell: shell9 };
+};
+var scalarB1Call9 = (ctx9, op9, left9, right9) => {
+  const capture9 = b1OperationCaptureInPool9(
+    left9,
+    right9,
+    ctx9.monthToDays === "30",
+    createUnitDefSnapshotPool9()
+  );
+  const active9 = ctx9.__b1Stack9?.at(-1);
+  if (active9 !== void 0 && active9.op9 === op9) {
+    active9.authoritySnapshot9 = b1BinaryAuthoritySnapshot9(capture9, op9);
+  }
+  const cls9 = classifyB1ScalarOwner9(
+    op9,
+    capture9,
+    ctx9.__b1ProductionCausal9 !== void 0 ? { certifiedBoundedCenter: true, authenticatedBoundedReserve: true } : ctx9.__b1EligibilityPartition9 === true ? { certifiedBoundedCenter: true } : {}
+  );
+  if (cls9.kind === "pre-site-refusal") return null;
+  const eligibility9 = ctx9.__b1EligibilityPartition9 === true ? (() => {
+    if (ctx9.__b1OperationEligibility9 === void 0) {
+      throw new Error("B1 operation eligibility authority is missing in the E0 world");
+    }
+    return ctx9.__b1OperationEligibility9(capture9);
+  })() : null;
+  if (eligibility9?.kind === "mechanism" && cls9.kind === "owned" && cls9.shell.capped === true) return null;
+  if (eligibility9?.kind === "mechanism" && cls9.kind !== "owned" && cls9.kind !== "causal-zero-divisor") return null;
+  if (eligibility9 === null && (capture9.kind !== "ok" || cls9.kind !== "owned" && cls9.kind !== "causal-zero-divisor")) return null;
+  ctx9.__b1Capture9?.("scalar");
+  const seq9 = ctx9.__b1LogicalSeq9 ?? { value: 0 };
+  ctx9.__b1LogicalSeq9 = seq9;
+  seq9.value++;
+  return {
+    site: "evalAst-scalar",
+    host: "evalAst",
+    op: op9,
+    boundary: nextB1Boundary9(ctx9, seq9.value - 1),
+    left: capture9.kind === "ok" ? capture9.left.rt : left9,
+    right: capture9.kind === "ok" ? capture9.right.rt : right9,
+    capture: capture9,
+    frame: cls9.kind !== "owned" ? { kind: "unavailable", reason: "non-numeric-mechanism" } : {
+      kind: "numeric",
+      shell: cls9.shell,
+      exactRead: cls9.exactRead,
+      currencyLabelsValid: true,
+      requiresShadow: false,
+      admission: "ok",
+      ...cls9.shell.t === "d" && cls9.shell.vx === void 0 && { undefinedSlots: ["vx"] }
+    }
+  };
+};
+var b1PercentagePrepared9 = (capture9, op9, nativeOperandReads9 = false) => {
+  const leftRT9 = capture9.left.rt;
+  const rightRT9 = capture9.right.rt;
+  const leftPct9 = leftRT9.t === "p";
+  const rightPct9 = rightRT9.t === "p";
+  const leftScalar9 = leftRT9.t === "d" || leftRT9.t === "f";
+  const rightScalar9 = rightRT9.t === "d" || rightRT9.t === "f";
+  if (!leftPct9 && !rightPct9 || !(leftPct9 && rightPct9) && !(leftPct9 && rightScalar9) && !(leftScalar9 && rightPct9)) {
+    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  }
+  if ((op9 === "+" || op9 === "-") && !(leftPct9 && rightPct9)) {
+    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  }
+  if (leftPct9 && rightScalar9 && op9 !== "*" && op9 !== "/") {
+    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  }
+  if (leftScalar9 && rightPct9 && op9 !== "*" && op9 !== "/") {
+    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  }
+  const scalePctToScalar9 = (operand9) => {
+    if (operand9.rt.t !== "p" || operand9.exactRead === null) return null;
+    const exact92 = rDiv(operand9.exactRead, { n: 100n, d: 1n });
+    return Object.freeze({ ...operand9, exactRead: exact92, causalScale: { n: 1n, d: 100n } });
+  };
+  let left9 = capture9.left;
+  let right9 = capture9.right;
+  if (leftPct9 && rightPct9 && op9 === "*" || leftScalar9 && rightPct9) {
+    const scaled9 = scalePctToScalar9(right9);
+    if (scaled9 === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+    right9 = scaled9;
+  }
+  const lx9 = left9.exactRead;
+  const rx9 = right9.exactRead;
+  const projectedZeroInverse9 = op9 === "/" && rx9?.n === 0n && right9.shadow.kind === "ok";
+  if (lx9 === null || rx9 === null || op9 === "/" && rx9.n === 0n && !projectedZeroInverse9) {
+    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+  }
+  const exact9 = op9 === "+" ? rAdd(lx9, rx9) : op9 === "-" ? rSub(lx9, rx9) : op9 === "*" ? rMul(lx9, rx9) : projectedZeroInverse9 ? { n: 0n, d: 1n } : rDiv(lx9, rx9);
+  const outputPct9 = leftPct9 && rightPct9 && op9 !== "/" || leftPct9 && rightScalar9;
+  const shown9 = qv(exact9);
+  const shell9 = outputPct9 ? { t: "p", v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } } : { t: "d", v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } };
+  const rightInput9 = nativeOperandReads9 && right9.causalScale !== void 0 ? Object.freeze({ ...right9, exactRead: capture9.right.exactRead }) : right9;
+  return Object.freeze({
+    kind: "prepared",
+    capture: Object.freeze({ kind: "ok", left: left9, right: rightInput9 }),
+    frame: Object.freeze({
+      ...b1NumericFrame9(shell9, exact9),
+      ...projectedZeroInverse9 && { projectedZeroInverse: true }
+    })
+  });
+};
 function evalAst(ast, env, ctx = {}) {
+  const out9 = evalAstInner(ast, env, ctx);
+  const stack9 = ctx.__b1Stack9;
+  if ((ctx.__b1ProductionCausal9 !== void 0 || ctx.__b1Router9 !== void 0 || ctx.__b1ScalarCompose9 !== void 0 || ctx.__b1Transform9 !== void 0 || ctx.__b1ValueTransport9 !== void 0) && stack9 !== void 0 && stack9.length > 0 && stack9[stack9.length - 1].ast9 === ast) {
+    const top9 = stack9.pop();
+    const finishBinaryOutput9 = (published9) => emitB1BinaryOutput9(
+      ctx,
+      top9.binaryBoundary9,
+      [top9.l9, top9.r9, out9],
+      published9,
+      top9.authoritySnapshot9,
+      top9.op9 === "^" || top9.op9 === "mod" ? void 0 : top9.op9
+    );
+    if (top9.op9 === "^") {
+      const exponent9 = top9.exponent9;
+      const integerExponent9 = exponent9 !== null && exponent9 !== void 0 && exponent9.d === 1n;
+      if (ctx.__b1ProductionCausal9 !== void 0 && top9.boundedPower9 === true && top9.unaryCapture9 !== void 0 && top9.exponentCapture9 !== void 0 && exponent9 !== null && exponent9 !== void 0) {
+        const outputCapture9 = b1CaptureOperand9(out9, ctx.monthToDays === "30");
+        return finishBinaryOutput9(b1TransformProduction9(ctx, {
+          site: "power",
+          host: "evalAst",
+          capture: top9.unaryCapture9,
+          frameOp: { kind: "bounded-output", output: outputCapture9 },
+          meta: { kind: "bounded-numeric", op: "pow", exponent: exponent9, exponentCapture: top9.exponentCapture9 }
+        }, (legacyCtx9) => evalAstInner(top9.ast9, env, legacyCtx9, [top9.l9, top9.r9])));
+      }
+      if (ctx.__b1CausalUnary9 === true && top9.unaryCapture9 !== void 0 && top9.exponentCapture9 !== void 0 && (ctx.__b1EligibilityPartition9 === true || integerExponent9)) {
+        ctx.__b1Capture9?.("power");
+        return finishBinaryOutput9(b1Transform9(ctx, {
+          site: "power",
+          host: "evalAst",
+          capture: top9.unaryCapture9,
+          out: out9,
+          frameOp: integerExponent9 ? { kind: "pow", exponent: exponent9 } : { kind: "refuse", code: "b1-transform-refused", detail: "power:non-integer-exponent" },
+          meta: { kind: "causal-unary", op: "pow", exponent: exponent9 ?? null, exponentCapture: top9.exponentCapture9 }
+        }));
+      }
+      return finishBinaryOutput9(out9);
+    }
+    if (top9.op9 === "mod") return finishBinaryOutput9(out9);
+    ctx.__b1Router9?.("evalAst-binop", top9.op9, top9.l9, top9.r9, out9, b1RatOf9(top9.l9), b1RatOf9(top9.r9));
+    const scalarTypes9 = (top9.l9.t === "d" || top9.l9.t === "f") && (top9.r9.t === "d" || top9.r9.t === "f");
+    const scalarCall9 = ctx.__b1ScalarCompose9 === void 0 || top9.handled9 || !scalarTypes9 ? null : scalarB1Call9(ctx, top9.op9, top9.l9, top9.r9);
+    if (scalarCall9 !== null) {
+      const candidate9 = ctx.__b1ScalarCompose9(scalarCall9);
+      const routed9 = b1NormalizeHook9(candidate9, out9);
+      ctx.__b1ScalarObserved9?.(
+        scalarCall9,
+        b1ObserverRT9(out9, ctx.monthToDays === "30"),
+        candidate9 === void 0 || candidate9 === B1_MECHANISM_ROUTE9 ? candidate9 : b1ObserverRT9(candidate9, ctx.monthToDays === "30")
+      );
+      b1ObservePublication9(ctx, {
+        kind: "scalar",
+        boundary: scalarCall9.boundary,
+        legacyOut: out9,
+        candidateOut: routed9.candidate,
+        published: routed9.published,
+        fallback: routed9.fallback,
+        route: routed9.route
+      });
+      return finishBinaryOutput9(routed9.published);
+    }
+    const pLeft9 = top9.l9.t === "p";
+    const pRight9 = top9.r9.t === "p";
+    const plainLeft9 = top9.l9.t === "d" || top9.l9.t === "f";
+    const plainRight9 = top9.r9.t === "d" || top9.r9.t === "f";
+    const percentageOwned9 = !top9.handled9 && ctx.__b1Compose9 !== void 0 && (pLeft9 && pRight9 || (top9.op9 === "*" || top9.op9 === "/") && (pLeft9 && plainRight9 || plainLeft9 && pRight9));
+    if (percentageOwned9) {
+      const percentageOp9 = top9.op9;
+      return finishBinaryOutput9(b1Own9(
+        ctx,
+        { site: "evalAst-percentage", host: "evalAst", op: percentageOp9 },
+        top9.l9,
+        top9.r9,
+        (capture9) => b1PercentagePrepared9(capture9, percentageOp9),
+        out9,
+        top9.percentageCapture9
+      ));
+    }
+    return finishBinaryOutput9(out9);
+  }
+  return out9;
+}
+function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperands9, alignedRight9) {
   switch (ast.k) {
     case "num":
-      return { t: "d", v: ast.dec };
+      return ast.auth === void 0 ? { t: "d", v: ast.dec } : stampAuth9({ t: "d", v: ast.dec }, ast.auth ? AUTH9 : AUX9);
     case "mathConst": {
       const piDec$ = new DecC(PI_ATOM.factorDec);
-      return { t: "d", v: ast.name === "pi" ? piDec$ : piDec$.times(2) };
+      return stampAuth9({ t: "d", v: ast.name === "pi" ? piDec$ : piDec$.times(2) }, AUX9);
     }
-    case "frac":
-      return makeFrac(ast.num, ast.den, "literal");
+    case "frac": {
+      const f0 = makeFrac(ast.num, ast.den, "literal");
+      return f0.t === "f" || f0.t === "d" ? stampAuth9(f0, AUTH9) : f0;
+    }
     case "var": {
       ctx.deps?.variables.add(ast.name);
       const bound = env.get(ast.name);
@@ -33539,7 +38482,10 @@ function evalAst(ast, env, ctx = {}) {
                 const mc8 = spanCanon(mrt8.c);
                 if (mc8.months === 0n && mc8.days === 0n) {
                   const g8 = spanGroups(first.c);
-                  return { t: "ts", c: g8.hasM && !g8.hasD ? { months: 0 } : { days: 0 } };
+                  return stampTimespan9(
+                    { t: "ts", c: g8.hasM && !g8.hasD ? { months: 0 } : { days: 0 } },
+                    authPreserve9(mrt8.foldA9)
+                  );
                 }
                 return mrt8;
               }
@@ -33552,7 +38498,8 @@ function evalAst(ast, env, ctx = {}) {
                 lo0.days + hi0.days,
                 { hasM: gl0.hasM || gh0.hasM, hasD: gl0.hasD || gh0.hasD },
                 2n,
-                ctx
+                ctx,
+                authJoin9(order9[midM - 1].s9.rt.foldA9, order9[midM].s9.rt.foldA9)
               );
             }
             if (anyM && anyD && ctx.monthToDays !== "30") {
@@ -33565,20 +38512,24 @@ function evalAst(ast, env, ctx = {}) {
               const mc9 = spanCanon(mrt9.c);
               if (mc9.months === 0n && mc9.days === 0n) {
                 const g0 = spanGroups(first.c);
-                return { t: "ts", c: g0.hasM && !g0.hasD ? { months: 0 } : { days: 0 } };
+                return stampTimespan9(
+                  { t: "ts", c: g0.hasM && !g0.hasD ? { months: 0 } : { days: 0 } },
+                  authPreserve9(mrt9.foldA9)
+                );
               }
               return mrt9;
             }
-            const lo9 = spanCanon(scal[mid9 - 1].rt.c);
-            const hi9 = spanCanon(scal[mid9].rt.c);
+            const lo92 = spanCanon(scal[mid9 - 1].rt.c);
+            const hi92 = spanCanon(scal[mid9].rt.c);
             const gl9 = spanGroups(scal[mid9 - 1].rt.c);
             const gh9 = spanGroups(scal[mid9].rt.c);
             return spanHalf(
-              lo9.months + hi9.months,
-              lo9.days + hi9.days,
+              lo92.months + hi92.months,
+              lo92.days + hi92.days,
               { hasM: gl9.hasM || gh9.hasM, hasD: gl9.hasD || gh9.hasD },
               2n,
-              ctx
+              ctx,
+              authJoin9(scal[mid9 - 1].rt.foldA9, scal[mid9].rt.foldA9)
             );
           }
           if (first.t === "q" && dimEquals(first.dim, { temperature: 1 })) {
@@ -33610,19 +38561,24 @@ function evalAst(ast, env, ctx = {}) {
               const f0 = values[0];
               const midSrc9 = scal9[mid9].rt;
               if (midSrc9.def?.affine !== void 0 && (midSrc9.terms !== void 0 || midSrc9.termsDen !== void 0)) {
+                const midFv9 = shadowFracViewIfNeeded9([midSrc9], midSrc9, ctx);
+                if (midFv9.kind === "refuse") return midFv9.err;
                 const convM9 = convertQuantity(midSrc9, lookupUnit("K"), ctx);
                 if (convM9.t === "e") return convM9;
                 const midKa9 = convM9;
                 return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midKa9, f0.def, ctx) : midKa9;
               }
-              const midTerms9 = midSrc9.def?.affine === void 0 ? termsOf(midSrc9) : void 0;
+              const midTermsV9 = midSrc9.def?.affine === void 0 ? shadowViewIfNeeded9([midSrc9], midSrc9, ctx) : void 0;
+              if (midTermsV9 !== void 0 && !Array.isArray(midTermsV9)) return midTermsV9;
+              const midTerms9 = midTermsV9;
               const midK = { ...mkQ(scal9[mid9].x, lookupUnit("K")), ...midTerms9 && { terms: midTerms9 }, ...midTerms9 && midSrc9.termsDen && { termsDen: midSrc9.termsDen } };
               return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
             }
             const toK8 = (s8, x8) => {
               if (s8.def?.affine === void 0) return s8;
               if (s8.terms !== void 0 || s8.termsDen !== void 0) return convertQuantity(s8, K9, ctx);
-              return mkQ(x8, K9);
+              const k8 = mkQ(x8, K9);
+              return convOut9(ctx, s8, k8);
             };
             const lo8c = toK8(scal9[mid9 - 1].rt, scal9[mid9 - 1].x);
             if (lo8c.t === "e") return lo8c;
@@ -33633,17 +38589,68 @@ function evalAst(ast, env, ctx = {}) {
             const t30m = ctx.monthToDays === "30";
             const meanBase8 = mkQ(rDiv(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), { n: 2n, d: 1n }), K9);
             let meanK9 = meanBase8;
-            const a8 = distributeTerms(termsOf(lo8), hi8.termsDen ?? ONE_TERMS(), t30m);
-            const b8 = distributeTerms(termsOf(hi8), lo8.termsDen ?? ONE_TERMS(), t30m);
+            const tlo8 = shadowAggregateView9(
+              [lo8, hi8],
+              scal9[mid9 - 1].rt,
+              lo8,
+              ctx
+            );
+            if (!Array.isArray(tlo8)) return tlo8;
+            const thi8 = shadowAggregateView9(
+              [lo8, hi8],
+              scal9[mid9].rt,
+              hi8,
+              ctx
+            );
+            if (!Array.isArray(thi8)) return thi8;
+            const a8 = distributeTerms(tlo8, hi8.termsDen ?? ONE_TERMS(), t30m);
+            const b8 = distributeTerms(thi8, lo8.termsDen ?? ONE_TERMS(), t30m);
             const d8 = distributeTerms(lo8.termsDen ?? ONE_TERMS(), hi8.termsDen ?? ONE_TERMS(), t30m);
             if (a8 === null || b8 === null || d8 === null) ctx.capNotes?.push("sum");
             else {
               const merged8 = mergeTerms(a8, b8, 1n, t30m);
-              const sumRT8$ = attachFrac(mkQ(rAdd(scal9[mid9 - 1].x, scal9[mid9].x), K9), merged8, d8);
-              meanK9 = routeScale9(ctx, "thermalMedian", sumRT8$, { n: 1n, d: 2n }, t30m, { m: "uniform" }, false, F_EXACT9, () => attachFrac(meanBase8, merged8.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 1n, d: 2n }) })), d8));
+              const sumX8$ = rAdd(scal9[mid9 - 1].x, scal9[mid9].x);
+              const sumFrame8$ = (capture9) => {
+                if (capture9.left.exactRead === null || capture9.right.exactRead === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+                const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+                return b1NumericFrame9(mkQ(exact9, K9), exact9);
+              };
+              const legacySum8$ = () => attachFrac(mkQ(sumX8$, K9), merged8, d8);
+              const ownedSum8$ = ctx.__b1ProductionCausal9 === void 0 ? (() => {
+                const oracle9 = legacySum8$();
+                return b1Own9(
+                  ctx,
+                  { site: "median-even", host: "evalAstInner", op: "+" },
+                  lo8,
+                  hi8,
+                  sumFrame8$,
+                  oracle9
+                );
+              })() : (() => {
+                const owned9 = b1PreOwn9(
+                  ctx,
+                  { site: "median-even", host: "evalAstInner", op: "+" },
+                  lo8,
+                  hi8,
+                  sumFrame8$,
+                  () => legacySum8$()
+                );
+                if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_THERMAL_MEDIAN_OWNER_MISSING");
+                return owned9.published;
+              })();
+              if (ownedSum8$.t === "e") return ownedSum8$;
+              const scaledMean9 = routeScale9(ctx, "thermalMedian", ownedSum8$, { n: 1n, d: 2n }, t30m, { m: "uniform" }, false, F_EXACT9, () => attachFrac(meanBase8, merged8.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 1n, d: 2n }) })), d8));
+              if (scaledMean9.t === "e" && (ctx.__convAuth9 === true || ctx.__b1Compose9 !== void 0 || ctx.__b1Transform9 !== void 0)) return scaledMean9;
+              meanK9 = scaledMean9;
             }
             const f9 = values[0];
-            return f9.def !== void 0 && f9.def.id !== "kelvin" && (f9.def.affine !== void 0 || f9.def.factor !== void 0) ? convertQuantity(meanK9, f9.def, ctx) : meanK9;
+            const medianOut9 = f9.def !== void 0 && f9.def.id !== "kelvin" && (f9.def.affine !== void 0 || f9.def.factor !== void 0) ? convertQuantity(meanK9, f9.def, ctx) : meanK9;
+            if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+              const attempt9 = { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt };
+              ctx.__b1ValueTransport9(attempt9, "aggregateOutput", scal9[mid9 - 1].rt, medianOut9);
+              ctx.__b1ValueTransport9(attempt9, "aggregateOutput", scal9[mid9].rt, medianOut9);
+            }
+            return medianOut9;
           }
           const items = [];
           for (const val of values) {
@@ -33679,19 +38686,63 @@ function evalAst(ast, env, ctx = {}) {
             }
           }
           if (items.length % 2 === 1) {
-            return items[mid].rt;
+            if (items.length > 1) return stripSelection9(items[mid].rt);
+            return items[0].rt === values[0] ? items[0].rt : stripSelection9(items[0].rt);
           }
           const meanX = rDiv(rAdd(items[mid - 1].x, items[mid].x), { n: 2n, d: 1n });
           if (first.t === "q") {
-            const lo9 = items[mid - 1].rt;
-            const hi9 = items[mid].rt;
-            const sum9 = addSummable(lo9, hi9, ctx);
-            if (sum9.t !== "q") return sum9.t === "e" ? sum9 : { ...lo9, ...qv(meanX), terms: void 0 };
+            const lo92 = items[mid - 1].rt;
+            const hi92 = items[mid].rt;
+            const sum9 = addSummable(lo92, hi92, ctx);
+            if (sum9.t !== "q") return sum9.t === "e" ? sum9 : { ...lo92, ...qv(meanX), terms: void 0 };
             const half9 = { n: 1n, d: 2n };
             return routeScale9(ctx, "evenMedian", sum9, half9, ctx.monthToDays === "30", { m: "uniform" }, false, F_EXACT9, () => ({ ...sum9, ...qv(rMul(qx(sum9), half9)), ...scaleTerms(sum9, half9) }));
           }
-          if (items[mid - 1].rt.t === "f" || items[mid].rt.t === "f") return makeFrac(meanX.n, meanX.d, "derived");
-          return { t: "d", ...qv(meanX) };
+          const lo9 = items[mid - 1].rt;
+          const hi9 = items[mid].rt;
+          const sumX9 = rAdd(items[mid - 1].x, items[mid].x);
+          const sumFrame9 = (capture9) => {
+            if (capture9.left.exactRead === null || capture9.right.exactRead === null) return { kind: "unavailable", reason: "non-numeric-mechanism" };
+            const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+            return b1NumericFrame9(dOf9(exact9), exact9);
+          };
+          const legacySum9 = () => lo9.t === "f" || hi9.t === "f" ? makeFrac(sumX9.n, sumX9.d, "derived") : dOf9(sumX9);
+          const ownedSum9 = ctx.__b1ProductionCausal9 === void 0 ? (() => {
+            const oracle9 = legacySum9();
+            return b1Own9(
+              ctx,
+              { site: "median-even", host: "evalAstInner", op: "+" },
+              lo9,
+              hi9,
+              sumFrame9,
+              oracle9
+            );
+          })() : (() => {
+            const owned9 = b1PreOwn9(
+              ctx,
+              { site: "median-even", host: "evalAstInner", op: "+" },
+              lo9,
+              hi9,
+              sumFrame9,
+              () => legacySum9()
+            );
+            if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_MEDIAN_OWNER_MISSING");
+            return owned9.published;
+          })();
+          const legacyMean9 = () => lo9.t === "f" || hi9.t === "f" ? makeFrac(meanX.n, meanX.d, "derived") : dOf9(meanX);
+          if (ownedSum9.t === "e") return ownedSum9;
+          if (ctx.__b1Compose9 === void 0 && ctx.__b1Transform9 === void 0 && ctx.__b1ProductionCausal9 === void 0) return legacyMean9();
+          return routeScale9(
+            ctx,
+            "evenMedian",
+            ownedSum9,
+            { n: 1n, d: 2n },
+            ctx.monthToDays === "30",
+            { m: "uniform" },
+            false,
+            F_EXACT9,
+            legacyMean9
+          );
         }
         const tempAvg = ast.fn === "average" && values.length > 0 && values.every((v9) => v9.t === "q" && dimEquals(v9.dim, { temperature: 1 }));
         const allTs = values.length > 0 && values.every((v9) => v9.t === "ts");
@@ -33724,13 +38775,17 @@ function evalAst(ast, env, ctx = {}) {
           acc = sum2;
         }
         if (allTs && (ast.fn === "total" || ast.fn === "average")) {
+          const tsCert9 = authJoin9(...values.map((v9) => v9.foldA9));
           if (ctx.monthToDays === "30" && tsHasM && tsHasD) {
             tsD += tsM * 30n;
             tsM = 0n;
             tsHasM = false;
           }
-          if (ast.fn === "total") return spanEmit(tsM, tsD, { hasM: tsHasM, hasD: tsHasD }, ctx.monthToDays === "30");
-          return spanHalf(tsM, tsD, { hasM: tsHasM, hasD: tsHasD }, BigInt(values.length), ctx);
+          if (ast.fn === "total") return stampTimespan9(
+            spanEmit(tsM, tsD, { hasM: tsHasM, hasD: tsHasD }, ctx.monthToDays === "30"),
+            tsCert9
+          );
+          return spanHalf(tsM, tsD, { hasM: tsHasM, hasD: tsHasD }, BigInt(values.length), ctx, tsCert9);
         }
         if (ast.fn === "total" && acc !== null && acc.t === "q" && dimEquals(acc.dim, { temperature: 1 })) {
           return err("unit-mismatch", "totalling absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for offsets");
@@ -33745,17 +38800,22 @@ function evalAst(ast, env, ctx = {}) {
           let fden9 = ONE_TERMS();
           let fdrop9 = false;
           let sumCapF9 = [];
+          let causalSum9 = null;
+          const anyShadow9 = values.some((v9) => v9.terms !== void 0 || v9.termsDen !== void 0);
           for (const val of values) {
             const q9 = val;
             const cK = q9.def && (q9.def.affine || q9.def.factor) ? convertQuantity(q9, K9, ctx) : alignForAdd(mkQ({ n: 1n, d: 1n }, K9), q9, ctx);
             if (cK.t !== "q") return cK;
-            sumK = rAdd(sumK, qx(cK));
-            sumCapF9 = capFAdd9(sumCapF9, capFOf9(cK) ?? [], 1n);
+            const cKq9 = cK;
+            sumK = rAdd(sumK, qx(cKq9));
+            sumCapF9 = capFAdd9(sumCapF9, capFOf9(cKq9) ?? [], 1n);
             const src9 = q9.def?.affine !== void 0 ? cK : q9;
             if (!fdrop9) {
               const fd9 = src9.termsDen ?? ONE_TERMS();
               const a9 = distributeTerms(fnum9, fd9, t30a);
-              const b9 = distributeTerms(termsOf(src9), fden9, t30a);
+              const tsrc9 = anyShadow9 ? shadowAggregateView9(values, q9, src9, ctx) : shadowViewIfNeeded9([], src9, ctx);
+              if (!Array.isArray(tsrc9)) return tsrc9;
+              const b9 = distributeTerms(tsrc9, fden9, t30a);
               const dd9 = distributeTerms(fden9, fd9, t30a);
               if (a9 === null || b9 === null || dd9 === null) {
                 fdrop9 = true;
@@ -33763,6 +38823,50 @@ function evalAst(ast, env, ctx = {}) {
               } else {
                 fnum9 = mergeTerms(a9, b9, 1n, t30a);
                 fden9 = dd9;
+              }
+            }
+            if ((ctx.__b1EligibilityPartition9 === true || ctx.__b1ProductionCausal9 !== void 0) && anyShadow9) {
+              if (causalSum9 === null) {
+                causalSum9 = cKq9;
+              } else {
+                const partialShell9 = () => {
+                  const out9 = mkQ(sumK, K9);
+                  if (sumCapF9.length > 0) out9.capF = sumCapF9;
+                  return out9;
+                };
+                const legacyPartial9 = () => {
+                  const out9 = fdrop9 ? mkQ(sumK, K9) : attachFrac(mkQ(sumK, K9), fnum9, fden9);
+                  if (sumCapF9.length > 0) out9.capF = sumCapF9;
+                  return out9;
+                };
+                const frame9 = (capture9) => {
+                  if (capture9.left.exactRead === null || capture9.right.exactRead === null) {
+                    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+                  }
+                  const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
+                  return b1NumericFrame9(partialShell9(), exact9);
+                };
+                const owned9 = ctx.__b1ProductionCausal9 === void 0 ? b1Own9(
+                  ctx,
+                  { site: "thermal-average", host: "evalAstInner", op: "+" },
+                  causalSum9,
+                  cKq9,
+                  frame9,
+                  legacyPartial9()
+                ) : (() => {
+                  const preOwned9 = b1PreOwn9(
+                    ctx,
+                    { site: "thermal-average", host: "evalAstInner", op: "+" },
+                    causalSum9,
+                    cKq9,
+                    frame9,
+                    () => legacyPartial9()
+                  );
+                  if (preOwned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_THERMAL_AVERAGE_OWNER_MISSING");
+                  return preOwned9.published;
+                })();
+                if (owned9.t !== "q") return owned9;
+                causalSum9 = owned9;
               }
             }
           }
@@ -33776,7 +38880,7 @@ function evalAst(ast, env, ctx = {}) {
           }
           const sumRT9$ = fdrop9 ? mkQ(sumK, K9) : attachFrac(mkQ(sumK, K9), fnum9, fden9);
           if (sumCapF9.length > 0) sumRT9$.capF = sumCapF9;
-          const meanK$9 = routeScale9(ctx, "kelvinMean", sumRT9$, nK9, ctx.monthToDays === "30", { m: "uniform" }, capT9 || meanCapF9.length > 0, F_EXACT9, () => {
+          const meanK$9 = routeScale9(ctx, "kelvinMean", causalSum9 ?? sumRT9$, nK9, ctx.monthToDays === "30", { m: "uniform" }, capT9 || meanCapF9.length > 0, F_EXACT9, () => {
             const meanK0 = fdrop9 ? meanBase9 : attachFrac(meanBase9, fnum9.map((t9) => ({ ...t9, x: rMul(t9.x, nK9) })), fden9);
             const meanK = capT9 || meanCapF9.length > 0 ? { ...meanK0, capped: true } : meanK0;
             if (meanCapF9.length > 0) meanK.capF = meanCapF9;
@@ -33788,7 +38892,7 @@ function evalAst(ast, env, ctx = {}) {
         const n2 = { n: BigInt(values.length), d: 1n };
         if (acc.t === "ts") {
           const { months: m9, days: d9 } = spanCanon(acc.c);
-          return spanHalf(m9, d9, spanGroups(acc.c), BigInt(values.length), ctx);
+          return spanHalf(m9, d9, spanGroups(acc.c), BigInt(values.length), ctx, authPreserve9(acc.foldA9));
         }
         const invN9 = rDiv({ n: 1n, d: 1n }, n2);
         const meanF9 = capFScale9(capFOf9(acc), invN9);
@@ -33821,7 +38925,18 @@ function evalAst(ast, env, ctx = {}) {
         return false;
       })();
       const aggOut9 = aggCapAll9 && agg9.capped !== true ? { ...agg9, capped: true } : agg9;
-      return capCoarse9(aggOut9, values, `agg:${ast.fn}`);
+      const publishedAggregate9 = capCoarse9(aggOut9, values, `agg:${ast.fn}`);
+      if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+        const attempt9 = { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt };
+        for (let i9 = ctx.sectionStart ?? 0; i9 < lines.length; i9++) {
+          if (ctx.aggDerived?.[i9]) continue;
+          const member9 = lines[i9];
+          if (member9 !== null && member9 !== void 0) {
+            ctx.__b1ValueTransport9(attempt9, "aggregateOutput", member9, publishedAggregate9);
+          }
+        }
+      }
+      return publishedAggregate9;
     }
     case "workdays": {
       const count = evalAst(ast.count, env, ctx);
@@ -33891,19 +39006,27 @@ function evalAst(ast, env, ctx = {}) {
       const amount = evalAst(ast.amount, env, ctx);
       const rateRT = evalAst(ast.rate, env, ctx);
       const yearsRT = evalAst(ast.years, env, ctx);
-      if (amount.t === "e") return amount;
+      const financeOut9 = (output9) => {
+        if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+          for (const source9 of [amount, rateRT, yearsRT]) {
+            ctx.__b1ValueTransport9(ctx.__b1Attempt9, "financeOutput", source9, output9);
+          }
+        }
+        return output9;
+      };
+      if (amount.t === "e") return financeOut9(amount);
       if (amount.t !== "d" && amount.t !== "f" && amount.t !== "q") {
-        return err("unsupported-pair", "finance phrases need an amount");
+        return financeOut9(err("unsupported-pair", "finance phrases need an amount"));
       }
-      if (rateRT.t === "e") return rateRT;
-      if (rateRT.t !== "p") return err("unsupported-pair", "this slot needs a percentage \u2014 write 5% not 5");
-      if (yearsRT.t === "e") return yearsRT;
+      if (rateRT.t === "e") return financeOut9(rateRT);
+      if (rateRT.t !== "p") return financeOut9(err("unsupported-pair", "this slot needs a percentage \u2014 write 5% not 5"));
+      if (yearsRT.t === "e") return financeOut9(yearsRT);
       if (rateRT.capped === true || yearsRT.capped === true) {
-        return err("inexact", "a finance branch cannot be decided from a capped value \u2014 exactness was dropped upstream");
+        return financeOut9(err("inexact", "a finance branch cannot be decided from a capped value \u2014 exactness was dropped upstream"));
       }
       const fig9 = pctFigure(rateRT, ctx.monthToDays === "30");
       if (fig9 === "irr") {
-        return err("inexact", "the rate\u2019s exact shadow cannot traverse the finance formula \u2014 write the formula explicitly");
+        return financeOut9(err("inexact", "the rate\u2019s exact shadow cannot traverse the finance formula \u2014 write the formula explicitly"));
       }
       let yQ = null;
       if (yearsRT.t === "ts") {
@@ -33915,7 +39038,7 @@ function evalAst(ast, env, ctx = {}) {
         yQ = numRat(yearsRT);
       }
       if (yQ === null || yQ.d !== 1n || yQ.n <= 0n || yQ.n > 1000n) {
-        return err("inexact", "the duration must be a whole number of years (1\u20131000)");
+        return financeOut9(err("inexact", "the duration must be a whole number of years (1\u20131000)"));
       }
       const principal = amount.t === "q" ? qx(amount) : numRat(amount);
       const y2 = Number(yQ.n);
@@ -33925,7 +39048,7 @@ function evalAst(ast, env, ctx = {}) {
       if (ast.fn === "interest") {
         const gBase9 = rDiv(rAdd(cent, rate), cent);
         if ((gBase9.n.toString(2).length + gBase9.d.toString(2).length) * Math.abs(y2) > 1e5) {
-          return err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget");
+          return financeOut9(err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget"));
         }
         const growth = rPowInt(gBase9, y2);
         kFin = rSub(growth, { n: 1n, d: 1n });
@@ -33934,12 +39057,12 @@ function evalAst(ast, env, ctx = {}) {
         if (r3.n === 0n) kFin = rDiv({ n: 1n, d: 1n }, { n: BigInt(y2) * 12n, d: 1n });
         else {
           const base9 = rAdd({ n: 1n, d: 1n }, r3);
-          if (base9.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
+          if (base9.n === 0n) return financeOut9(err("division-by-zero", "this rate makes the annuity formula divide by zero"));
           if ((base9.n.toString(2).length + base9.d.toString(2).length) * Math.abs(12 * y2) > 1e5) {
-            return err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget");
+            return financeOut9(err("inexact", "this rate and duration exceed the engine\u2019s certified numeric budget"));
           }
           const denom = rSub({ n: 1n, d: 1n }, rPowInt(base9, -12 * y2));
-          if (denom.n === 0n) return err("division-by-zero", "this rate makes the annuity formula divide by zero");
+          if (denom.n === 0n) return financeOut9(err("division-by-zero", "this rate makes the annuity formula divide by zero"));
           kFin = rDiv(r3, denom);
         }
       }
@@ -33948,16 +39071,26 @@ function evalAst(ast, env, ctx = {}) {
       const durFactor9 = durProved9 ? F_EXACT9 : { num: "refuse", capF: void 0, message: "the finance duration is not provably a whole number of years \u2014 its shadow only projects to an integer (like 1/(duration\u22121), it is not decidable)" };
       if (amount.t === "q") {
         if (isOffsetScale(amount) || dimEquals(amount.dim, { temperature: 1 })) {
-          return err("unit-mismatch", "financial formulas need amounts, not absolute temperatures");
+          return financeOut9(err("unit-mismatch", "financial formulas need amounts, not absolute temperatures"));
         }
         const amtQ9 = amount;
-        return routeScale9(ctx, "finance", amtQ9, kFin, ctx.monthToDays === "30", { m: "uniform" }, false, durFactor9, () => {
-          const finQ9 = { ...amtQ9, ...qv(out), ...scaleTerms(amtQ9, kFin) };
-          const fFinQ9 = capFScale9(capFOf9(amtQ9), kFin);
-          if (fFinQ9.length > 0) finQ9.capF = fFinQ9;
-          else delete finQ9.capF;
-          return finQ9;
-        });
+        return financeOut9(routeScale9(
+          ctx,
+          "finance",
+          amtQ9,
+          kFin,
+          ctx.monthToDays === "30",
+          { m: "uniform" },
+          false,
+          { proof: durFactor9, authoritySource: rateRT },
+          () => {
+            const finQ9 = { ...amtQ9, ...qv(out), ...scaleTerms(amtQ9, kFin) };
+            const fFinQ9 = capFScale9(capFOf9(amtQ9), kFin);
+            if (fFinQ9.length > 0) finQ9.capF = fFinQ9;
+            else delete finQ9.capF;
+            return finQ9;
+          }
+        ));
       }
       let amtD9 = amount;
       if (amount.t === "f") {
@@ -33965,42 +39098,77 @@ function evalAst(ast, env, ctx = {}) {
         const af9 = capFOf9(amount);
         if (af9 !== void 0) amtD9.capF = af9;
       }
-      return routeScale9(ctx, "finance", amtD9, kFin, ctx.monthToDays === "30", { m: "uniform" }, false, durFactor9, () => {
-        const finD9 = { t: "d", ...qv(out), ...amount.capped === true && { capped: true } };
-        const fFinD9 = capFScale9(capFOf9(amount), kFin);
-        if (fFinD9.length > 0) finD9.capF = fFinD9;
-        return finD9;
-      });
+      return financeOut9(routeScale9(
+        ctx,
+        "finance",
+        amtD9,
+        kFin,
+        ctx.monthToDays === "30",
+        { m: "uniform" },
+        false,
+        { proof: durFactor9, authoritySource: rateRT },
+        () => {
+          const finD9 = { t: "d", ...qv(out), ...amount.capped === true && { capped: true } };
+          const fFinD9 = capFScale9(capFOf9(amount), kFin);
+          if (fFinD9.length > 0) finD9.capF = fFinD9;
+          return finD9;
+        }
+      ));
     }
     case "unitCompound": {
-      const e = evalAst(ast.e, env, ctx);
-      const res$9 = (() => {
-        if (e.t === "e") return e;
-        if (e.t !== "d" && e.t !== "f") return err("unsupported-pair", "cannot attach a rate unit here");
-        const capUC9 = e.capped === true;
-        const num = ast.numSpan !== void 0 ? CAL_RATE_DEFS[ast.numSpan] : lookupUnit(ast.num);
-        const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.den);
-        if (num.affine || den.affine) {
-          return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate unit`);
+      const e = inputRT9 ?? evalAst(ast.e, env, ctx);
+      if (e.t === "e") return e;
+      if (e.t !== "d" && e.t !== "f") return err("unsupported-pair", "cannot attach a rate unit here");
+      const capUC9 = e.capped === true;
+      const num = ast.numSpan !== void 0 ? CAL_RATE_DEFS[ast.numSpan] : lookupUnit(ast.num);
+      const den = ast.denSpan !== void 0 ? CAL_RATE_DEFS[ast.denSpan] : lookupUnit(ast.den);
+      if (num.affine || den.affine) {
+        return err("unsupported-pair", `\u201C${num.symbol}/${den.symbol}\u201D is not a supported rate unit`);
+      }
+      const dim = dimAdd(num.dim, den.dim, -1);
+      const def = {
+        id: `${num.id}/${den.id}`,
+        // a compound denominator keeps its parens — "CHF/mois·m" would
+        // re-read as (CHF/mois)·m (audit K)
+        symbol: den.symbol.includes("\xB7") ? `${num.symbol}/(${den.symbol})` : `${num.symbol}/${den.symbol}`,
+        dim,
+        ...num.factor && den.factor && {
+          factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n }
         }
-        const dim = dimAdd(num.dim, den.dim, -1);
-        const def = {
-          id: `${num.id}/${den.id}`,
-          // a compound denominator keeps its parens — "CHF/mois·m" would
-          // re-read as (CHF/mois)·m (audit K)
-          symbol: den.symbol.includes("\xB7") ? `${num.symbol}/(${den.symbol})` : `${num.symbol}/${den.symbol}`,
-          dim,
-          ...num.factor && den.factor && {
-            factor: { n: num.factor.n * den.factor.d, d: num.factor.d * den.factor.n }
-          }
-        };
-        const x2 = e.t === "f" ? rnorm({ n: e.n, d: e.d }) : e.vx ?? decToRat(e.v);
-        const numComps = ast.numSpan !== void 0 ? [{ def: num, exp: 1 }] : unitComps(ast.num);
-        const denComps = ast.denSpan !== void 0 ? [{ def: den, exp: 1 }] : unitComps(ast.den);
-        const comps = [
-          ...numComps ?? [{ def: num, exp: 1 }],
-          ...(denComps ?? [{ def: den, exp: 1 }]).map((c2) => ({ def: c2.def, exp: -c2.exp }))
-        ];
+      };
+      const x2 = e.t === "f" ? rnorm({ n: e.n, d: e.d }) : e.vx ?? decToRat(e.v);
+      const numComps = ast.numSpan !== void 0 ? [{ def: num, exp: 1 }] : unitComps(ast.num);
+      const denComps = ast.denSpan !== void 0 ? [{ def: den, exp: 1 }] : unitComps(ast.den);
+      const comps = [
+        ...numComps ?? [{ def: num, exp: 1 }],
+        ...(denComps ?? [{ def: den, exp: 1 }]).map((c2) => ({ def: c2.def, exp: -c2.exp }))
+      ];
+      const unitTargetRead9 = qv({ n: 1n, d: 1n });
+      const unitTarget9 = {
+        t: "q",
+        v: unitTargetRead9.v,
+        ...unitTargetRead9.vx !== void 0 && { vx: unitTargetRead9.vx },
+        dim,
+        symbol: def.symbol,
+        def,
+        rate: { num, den },
+        comps: comps.map((comp9) => ({ ...comp9 }))
+      };
+      if (ctx.__b1ProductionCausal9 !== void 0) {
+        const target92 = b1CaptureOperand9(stampAuth9(unitTarget9, AUTH9), ctx.monthToDays === "30");
+        return b1TransformProduction9(ctx, {
+          site: "attachUnit",
+          host: "evalAst",
+          capture: b1CaptureOperand9(e, ctx.monthToDays === "30"),
+          frameOp: { kind: "attach-unit", unit: target92 },
+          meta: { kind: "reframe" }
+        }, (legacyCtx9) => {
+          const out9 = evalAstInner(ast, env, legacyCtx9, void 0, e);
+          const authority9 = authPreserve9(e.foldA9);
+          return out9.t !== "e" && authority9 !== void 0 && !hasShadowFromRT(out9) ? stampAuth9(out9, authority9) : out9;
+        });
+      }
+      const res$9 = (() => {
         const cc9 = canonComps(comps);
         const pureLinear9 = comps.every((c2) => isPureLinear(c2.def) || c2.def.factorDec !== void 0) && !comps.some((c2) => c2.def.dim["calmonths"] !== void 0 || c2.def.dim["caldays"] !== void 0);
         const hasZeroSubset9 = pureLinear9 && comps.length >= 2 && comps.length <= 12 && (() => {
@@ -34020,7 +39188,24 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "q", ...qv(x2), dim, symbol: def.symbol, def, rate: { num, den }, comps, ...capUC9 && { capped: true } };
       })();
-      return res$9.t === "e" ? res$9 : capScaleByValue9(res$9, e);
+      if (res$9.t === "e") return res$9;
+      const publicOut9 = capScaleByValue9(res$9, e);
+      if (ctx.__b1Transform9 === void 0) return publicOut9;
+      const compoundAuthority9 = authPreserve9(e.foldA9);
+      const certifiedOut9 = compoundAuthority9 !== void 0 && !hasShadowFromRT(publicOut9) ? stampAuth9(publicOut9, compoundAuthority9) : publicOut9;
+      ctx.__b1Capture9?.("transform");
+      const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+      if (unitTarget9 === null) return err("not-understood", "compound unit target was not captured");
+      const unitOne9 = stampAuth9(unitTarget9, AUTH9);
+      const target9 = b1CaptureOperand9(unitOne9, ctx.monthToDays === "30");
+      return b1Transform9(ctx, {
+        site: "attachUnit",
+        host: "evalAst",
+        capture: captured9,
+        out: certifiedOut9,
+        frameOp: { kind: "attach-unit", unit: target9 },
+        meta: { kind: "reframe" }
+      });
     }
     case "pctOff": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -34037,15 +39222,18 @@ function evalAst(ast, env, ctx = {}) {
           const k9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
           const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), k9), ff9, ctx, p2.capped === true || base.capped === true);
-          return pctScale9(base, k9, p2.capped === true || base.capped === true, ctx, pctFactor9(p2, { n: -1n, d: 100n }, "psoffmul"));
+          return pctScale9(base, k9, p2.capped === true || base.capped === true, ctx, pctFactor9(p2, { n: -1n, d: 100n }, "psoffmul"), p2);
         }
         if (base.t === "ts") {
-          if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+          if (spanStructuralZero9(base)) {
+            const out9 = { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+            return stampTimespan9(out9, authAbsorbZero9(base.foldA9));
+          }
           const pv9 = pctFigure(p2, ctx.monthToDays === "30");
           if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-          const s9 = tsScale(base, rDiv(rSub({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
+          const s9 = tsScaleWithAuthority9(base, rDiv(rSub({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), p2, ctx);
           const capS9 = base.capped === true || p2.capped === true;
-          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+          return capTimespan9(s9, capS9);
         }
         if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "discount needs a plain number or quantity");
         {
@@ -34055,13 +39243,49 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOff", ctx.reemitObserver), base, p2, -1);
+      const pctOut9 = capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOff", ctx.reemitObserver, ctx.__candidateReemitObserver9), base, p2, -1);
+      return emitB1PercentageOutput9(ctx, [p2, base, res$9], pctOut9);
     }
     case "un": {
       const e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
       if (ast.op === "+") return e;
-      return routeOrder9(ctx, candidateNegate9(e, ctx.monthToDays === "30"), [e], () => ({ site: "unaryNeg", out: legacyNegate9(e) }));
+      const negate9 = (source92, ownerCtx9 = ctx) => routeOrder9(
+        ownerCtx9,
+        candidateNegate9(source92, ownerCtx9.monthToDays === "30"),
+        [source92],
+        () => ({ site: "unaryNeg", out: legacyNegate9(source92) })
+      );
+      if (ctx.__b1CausalUnary9 !== true || ctx.__b1Transform9 === void 0 && ctx.__b1ProductionCausal9 === void 0) return negate9(e);
+      const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+      if (captured9.kind === "unavailable") {
+        return { t: "e", code: "b1-compose-refused", detail: "transform:capture-unavailable" };
+      }
+      const needsCausalUnary9 = captured9.sourceAtom !== null || captured9.shadow.kind !== "no-shadow";
+      if (!needsCausalUnary9) return negate9(e);
+      const source9 = materializeB1CapturedOperand9(captured9);
+      if (source9 === null) {
+        return { t: "e", code: "b1-compose-refused", detail: "transform:capture-unavailable" };
+      }
+      if (ctx.__b1ProductionCausal9 !== void 0) {
+        return b1TransformProduction9(ctx, {
+          site: "unaryNeg",
+          host: "evalAstInner",
+          capture: captured9,
+          frameOp: { kind: "negate" },
+          meta: { kind: "causal-unary", op: "negate" }
+        }, (legacyCtx9) => negate9(source9, legacyCtx9));
+      }
+      ctx.__b1Capture9?.("unaryNeg");
+      const out9 = negate9(source9);
+      return b1Transform9(ctx, {
+        site: "unaryNeg",
+        host: "evalAstInner",
+        capture: captured9,
+        out: out9,
+        frameOp: { kind: "negate" },
+        meta: { kind: "causal-unary", op: "negate" }
+      });
     }
     case "scale": {
       let e = evalAst(ast.e, env, ctx);
@@ -34078,7 +39302,7 @@ function evalAst(ast, env, ctx = {}) {
         });
       }
       if (e.t === "q" && dimIsEmpty(e.dim)) {
-        const f9 = foldIrrationalResidue(e, ctx.monthToDays === "30");
+        const f9 = foldIrrationalResidue(e, ctx.monthToDays === "30", ctx, "bnMio");
         if (f9.t === "d" || f9.t === "f") e = f9;
         else if (f9.t === "q" && dimIsEmpty(f9.dim) && (compsOf(f9) ?? []).length === 0) {
           const eSc9 = {
@@ -34097,12 +39321,13 @@ function evalAst(ast, env, ctx = {}) {
         }
       }
       if (e.t !== "d" && e.t !== "p") return err("unsupported-pair");
+      const eAuth9 = e.foldA9;
       const sc9 = rPowInt({ n: 10n, d: 1n }, ast.pow10);
       const sx = rMul(e.vx ?? decToRat(e.v), sc9);
       const sv9 = qv(sx);
       if (!isRepresentable(sv9.v)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
       const eS9 = e;
-      return routeScale9(ctx, "bnMioSuffix", eS9, sc9, ctx.monthToDays === "30", { m: "uniform" }, false, F_EXACT9, () => {
+      const scaled9 = routeScale9(ctx, "bnMioSuffix", eS9, sc9, ctx.monthToDays === "30", { m: "uniform" }, false, F_EXACT9, () => {
         const fields = {
           ...sv9,
           ...eS9.terms && { terms: eS9.terms.map((t9) => ({ ...t9, x: rMul(t9.x, sc9) })) },
@@ -34113,24 +39338,37 @@ function evalAst(ast, env, ctx = {}) {
         if (scF9.length > 0) scRes9.capF = scF9;
         return scRes9;
       });
+      if (eAuth9 !== void 0 && scaled9.t !== "e" && !hasShadowFromRT(scaled9)) {
+        return stampAuth9(scaled9, eAuth9);
+      }
+      return scaled9;
     }
     case "pct": {
       let e = promoteShadowScalar9(evalAst(ast.e, env, ctx));
       if (e.t === "e") return e;
       if (e.t === "p") return err("unsupported-pair", "percentage of a percentage needs \u201Cde/of\u201D");
-      if (e.t === "q") e = foldIrrationalResidue(e, ctx.monthToDays === "30");
+      const pctSource9 = e;
+      if (e.t === "q") e = foldIrrationalResidue(e, ctx.monthToDays === "30", ctx, "pctPostfix");
+      const pctOut9 = (out9) => {
+        const cert9 = authPreserve9(e.foldA9);
+        const stamped9 = cert9 !== void 0 && out9.t !== "e" && !hasShadowFromRT(out9) ? stampAuth9(out9, cert9) : out9;
+        return emitB1PercentageOutput9(ctx, [pctSource9, e], stamped9);
+      };
       if (isCarrier(e)) {
-        return reemitFromShadow9(capCopy9({
+        return pctOut9(reemitFromShadow9(capCopy9({
           t: "p",
-          ...qv(qx(e)),
+          v: e.v,
+          ...e.vx !== void 0 && { vx: e.vx },
           ...e.terms && { terms: e.terms },
           ...e.termsDen && { termsDen: e.termsDen },
           ...e.capped === true && { capped: true }
-        }, e), ctx.monthToDays === "30", "pType", ctx.reemitObserver);
+        }, e), ctx.monthToDays === "30", "pType", ctx.reemitObserver, ctx.__candidateReemitObserver9));
       }
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
       const px = numRat(e);
-      return capCopy9({ t: "p", ...qv(px), ...e.capped === true && { capped: true } }, e);
+      const shownPct9 = qv(px);
+      const pctValue9 = e.t === "d" ? { v: e.v, ...e.vx !== void 0 && { vx: e.vx } } : { v: shownPct9.v, ...shownPct9.vx !== void 0 && { vx: shownPct9.vx } };
+      return pctOut9(capCopy9({ t: "p", ...pctValue9, ...e.capped === true && { capped: true } }, e));
     }
     case "pctOf": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -34164,15 +39402,18 @@ function evalAst(ast, env, ctx = {}) {
         if (base.t === "q") {
           const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
-          return pctScale9(base, pf, p2.capped === true || base.capped === true, ctx, pctFactor9(p2, { n: 1n, d: 100n }, "psofmul"));
+          return pctScale9(base, pf, p2.capped === true || base.capped === true, ctx, pctFactor9(p2, { n: 1n, d: 100n }, "psofmul"), p2);
         }
         if (base.t === "ts") {
-          if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+          if (spanStructuralZero9(base)) {
+            const out9 = { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+            return stampTimespan9(out9, authAbsorbZero9(base.foldA9));
+          }
           const pv9 = pctFigure(p2, ctx.monthToDays === "30");
           if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-          const s9 = tsScale(base, rDiv(pv9, { n: 100n, d: 1n }), ctx);
+          const s9 = tsScaleWithAuthority9(base, rDiv(pv9, { n: 100n, d: 1n }), p2, ctx);
           const capS9 = base.capped === true || p2.capped === true;
-          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+          return capTimespan9(s9, capS9);
         }
         if (base.t !== "d" && base.t !== "f") return err("unsupported-pair");
         {
@@ -34181,7 +39422,8 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "d", ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } };
       })();
-      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOf", ctx.reemitObserver), [p2, base], "pctOf");
+      const pctOut9 = capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOf", ctx.reemitObserver, ctx.__candidateReemitObserver9), [p2, base], "pctOf");
+      return emitB1PercentageOutput9(ctx, [p2, base, res$9], pctOut9);
     }
     case "pctOn": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -34197,15 +39439,18 @@ function evalAst(ast, env, ctx = {}) {
           const kOn = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
           const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(qx(base), kOn), ff9, ctx, p2.capped === true || base.capped === true);
-          return pctScale9(base, kOn, p2.capped === true || base.capped === true, ctx, pctFactor9(p2, { n: 1n, d: 100n }, "psonmul"));
+          return pctScale9(base, kOn, p2.capped === true || base.capped === true, ctx, pctFactor9(p2, { n: 1n, d: 100n }, "psonmul"), p2);
         }
         if (base.t === "ts") {
-          if (!base.c.years && !base.c.months && !base.c.weeks && !base.c.days) return { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+          if (spanStructuralZero9(base)) {
+            const out9 = { t: "ts", c: { ...base.c }, ...(p2.capped === true || base.capped === true) && { capped: true } };
+            return stampTimespan9(out9, authAbsorbZero9(base.foldA9));
+          }
           const pv9 = pctFigure(p2, ctx.monthToDays === "30");
           if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-          const s9 = tsScale(base, rDiv(rAdd({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), ctx);
+          const s9 = tsScaleWithAuthority9(base, rDiv(rAdd({ n: 100n, d: 1n }, pv9), { n: 100n, d: 1n }), p2, ctx);
           const capS9 = base.capped === true || p2.capped === true;
-          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+          return capTimespan9(s9, capS9);
         }
         if (base.t !== "d" && base.t !== "f") return err("unsupported-pair", "markup needs a plain number or quantity");
         {
@@ -34215,7 +39460,8 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
         }
       })();
-      return capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOn", ctx.reemitObserver), base, p2, 1);
+      const pctOut9 = capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOn", ctx.reemitObserver, ctx.__candidateReemitObserver9), base, p2, 1);
+      return emitB1PercentageOutput9(ctx, [p2, base, res$9], pctOut9);
     }
     case "isPctOfWhat": {
       const value = promoteShadowScalar9(evalAst(ast.value, env, ctx));
@@ -34229,7 +39475,8 @@ function evalAst(ast, env, ctx = {}) {
         if (p2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
         if (value.t === "ts" && !value.c.years && !value.c.months && !value.c.weeks && !value.c.days) {
           if (zeroState(p2, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
-          return { t: "ts", c: { ...value.c }, ...value.capped === true && { capped: true } };
+          const out9 = { t: "ts", c: { ...value.c }, ...value.capped === true && { capped: true } };
+          return stampTimespan9(out9, authAbsorbZero9(value.foldA9));
         }
         const pvr = p2.t === "p" ? p2.vx ?? decToRat(p2.v) : numRat(p2);
         if (pvr.n === 0n) {
@@ -34237,18 +39484,26 @@ function evalAst(ast, env, ctx = {}) {
           const t30z0 = ctx.monthToDays === "30";
           const fbz9 = { num: p2.terms ?? [{ x: pvr, comps: [], aux: rnorm(pvr).d !== 1n }], den: p2.termsDen ?? ONE_TERMS() };
           const vz9 = value.t === "ts" || isCarrier(value) ? { n: 1n, d: 1n } : numRat(value);
-          const fVz9 = value.t === "q" ? fracOf(value) : { num: [{ x: vz9, comps: [], aux: rnorm(vz9).d !== 1n }], den: ONE_TERMS() };
+          let fVz9 = value.t === "q" ? fracOf(value) : { num: [{ x: vz9, comps: [], aux: rnorm(vz9).d !== 1n }], den: ONE_TERMS() };
+          if (ctx.__convAuth9 === true && value.t === "q" && (value.terms !== void 0 || value.termsDen !== void 0)) {
+            const fvz9 = shadowFracA9(value, ctx);
+            if (fvz9.kind === "refuse") return fvz9.err;
+            fVz9 = fvz9;
+          }
           const nZ0 = distributeTerms(fVz9.num, fbz9.den.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 100n, d: 1n }) })), t30z0);
           const dZ0 = distributeTerms(fVz9.den, fbz9.num, t30z0);
           return divProjZero(nZ0, dZ0, p2, ctx, value.t === "q" || value.t === "p" ? value : void 0);
         }
         if (value.t === "ts") {
-          if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+          if (spanStructuralZero9(value)) {
+            const out9 = { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+            return stampTimespan9(out9, authAbsorbZero9(value.foldA9));
+          }
           const pv9 = p2.t === "p" ? pctFigure(p2, ctx.monthToDays === "30") : pvr;
           if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
-          const s9 = tsScale(value, rDiv({ n: 100n, d: 1n }, pv9), ctx);
+          const s9 = tsScaleWithAuthority9(value, rDiv({ n: 100n, d: 1n }, pv9), p2, ctx);
           const capS9 = value.capped === true || p2.capped === true;
-          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+          return capTimespan9(s9, capS9);
         }
         {
           const ff9 = p2.t === "p" ? pctFactorFrac(p2, "inv", ctx.monthToDays === "30") : null;
@@ -34265,7 +39520,7 @@ function evalAst(ast, env, ctx = {}) {
           return { t: "d", ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } };
         }
       })();
-      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "isPctOfWhat", ctx.reemitObserver), [value], "isPctOfWhat");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "isPctOfWhat", ctx.reemitObserver, ctx.__candidateReemitObserver9), [value], "isPctOfWhat");
     }
     case "whatPctOf": {
       const base = promoteShadowScalar9(evalAst(ast.base, env, ctx));
@@ -34282,8 +39537,21 @@ function evalAst(ast, env, ctx = {}) {
         if ((isCarrier(base) || isCarrier(part)) && (isCarrier(base) || base.t === "d" || base.t === "f") && (isCarrier(part) || part.t === "d" || part.t === "f")) {
           if (base.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
           const t30w = ctx.monthToDays === "30";
-          const fB9 = isCarrier(base) ? fracOf(base) : { num: [{ x: numRat(base), comps: [], aux: rnorm(numRat(base)).d !== 1n }], den: ONE_TERMS() };
-          const fP9 = isCarrier(part) ? fracOf(part) : { num: [{ x: numRat(part), comps: [], aux: rnorm(numRat(part)).d !== 1n }], den: ONE_TERMS() };
+          const pctBatch9 = [base, part].filter((q92) => isCarrier(q92));
+          const mkSc9 = (q92) => {
+            if (!isCarrier(q92)) {
+              const x92 = numRat(q92);
+              return { num: [{ x: x92, comps: [], aux: rnorm(x92).d !== 1n }], den: ONE_TERMS() };
+            }
+            const v9 = shadowFracViewIfNeeded9(pctBatch9, q92, ctx);
+            return v9.kind === "refuse" ? v9.err : v9;
+          };
+          const fBv9 = mkSc9(base);
+          if ("t" in fBv9) return fBv9;
+          const fPv9 = mkSc9(part);
+          if ("t" in fPv9) return fPv9;
+          const fB9 = fBv9;
+          const fP9 = fPv9;
           const bx9 = isCarrier(base) ? qx(base) : numRat(base);
           if (bx9.n === 0n) {
             const n0 = distributeTerms(fP9.num, fB9.den, t30w);
@@ -34313,7 +39581,7 @@ function evalAst(ast, env, ctx = {}) {
           return routeScale9(ctx, "whatPctOfX100", ratioP9$, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "copy" }, capW9, F_EXACT9, () => ({
             t: "p",
             ...qv(x9),
-            ...q9.terms && { terms: q9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })) },
+            ...q9.terms && { terms: q9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps, aux: false })) },
             ...q9.termsDen && { termsDen: q9.termsDen },
             ...capW9 && { capped: true }
           }));
@@ -34325,14 +39593,107 @@ function evalAst(ast, env, ctx = {}) {
           const aligned9 = alignForAdd(base, part, ctx);
           if (aligned9.t !== "q") return aligned9;
           const t30w9 = ctx.monthToDays === "30";
+          const ratioFrame9 = (capture9) => {
+            const frame9 = b1MulDivFrame9(capture9.left, capture9.right, "/", ctx);
+            if (frame9.kind !== "numeric") return frame9;
+            const scalarFrame9 = b1NumericFrame9(
+              dOf9(frame9.exactRead),
+              frame9.exactRead
+            );
+            if (scalarFrame9.kind !== "numeric") return scalarFrame9;
+            const ownedRatioFrame9 = {
+              ...scalarFrame9,
+              currencyAliasQuotient: "right-to-left",
+              ...frame9.projectedZeroInverse === true && { projectedZeroInverse: true }
+            };
+            if (ownedRatioFrame9.projectedZeroInverse !== true) return ownedRatioFrame9;
+            const { projectedZeroInverse: _ownedByPctAlgebra9, ...withoutProjectionGate9 } = ownedRatioFrame9;
+            return withoutProjectionGate9;
+          };
+          const ownWhatPctRatio9 = (legacyThunk9) => {
+            if (ctx.__b1ProductionCausal9 !== void 0) {
+              const owned92 = b1PreOwn9(
+                ctx,
+                { site: "whatPctOf-ratio", host: "evalAstInner", op: "/" },
+                aligned9,
+                base,
+                ratioFrame9,
+                legacyThunk9
+              );
+              if (owned92?.kind !== "production") throw new Error("CAPTURE_CAUSAL_PERCENTAGE_RATIO_OWNER_MISSING");
+              return { rt: owned92.published, candidate: owned92.decision.output !== B1_MECHANISM_ROUTE9 };
+            }
+            const legacyRatio9 = legacyThunk9(ctx);
+            const owned9 = b1Own9(
+              ctx,
+              { site: "whatPctOf-ratio", host: "evalAstInner", op: "/" },
+              aligned9,
+              base,
+              ratioFrame9,
+              legacyRatio9
+            );
+            return { rt: owned9, candidate: owned9 !== legacyRatio9 };
+          };
+          const candidateRatioAsPercentage9 = (ownedRatio92) => {
+            if (ownedRatio92.t === "e") return ownedRatio92;
+            if (ownedRatio92.t === "q" && (!dimsCompatible(ownedRatio92.dim, {}, ctx) || (compsOf(ownedRatio92)?.length ?? 0) > 0)) {
+              return err("inexact", "this ratio leaves a residual unit the engine cannot reduce to a percentage");
+            }
+            if (ownedRatio92.t !== "q" && ownedRatio92.t !== "d" && ownedRatio92.t !== "f" && ownedRatio92.t !== "p") {
+              return err("b1-compose-refused", "whatPctOf: candidate ratio is not numeric");
+            }
+            const shadow9 = shadowFromRT(ownedRatio92, t30w9);
+            if (shadow9.kind === "invalid-denominator" || shadow9.kind === "undecidable-denominator") {
+              return err("b1-compose-refused", `whatPctOf: shadow:${shadow9.kind}`);
+            }
+            const reduced9 = shadow9.kind === "ok" ? shadow9.value.reduceScalar() : null;
+            const ratio9 = reduced9?.kind === "reduced" ? reduced9.x : b1RatOf9(ownedRatio92);
+            if (ratio9 === null) return err("b1-compose-refused", "whatPctOf: candidate ratio has no exact reading");
+            const cap9 = capFOf9(ownedRatio92);
+            let percentage9 = {
+              t: "p",
+              ...qv(ratio9),
+              ...cap9 !== void 0 && { capF: cap9 },
+              ...ownedRatio92.capped === true && { capped: true }
+            };
+            if (shadow9.kind === "ok") percentage9 = replaceShadowFromFraction9(percentage9, shadow9.value);
+            else {
+              const cert9 = authPreserve9(ownedRatio92.foldA9);
+              if (cert9 !== void 0) percentage9 = stampAuth9(percentage9, cert9);
+            }
+            return percentage9;
+          };
+          const publishCandidateRatio9 = (ownedRatio92) => {
+            const ratioP9 = candidateRatioAsPercentage9(ownedRatio92);
+            if (ratioP9.t === "e") return ratioP9;
+            return routeScale9(
+              ctx,
+              "whatPctOfX100",
+              ratioP9,
+              { n: 100n, d: 1n },
+              t30w9,
+              { m: "copy" },
+              capW9,
+              F_EXACT9,
+              () => ratioP9
+            );
+          };
           const bq9 = qx(base);
-          const fB9 = fracOf(base);
-          const fP9 = fracOf(part);
+          const fBw9 = shadowFracViewIfNeeded9([base, part], base, ctx);
+          if (fBw9.kind === "refuse") return fBw9.err;
+          const fPw9 = shadowFracViewIfNeeded9([base, part], part, ctx);
+          if (fPw9.kind === "refuse") return fPw9.err;
+          const fB9 = fBw9;
+          const fP9 = fPw9;
           if (bq9.n === 0n) {
-            const fA0 = fracOf(aligned9);
+            const fA0v9 = shadowFracViewIfNeeded9([base, part, aligned9], aligned9, ctx);
+            if (fA0v9.kind === "refuse") return fA0v9.err;
+            const fA0 = fA0v9;
             const n0 = distributeTerms(fA0.num, fB9.den, t30w9);
             const d0 = distributeTerms(fA0.den, fB9.num, t30w9);
-            const z9 = divProjZero(n0, d0, base, ctx);
+            const ownedZ9 = ownWhatPctRatio9((legacyCtx9) => divProjZero(n0, d0, base, legacyCtx9));
+            if (ownedZ9.candidate) return publishCandidateRatio9(ownedZ9.rt);
+            const z9 = ownedZ9.rt;
             if (z9.t === "d") {
               const zq9 = z9;
               return routeScale9(ctx, "whatPctOfX100", { t: "p", ...qv(zq9.vx ?? decToRat(zq9.v)) }, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(zq9.vx ?? decToRat(zq9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
@@ -34349,7 +39710,7 @@ function evalAst(ast, env, ctx = {}) {
               return routeScale9(ctx, "whatPctOfX100", ratioPz9$, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "copy" }, capW9, F_EXACT9, () => ({
                 t: "p",
                 ...qv(rMul(qx(zc9), { n: 100n, d: 1n })),
-                ...zc9.terms && { terms: zc9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps })) },
+                ...zc9.terms && { terms: zc9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps, aux: false })) },
                 ...zc9.termsDen && { termsDen: zc9.termsDen },
                 ...capW9 && { capped: true }
               }));
@@ -34358,7 +39719,9 @@ function evalAst(ast, env, ctx = {}) {
           }
           const x9 = rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n });
           if (part.capped === true) return { t: "p", ...qv(x9), capped: true };
-          const fA9 = fracOf(aligned9);
+          const fA9v9 = shadowFracViewIfNeeded9([base, part, aligned9], aligned9, ctx);
+          if (fA9v9.kind === "refuse") return fA9v9.err;
+          const fA9 = fA9v9;
           const n9 = distributeTerms(fA9.num, fB9.den, t30w9);
           const d9 = distributeTerms(fA9.den, fB9.num, t30w9);
           if (n9 === null || d9 === null) {
@@ -34367,8 +39730,14 @@ function evalAst(ast, env, ctx = {}) {
           }
           const redQ9 = fracReduce({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [], terms: n9, termsDen: d9 }, t30w9);
           const xv9 = redQ9 !== null ? rMul(redQ9, { n: 100n, d: 1n }) : x9;
-          const ratioP9$ = { t: "p", ...qv(redQ9 !== null ? redQ9 : rDiv(qx(aligned9), bq9)) };
-          writeShadowSlots9(ratioP9$, slots9(n9, d9));
+          const makeRatioP9 = () => {
+            const ratioP9 = { t: "p", ...qv(redQ9 !== null ? redQ9 : rDiv(qx(aligned9), bq9)) };
+            writeShadowSlots9(ratioP9, slots9(n9, d9));
+            return ratioP9;
+          };
+          const ownedRatio9 = ownWhatPctRatio9(() => makeRatioP9());
+          if (ownedRatio9.candidate) return publishCandidateRatio9(ownedRatio9.rt);
+          const ratioP9$ = ownedRatio9.rt;
           return routeScale9(ctx, "whatPctOfX100", ratioP9$, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "copy" }, capW9, F_EXACT9, () => ({
             t: "p",
             ...qv(xv9),
@@ -34384,7 +39753,7 @@ function evalAst(ast, env, ctx = {}) {
         if (br2.n === 0n) return err("division-by-zero");
         return routeScale9(ctx, "whatPctOfX100", { t: "p", ...qv(rDiv(numRat(part), br2)) }, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(rDiv(numRat(part), br2), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
       })();
-      return capCoarse9(reemitFromShadow9(wpRes$9, ctx.monthToDays === "30", "whatPctOf", ctx.reemitObserver), [base, part], "whatPctOf");
+      return capCoarse9(reemitFromShadow9(wpRes$9, ctx.monthToDays === "30", "whatPctOf", ctx.reemitObserver, ctx.__candidateReemitObserver9), [base, part], "whatPctOf");
     }
     case "date": {
       let year = ast.year;
@@ -34428,7 +39797,8 @@ function evalAst(ast, env, ctx = {}) {
         }
         const cent = { n: 100n, d: 1n };
         if (value.t === "ts" && !value.c.years && !value.c.months && !value.c.weeks && !value.c.days) {
-          return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+          const out9 = { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+          return stampTimespan9(out9, authAbsorbZero9(value.foldA9));
         }
         const px = p2.vx ?? decToRat(p2.v);
         const denom = ast.sign === 1 ? rAdd(cent, px) : rSub(cent, px);
@@ -34437,7 +39807,12 @@ function evalAst(ast, env, ctx = {}) {
           if (ffm9 === null) return err("division-by-zero");
           const t30m0 = ctx.monthToDays === "30";
           const vm9 = value.t === "d" || value.t === "f" ? numRat(value) : value.t === "q" ? qx(value) : { n: 1n, d: 1n };
-          const fV9 = value.t === "q" ? fracOf(value) : { num: [{ x: vm9, comps: [], aux: rnorm(vm9).d !== 1n }], den: ONE_TERMS() };
+          let fV9 = value.t === "q" ? fracOf(value) : { num: [{ x: vm9, comps: [], aux: rnorm(vm9).d !== 1n }], den: ONE_TERMS() };
+          if (ctx.__convAuth9 === true && value.t === "q" && (value.terms !== void 0 || value.termsDen !== void 0)) {
+            const fvm9 = shadowFracA9(value, ctx);
+            if (fvm9.kind === "refuse") return fvm9.err;
+            fV9 = fvm9;
+          }
           const synth9 = { t: "q", v: new DecC(0), vx: { n: 0n, d: 1n }, dim: {}, symbol: "", comps: [], terms: ffm9.den };
           const nM0 = distributeTerms(fV9.num, ffm9.num, t30m0);
           const dM0 = distributeTerms(fV9.den, ffm9.den, t30m0);
@@ -34454,17 +39829,30 @@ function evalAst(ast, env, ctx = {}) {
           const ff9 = pctFactorFrac(p2, ast.sign === 1 ? "moreBase" : "lessBase", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(value, rMul(qx(value), factor), ff9, ctx, p2.capped === true || value.capped === true);
           const valM9 = value;
-          return routeScale9(ctx, "pctMoreWhat", valM9, factor, ctx.monthToDays === "30", { m: "uniform" }, p2.capped === true || valM9.capped === true, F_EXACT9, () => ({ ...valM9, ...qv(rMul(qx(valM9), factor)), ...scaleTerms(valM9, factor), ...(p2.capped === true || valM9.capped === true) && { capped: true } }));
+          return routeScale9(
+            ctx,
+            "pctMoreWhat",
+            valM9,
+            factor,
+            ctx.monthToDays === "30",
+            { m: "uniform" },
+            p2.capped === true || valM9.capped === true,
+            { proof: F_EXACT9, authoritySource: p2 },
+            () => ({ ...valM9, ...qv(rMul(qx(valM9), factor)), ...scaleTerms(valM9, factor), ...(p2.capped === true || valM9.capped === true) && { capped: true } })
+          );
         }
         if (value.t === "ts") {
-          if (!value.c.years && !value.c.months && !value.c.weeks && !value.c.days) return { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+          if (spanStructuralZero9(value)) {
+            const out9 = { t: "ts", c: { ...value.c }, ...(p2.capped === true || value.capped === true) && { capped: true } };
+            return stampTimespan9(out9, authAbsorbZero9(value.foldA9));
+          }
           const pv9 = pctFigure(p2, ctx.monthToDays === "30");
           if (pv9 === "irr") return err("inexact", TS_IRR_MSG);
           const den9 = ast.sign === 1 ? rAdd(cent, pv9) : rSub(cent, pv9);
           if (den9.n === 0n) return err("division-by-zero");
-          const s9 = tsScale(value, rDiv(cent, den9), ctx);
+          const s9 = tsScaleWithAuthority9(value, rDiv(cent, den9), p2, ctx);
           const capS9 = value.capped === true || p2.capped === true;
-          return capS9 && s9.t !== "e" ? { ...s9, capped: true } : s9;
+          return capTimespan9(s9, capS9);
         }
         {
           const ff9 = pctFactorFrac(p2, ast.sign === 1 ? "moreBase" : "lessBase", ctx.monthToDays === "30");
@@ -34474,7 +39862,7 @@ function evalAst(ast, env, ctx = {}) {
         }
         return { t: "d", ...qv(rMul(numRat(value), factor)), ...(p2.capped === true || value.capped === true) && { capped: true } };
       })();
-      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctMoreWhat", ctx.reemitObserver), [value], "pctMoreWhat");
+      return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctMoreWhat", ctx.reemitObserver, ctx.__candidateReemitObserver9), [value], "pctMoreWhat");
     }
     case "weekday": {
       const ref = referencePlainDate(ctx);
@@ -34538,49 +39926,105 @@ function evalAst(ast, env, ctx = {}) {
       }
       const count = Number(xr.n);
       const key = ast.unit + "s";
-      return { t: "ts", c: { [key]: count } };
+      const out9 = { t: "ts", c: { [key]: count } };
+      const spanOut9 = stampTimespan9(out9, authPreserve9(e.foldA9));
+      if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+        ctx.__b1ValueTransport9(
+          { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
+          "spanOutput",
+          e,
+          spanOut9
+        );
+      }
+      return spanOut9;
     }
     case "call": {
-      const evaluated9 = ast.args.map((argAst) => evalAst(argAst, env, ctx));
+      const b1FunctionBoundary9 = nextB1FunctionBoundary9(ctx);
+      const evaluated9 = callOperands9 === void 0 ? ast.args.map((argAst) => evalAst(argAst, env, ctx)) : [...callOperands9];
+      const boundedSqrtCapture9 = ctx.__b1ProductionCausal9 !== void 0 && (ast.fn === "sqrt" || ast.fn === "racine") && evaluated9.length === 1 ? b1CaptureOperand9(evaluated9[0], ctx.monthToDays === "30") : null;
+      if (boundedSqrtCapture9?.kind === "ok" && boundedSqrtCapture9.shadow.kind === "ok") {
+        const capturedInput9 = materializeB1CapturedOperand9(boundedSqrtCapture9);
+        if (capturedInput9 !== null) {
+          transportB1TransformOutput9(ctx, evaluated9[0], capturedInput9);
+          evaluated9[0] = capturedInput9;
+        }
+      }
+      const b1RawFunctionInputs9 = ctx.__b1ValueTransport9 === void 0 ? null : [...evaluated9];
       if (["log", "ln", "lb", "lg", "log10", "log2"].includes(ast.fn)) {
         for (let ax9 = 0; ax9 < evaluated9.length; ax9++) {
           const vx0 = evaluated9[ax9];
           if (vx0.t !== "q" || !dimIsEmpty(vx0.dim)) continue;
-          const vc0 = isCarrier(vx0) ? vx0 : foldIrrationalResidue(vx0, ctx.monthToDays === "30");
+          const vc0 = isCarrier(vx0) ? vx0 : foldIrrationalResidue(vx0, ctx.monthToDays === "30", ctx, "logExact");
           if (vc0.t !== "q" || !isCarrier(vc0)) continue;
           const e0 = (capFOf9(vx0)?.length ?? 0) > 0 ? null : engineExactRat(vc0, ctx.monthToDays === "30");
           if (e0 !== null) evaluated9[ax9] = { t: "d", ...qv(e0) };
         }
       }
+      const b1FunctionInputs9 = b1RawFunctionInputs9 === null ? null : [.../* @__PURE__ */ new Set([...b1RawFunctionInputs9, ...evaluated9])];
+      const finishB1FunctionOutput9 = (rawOutput9) => {
+        const boundedSpelling9 = ast.fn === "sqrt" ? "sqrt" : "racine";
+        const output9 = boundedSqrtCapture9?.kind === "ok" && boundedSqrtCapture9.shadow.kind === "ok" && rawOutput9.t === "d" && rawOutput9.capped === true && (capFOf9(rawOutput9)?.length ?? 0) > 0 ? b1TransformProduction9(ctx, {
+          site: "boundedNumeric",
+          host: "evalAstInner",
+          capture: boundedSqrtCapture9,
+          frameOp: { kind: "bounded-output", output: b1CaptureOperand9(rawOutput9, ctx.monthToDays === "30") },
+          meta: { kind: "bounded-numeric", op: "sqrt", spelling: boundedSpelling9 }
+        }, (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, void 0, void 0, evaluated9)) : rawOutput9;
+        if (b1FunctionInputs9 !== null && b1FunctionBoundary9 !== null) {
+          const attempt9 = { run: b1FunctionBoundary9.run, attempt: b1FunctionBoundary9.attempt };
+          for (const input9 of b1FunctionInputs9) {
+            ctx.__b1ValueTransport9(
+              attempt9,
+              "functionOutput",
+              input9,
+              output9,
+              b1FunctionBoundary9,
+              { kind: "function-output", fn: ast.fn, arity: evaluated9.length }
+            );
+          }
+        }
+        return output9;
+      };
       const firstErr9 = evaluated9.find((v9) => v9.t === "e");
-      if (firstErr9) return firstErr9;
+      if (firstErr9) return finishB1FunctionOutput9(firstErr9);
       if (ast.fn === "abs" || ast.fn === "min" || ast.fn === "max") {
         const fn$ = ast.fn;
         const t30$ = ctx.monthToDays === "30";
-        const res$ = fn$ === "abs" ? candidateAbs9(evaluated9[0], t30$) : candidateOrder9(evaluated9, fn$, t30$);
-        return routeOrder9(ctx, res$, evaluated9, () => legacyOrderFn9(fn$, evaluated9, t30$));
+        const res$ = fn$ === "abs" ? candidateAbs9(evaluated9[0], t30$, ctx) : candidateOrder9(evaluated9, fn$, t30$, ctx);
+        return finishB1FunctionOutput9(routeOrder9(ctx, res$, evaluated9, () => legacyOrderFn9(fn$, evaluated9, t30$)));
       }
       if (["sqrt", "racine", "log", "ln", "lb", "lg", "log10", "log2", "asin", "acos", "acosh", "atanh", "tan"].includes(ast.fn) && evaluated9.some((v9) => v9.capped === true)) {
-        return err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream");
+        return finishB1FunctionOutput9(err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream"));
       }
       if (["sqrt", "racine", "log", "ln", "lb", "lg", "log10", "log2", "asin", "acos"].includes(ast.fn) && evaluated9.length >= 1) {
         const d0 = evaluated9[0];
-        const dq0 = d0.t === "q" && dimIsEmpty(d0.dim) ? isCarrier(d0) ? d0 : foldIrrationalResidue(d0, ctx.monthToDays === "30") : null;
+        const dq0 = d0.t === "q" && dimIsEmpty(d0.dim) ? isCarrier(d0) ? d0 : foldIrrationalResidue(d0, ctx.monthToDays === "30", ctx, "domainProof") : null;
         const dqe0 = dq0 !== null && dq0.t === "q" && isCarrier(dq0) ? engineExactRat(dq0, ctx.monthToDays === "30") : null;
         if (dqe0 !== null) {
           if (ast.fn === "asin" || ast.fn === "acos") {
             const a0 = dqe0.n < 0n ? -dqe0.n : dqe0.n;
-            if (a0 > dqe0.d) return err("inexact", `${ast.fn} needs an argument in [-1, 1]`);
+            if (a0 > dqe0.d) return finishB1FunctionOutput9(err("inexact", `${ast.fn} needs an argument in [-1, 1]`));
           } else if (dqe0.n < 0n) {
-            return err("inexact", ast.fn === "sqrt" || ast.fn === "racine" ? "square root of a negative number" : `${ast.fn} needs a positive argument`);
+            return finishB1FunctionOutput9(err("inexact", ast.fn === "sqrt" || ast.fn === "racine" ? "square root of a negative number" : `${ast.fn} needs a positive argument`));
           } else if (dqe0.n === 0n && ast.fn !== "sqrt" && ast.fn !== "racine") {
-            return err("inexact", `${ast.fn} needs a positive argument`);
+            return finishB1FunctionOutput9(err("inexact", `${ast.fn} needs a positive argument`));
           }
           if (ast.fn === "asin" || ast.fn === "acos") {
             evaluated9[0] = { t: "d", ...qv(dqe0) };
           }
         } else if (dq0 !== null && dq0.t === "q" && isCarrier(dq0) && (dq0.terms !== void 0 || dq0.termsDen !== void 0)) {
-          const lift0 = (x0) => ({ t: "q", ...qv(x0), dim: {}, symbol: "", comps: [], terms: [{ x: x0, comps: [], aux: rnorm(x0).d !== 1n }] });
+          const lift0 = (x0) => {
+            const read0 = qv(x0);
+            return {
+              t: "q",
+              v: read0.v,
+              ...read0.vx !== void 0 && { vx: read0.vx },
+              dim: {},
+              symbol: "",
+              comps: [],
+              terms: [{ x: x0, comps: [], aux: rnorm(x0).d !== 1n }]
+            };
+          };
           const t30d = ctx.monthToDays === "30";
           const cmp0 = (b0) => fracCmpRT(dq0, lift0(b0), t30d);
           const structSign0 = (() => {
@@ -34607,20 +40051,20 @@ function evalAst(ast, env, ctx = {}) {
             const hi0 = cmp0({ n: 1n, d: 1n }) ?? structBound0(1n);
             const lo0 = cmp0({ n: -1n, d: 1n }) ?? structBound0(-1n);
             if (hi0 !== null && hi0 > 0 || lo0 !== null && lo0 < 0) {
-              return err("inexact", `${ast.fn} needs an argument in [-1, 1]`);
+              return finishB1FunctionOutput9(err("inexact", `${ast.fn} needs an argument in [-1, 1]`));
             }
             if (hi0 === null || lo0 === null) {
-              return err("inexact", "the domain cannot be proven for this value \u2014 its exact bound is undecided");
+              return finishB1FunctionOutput9(err("inexact", "the domain cannot be proven for this value \u2014 its exact bound is undecided"));
             }
           } else {
             const s0 = cmp0({ n: 0n, d: 1n }) ?? structSign0;
             if (s0 !== null && s0 < 0) {
-              return err("inexact", ast.fn === "sqrt" || ast.fn === "racine" ? "square root of a negative number" : `${ast.fn} needs a positive argument`);
+              return finishB1FunctionOutput9(err("inexact", ast.fn === "sqrt" || ast.fn === "racine" ? "square root of a negative number" : `${ast.fn} needs a positive argument`));
             }
             if (s0 === null) {
-              return err("inexact", "the sign of this value is not provable exactly \u2014 the domain would be decided from a rounded reading");
+              return finishB1FunctionOutput9(err("inexact", "the sign of this value is not provable exactly \u2014 the domain would be decided from a rounded reading"));
             }
-            if (s0 === 0 && ast.fn !== "sqrt" && ast.fn !== "racine") return err("inexact", `${ast.fn} needs a positive argument`);
+            if (s0 === 0 && ast.fn !== "sqrt" && ast.fn !== "racine") return finishB1FunctionOutput9(err("inexact", `${ast.fn} needs a positive argument`));
           }
         }
       }
@@ -34630,7 +40074,7 @@ function evalAst(ast, env, ctx = {}) {
         let v2 = evaluated9[ai9];
         if (v2.t === "q" && dimIsEmpty(v2.dim)) {
           const t30v9 = ctx.monthToDays === "30";
-          const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidueRaw(v2, t30v9);
+          const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidueRaw(v2, t30v9, ctx, "fnArgProbe");
           if (vFold9.t === "q" && isCarrier(vFold9)) {
             const exV9 = engineExactRat(vFold9, t30v9);
             if (exV9 !== null) {
@@ -34646,7 +40090,7 @@ function evalAst(ast, env, ctx = {}) {
                 }
               }
             } else if (!carrierFaithful(vFold9, t30v9)) {
-              return err("inexact", "this value\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
+              return finishB1FunctionOutput9(err("inexact", "this value\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision"));
             }
           }
         }
@@ -34654,7 +40098,7 @@ function evalAst(ast, env, ctx = {}) {
           const vOld$9 = v2;
           const fOld$9 = capFOf9(v2);
           const xOld$9 = qx(v2);
-          v2 = carrierNum(foldIrrationalResidueRaw(v2, ctx.monthToDays === "30"), ctx);
+          v2 = carrierNum(foldIrrationalResidueRaw(v2, ctx.monthToDays === "30", ctx, "fnArgUse"), ctx, "fnArg");
           if ((v2.t === "d" || v2.t === "f") && fOld$9 !== void 0 && fOld$9.length > 0 && xOld$9.n !== 0n) {
             const foldK$9 = rDiv(numRat(v2), xOld$9);
             const scF$9 = capFScale9(fOld$9, foldK$9);
@@ -34665,7 +40109,7 @@ function evalAst(ast, env, ctx = {}) {
           }
           void vOld$9;
         }
-        if (v2.t !== "d" && v2.t !== "f") return err("unsupported-pair", `${ast.fn}() needs plain numbers`);
+        if (v2.t !== "d" && v2.t !== "f") return finishB1FunctionOutput9(err("unsupported-pair", `${ast.fn}() needs plain numbers`));
         if (v2.capped === true) fnCapped9 = true;
         rts.push(v2);
       }
@@ -34675,7 +40119,7 @@ function evalAst(ast, env, ctx = {}) {
         res9 = exact;
         if ((res9.t === "d" || res9.t === "f") && rts.some((r9) => (capFOf9(r9)?.length ?? 0) > 0)) {
           const inE9 = capCompose9(ast.fn, rts);
-          if (!Array.isArray(inE9)) return inE9;
+          if (!Array.isArray(inE9)) return finishB1FunctionOutput9(inE9);
           if (inE9.length > 0) res9.capF = inE9;
         }
       } else if (TRANSCENDENTAL_FNS.has(ast.fn)) {
@@ -34690,10 +40134,10 @@ function evalAst(ast, env, ctx = {}) {
             const tol9 = mAbs9.plus(1).times("1e-38");
             const oddish9 = mAbs9.gt("9e15") || mAbs9.toNumber() % 2 === 1;
             if (oddish9 && dist9.lt(tol9)) {
-              return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
+              return finishB1FunctionOutput9(err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision"));
             }
           } catch {
-            return err("inexact", "the argument is too large to place against tan\u2019s poles");
+            return finishB1FunctionOutput9(err("inexact", "the argument is too large to place against tan\u2019s poles"));
           }
         }
         const sig9 = (x9) => {
@@ -34711,7 +40155,7 @@ function evalAst(ast, env, ctx = {}) {
             if (r9.capped !== true) continue;
             const x9 = numRat(r9);
             if (toDec(r9).e >= 35 && sig9(x9.n) + sig9(x9.d) <= 45) {
-              return err("inexact", "a capped argument this large cannot certify any digit of a transcendental result");
+              return finishB1FunctionOutput9(err("inexact", "a capped argument this large cannot certify any digit of a transcendental result"));
             }
           }
         }
@@ -34730,17 +40174,17 @@ function evalAst(ast, env, ctx = {}) {
         });
         const cap9 = ast.fn === "asin" || ast.fn === "acos" ? 1e3 : logFar9 ? 1e3 : 12e3;
         if (need9 > cap9) {
-          return err("inexact", `${ast.fn} of this argument needs more internal precision than the engine can certify (${cap9} digits) \u2014 near its sensitive points the rounding would decide the result`);
+          return finishB1FunctionOutput9(err("inexact", `${ast.fn} of this argument needs more internal precision than the engine can certify (${cap9} digits) \u2014 near its sensitive points the rounding would decide the result`));
         }
         const prec9 = need9;
         if ((ast.fn === "sin" || ast.fn === "cos" || ast.fn === "tan") && rts[0] !== void 0) {
           const eMag9 = toDec(rts[0]).e;
           if (eMag9 + prec9 > 1e3) {
-            return err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision");
+            return finishB1FunctionOutput9(err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision"));
           }
         }
         if ((ast.fn === "exp" || ast.fn === "sinh" || ast.fn === "cosh") && rts[0] !== void 0 && toDec(rts[0]).abs().gte(23100)) {
-          return err("inexact", "result exceeds the representable range (10^\xB19999)");
+          return finishB1FunctionOutput9(err("inexact", "result exceeds the representable range (10^\xB19999)"));
         }
         const tanhSat9 = ast.fn === "tanh" && rts[0] !== void 0 && toDec(rts[0]).abs().gte(250);
         const DecP9 = prec9 <= 100 ? DecHi : DecC.clone({ precision: prec9 });
@@ -34752,16 +40196,18 @@ function evalAst(ast, env, ctx = {}) {
         try {
           hi9 = tanhSat9 ? { t: "d", v: new DecC(toDec(rts[0]).isNegative() ? -1 : 1) } : applyFunction(ast.fn, rts.map(toHiP9));
         } catch {
-          return err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision");
+          return finishB1FunctionOutput9(err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision"));
         }
         if (hi9.t === "d" && isRepresentable(hi9.v)) {
           res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), vx: decToRat(hi9.v), capped: true };
           const inF9 = capCompose9(ast.fn, rts);
-          if (!Array.isArray(inF9)) return inF9;
+          if (!Array.isArray(inF9)) return finishB1FunctionOutput9(inF9);
           res9.capF = capFNorm9([
             ...inF9,
             { s: `${ast.fn}(${capArgKey9(rts)})@${prec9}`, x: { n: 1n, d: 1n }, b: rPowInt({ n: 10n, d: 1n }, (hi9.v.e ?? 0) + 1 - prec9) }
           ]);
+          const fnA9 = authJoin9(...rts.map((r9) => r9.foldA9));
+          if (fnA9 !== void 0) res9 = stampAuth9(res9, fnA9);
           ctx.capNotes?.push("function");
         } else {
           res9 = hi9;
@@ -34769,12 +40215,18 @@ function evalAst(ast, env, ctx = {}) {
       } else {
         res9 = applyFunction(ast.fn, rts.map(toDec));
       }
-      return fnCapped9 && (res9.t === "d" || res9.t === "f" || res9.t === "q" || res9.t === "p") ? { ...res9, capped: true } : res9;
+      let fnOut9 = res9;
+      if (fnCapped9 && (res9.t === "d" || res9.t === "f" || res9.t === "q" || res9.t === "p")) {
+        const fnCert9 = authPreserve9(res9.foldA9);
+        const fnCap9 = { ...res9, capped: true };
+        fnOut9 = fnCert9 !== void 0 ? stampAuth9(fnCap9, fnCert9) : fnCap9;
+      }
+      return finishB1FunctionOutput9(fnOut9);
     }
     case "fact": {
       let e = evalAst(ast.e, env, ctx);
       if (e.t === "e") return e;
-      if (e.t === "q") e = carrierNum(foldIrrationalResidue(e, ctx.monthToDays === "30"), ctx);
+      if (e.t === "q") e = carrierNum(foldIrrationalResidue(e, ctx.monthToDays === "30", ctx, "factorial"), ctx, "factorial");
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair", "factorial needs a plain number");
       if (e.capped === true) return err("inexact", "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream");
       if (numRat(e).d !== 1n) return err("inexact", "factorial needs a whole number \u2265 0");
@@ -34798,7 +40250,10 @@ function evalAst(ast, env, ctx = {}) {
             const k9 = rPowInt(rDiv(bridged(target), bridged(cal9.def)), -cal9.exp);
             return {
               x: rMul(t9.x, k9),
-              comps: t9.comps.map((c9) => c9 === cal9 ? { def: target, exp: cal9.exp } : c9)
+              comps: t9.comps.map((c9) => c9 === cal9 ? { def: target, exp: cal9.exp } : c9),
+              // 5b-septies: aux was OMITTED (undefined = falsy) — explicit
+              // byte-identical form; the whitening stays a catalogued fact
+              aux: false
             };
           });
           const num = e.rate.num;
@@ -34867,15 +40322,57 @@ function evalAst(ast, env, ctx = {}) {
           return err("inexact", "timespan exceeds the safe range");
         }
         const days = Number(daysBig);
-        return { t: "ts", c: days === 0 ? {} : { days }, ...e.capped === true && { capped: true } };
+        const converted9 = { t: "ts", c: days === 0 ? {} : { days }, ...e.capped === true && { capped: true } };
+        return stampTimespan9(converted9, authPreserve9(e.foldA9));
       })();
-      return capCoarse9(csRes$9, [e], "convertSpan");
+      const convertedSpan9 = capCoarse9(csRes$9, [e], "convertSpan");
+      if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+        ctx.__b1ValueTransport9(
+          { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
+          "convertOutput",
+          e,
+          convertedSpan9
+        );
+      }
+      return convertedSpan9;
     }
     case "unit": {
-      const e = promoteShadowScalar9(evalAst(ast.e, env, ctx));
+      const e = promoteShadowScalar9(inputRT9 ?? evalAst(ast.e, env, ctx));
       if (e.t === "e") return e;
       const def = lookupUnit(ast.word);
       if (!def) return err("not-understood", `\u201C${ast.word}\u201D is not a registered unit or currency`);
+      if (ctx.__b1ProductionCausal9 !== void 0 && (e.t === "d" || e.t === "f" || e.t === "q" && dimIsEmpty(e.dim))) {
+        const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+        const capturedInput9 = materializeB1CapturedOperand9(captured9);
+        if (capturedInput9 !== null) transportB1TransformOutput9(ctx, e, capturedInput9);
+        const unitOne9 = stampAuth9({
+          ...mkQ({ n: 1n, d: 1n }, def),
+          comps: unitComps(ast.word) ?? [{ def, exp: 1 }]
+        }, AUTH9);
+        const target9 = b1CaptureOperand9(unitOne9, ctx.monthToDays === "30");
+        if (def.affine !== void 0 && def.affine.b !== 0n) {
+          const scale9 = rnorm({ n: def.affine.a, d: def.affine.c });
+          const offset9 = rnorm({ n: def.affine.b, d: def.affine.c });
+          return b1TransformProduction9(ctx, {
+            site: "attachUnit",
+            host: "evalAst",
+            capture: captured9,
+            frameOp: { kind: "affine-attach", unit: target9, scale: scale9, offset: offset9 },
+            meta: { kind: "affine-attach", scale: scale9, offset: offset9 }
+          }, (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, void 0, e));
+        }
+        return b1TransformProduction9(ctx, {
+          site: "attachUnit",
+          host: "evalAst",
+          capture: captured9,
+          frameOp: { kind: "attach-unit", unit: target9 },
+          meta: { kind: "reframe" }
+        }, (legacyCtx9) => {
+          const out9 = evalAstInner(ast, env, legacyCtx9, void 0, e);
+          const authority9 = authPreserve9(e.foldA9);
+          return out9.t !== "e" && authority9 !== void 0 && !hasShadowFromRT(out9) ? stampAuth9(out9, authority9) : out9;
+        });
+      }
       if (e.t === "d" || e.t === "f") {
         const x2 = e.t === "f" ? rnorm({ n: e.n, d: e.d }) : e.vx ?? decToRat(e.v);
         const comps = unitComps(ast.word) ?? [{ def, exp: 1 }];
@@ -34885,32 +40382,113 @@ function evalAst(ast, env, ctx = {}) {
           const one = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
           const uq9 = combineQuantities(one, raw, "*", ctx);
           const uq8 = capU9 && uq9.capped !== true && uq9.t !== "e" ? { ...uq9, capped: true } : uq9;
-          return uq8.t === "e" ? uq8 : capCopy9(uq8, e);
+          const rawAttach9 = uq8.t === "e" ? uq8 : capCopy9(uq8, e);
+          if (ctx.__b1Transform9 === void 0 || rawAttach9.t === "e") return rawAttach9;
+          const structuredAuthority9 = authPreserve9(e.foldA9);
+          const candidateAttach9 = structuredAuthority9 !== void 0 && !hasShadowFromRT(rawAttach9) ? stampAuth9(rawAttach9, structuredAuthority9) : rawAttach9;
+          ctx.__b1Capture9?.("transform");
+          const captured92 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+          const unitOne92 = stampAuth9({ ...raw, ...qv({ n: 1n, d: 1n }) }, AUTH9);
+          const target92 = b1CaptureOperand9(unitOne92, ctx.monthToDays === "30");
+          const attachedCandidate9 = b1Transform9(ctx, {
+            site: "attachUnit",
+            host: "evalAst",
+            capture: captured92,
+            out: candidateAttach9,
+            frameOp: { kind: "attach-unit", unit: target92 },
+            meta: { kind: "reframe" }
+          });
+          return attachedCandidate9;
         }
-        return capCopy9({ t: "q", ...qv(x2), dim: def.dim, symbol: def.symbol, def, comps, ...capU9 && { capped: true } }, e);
+        const uA9 = authPreserve9(e.foldA9);
+        const shownUnit9 = qv(x2);
+        const unitValue9 = e.t === "d" ? { v: e.v, ...e.vx !== void 0 && { vx: e.vx } } : { v: shownUnit9.v, ...shownUnit9.vx !== void 0 && { vx: shownUnit9.vx } };
+        const uOut9 = { t: "q", ...unitValue9, dim: def.dim, symbol: def.symbol, def, comps, ...capU9 && { capped: true } };
+        const legacyOut9 = capCopy9(uA9 !== void 0 ? stampAuth9(uOut9, uA9) : uOut9, e);
+        if (ctx.__b1Transform9 === void 0) return legacyOut9;
+        ctx.__b1Capture9?.("transform");
+        const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+        const { vx: _unitVx9, ...unitShell9 } = uOut9;
+        const unitOne9 = stampAuth9({ ...unitShell9, v: new DecC(1) }, AUTH9);
+        const target9 = b1CaptureOperand9(unitOne9, ctx.monthToDays === "30");
+        if (def.affine === void 0 || def.affine.b === 0n) {
+          return transportB1TransformOutput9(ctx, e, b1Transform9(ctx, {
+            site: "attachUnit",
+            host: "evalAst",
+            capture: captured9,
+            out: legacyOut9,
+            frameOp: { kind: "attach-unit", unit: target9 },
+            meta: { kind: "reframe" }
+          }));
+        }
+        const scale9 = rnorm({ n: def.affine.a, d: def.affine.c });
+        const offset9 = rnorm({ n: def.affine.b, d: def.affine.c });
+        return transportB1TransformOutput9(ctx, e, b1Transform9(ctx, {
+          site: "attachUnit",
+          host: "evalAst",
+          capture: captured9,
+          out: legacyOut9,
+          frameOp: { kind: "affine-attach", unit: target9, scale: scale9, offset: offset9 },
+          meta: { kind: "affine-attach", scale: scale9, offset: offset9 }
+        }));
       }
       if (e.t === "q" && dimIsEmpty(e.dim)) {
         if (def.affine !== void 0 && def.affine.b !== 0n && (e.terms !== void 0 || e.termsDen !== void 0)) {
           const { a: aAff9, b: bAff9, c: cAff9 } = def.affine;
           const t30a9 = ctx.monthToDays === "30";
-          const fe9 = fracOf(e);
+          const fev9 = shadowFracA9(e, ctx);
+          if (fev9.kind === "refuse") return fev9.err;
+          const fe9 = fev9;
           const scaleX9 = (list9, k9) => list9.map((t9) => ({ ...t9, x: rMul(t9.x, { n: k9, d: 1n }), comps: t9.comps.map((c9) => ({ ...c9 })) }));
           const kNum9 = mergeTerms(scaleX9(fe9.num, aAff9), scaleX9(fe9.den, bAff9), 1n, t30a9);
           const kDen9 = scaleX9(fe9.den, cAff9);
-          return capCopy9(attachFrac(mkQ(qx(e), def), kNum9, kDen9), e);
+          const legacyOut9 = capCopy9(attachFrac(mkQ(qx(e), def), kNum9, kDen9), e);
+          if (ctx.__b1Transform9 === void 0) return legacyOut9;
+          ctx.__b1Capture9?.("transform");
+          const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+          const unitOne9 = stampAuth9(mkQ({ n: 1n, d: 1n }, def), AUTH9);
+          const target9 = b1CaptureOperand9(unitOne9, ctx.monthToDays === "30");
+          const scale9 = rnorm({ n: aAff9, d: cAff9 });
+          const offset9 = rnorm({ n: bAff9, d: cAff9 });
+          return b1Transform9(ctx, {
+            site: "attachUnit",
+            host: "evalAst",
+            capture: captured9,
+            out: legacyOut9,
+            frameOp: { kind: "affine-attach", unit: target9, scale: scale9, offset: offset9 },
+            meta: { kind: "affine-attach", scale: scale9, offset: offset9 }
+          });
         }
         const uq9 = { t: "q", v: new DecC(1), dim: def.dim, symbol: def.symbol, def, comps: unitComps(ast.word) ?? [{ def, exp: 1 }] };
         const att9 = combineQuantities(e, uq9, "*", ctx);
         if (att9.t === "e") return att9;
         const att8 = e.capped === true && att9.capped !== true ? { ...att9, capped: true } : att9;
+        const ownedAtt9 = capCopy9(att8, e);
+        const finishAttachUnit9 = (legacyOut9) => {
+          if (ctx.__b1Transform9 === void 0) return legacyOut9;
+          ctx.__b1Capture9?.("transform");
+          const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
+          const exactUnit9 = stampAuth9(uq9, AUTH9);
+          const target9 = b1CaptureOperand9(exactUnit9, ctx.monthToDays === "30");
+          return b1Transform9(ctx, {
+            site: "attachUnit",
+            host: "evalAst",
+            capture: captured9,
+            out: legacyOut9,
+            frameOp: { kind: "attach-unit", unit: target9 },
+            meta: { kind: "reframe" }
+          });
+        };
         if (att8.t === "q" && (e.terms !== void 0 || e.termsDen !== void 0)) {
           const t30u9 = ctx.monthToDays === "30";
-          const fe9 = fracOf(e);
+          const feu9 = shadowFracA9(e, ctx);
+          if (feu9.kind === "refuse") return feu9.err;
+          const fe9 = feu9;
           const uComps9 = unitComps(ast.word) ?? [{ def, exp: 1 }];
           const num9 = distributeTerms(fe9.num, [{ x: { n: 1n, d: 1n }, comps: uComps9.map((c9) => ({ ...c9 })), aux: false }], t30u9);
-          if (num9 !== null) return capCopy9(attachFrac(att8, num9, fe9.den), e);
+          if (num9 !== null) return finishAttachUnit9(capCopy9(attachFrac(ownedAtt9, num9, fe9.den), e));
         }
-        return capCopy9(att8, e);
+        return finishAttachUnit9(ownedAtt9);
       }
       return err("unsupported-pair", `cannot attach the unit \u201C${ast.word}\u201D here`);
     }
@@ -34960,39 +40538,211 @@ function evalAst(ast, env, ctx = {}) {
           ...rate && { rate },
           comps: tComps
         };
-        if (e.symbol === symbol) return { ...template, ...qv(qx(e)), ...e.terms && { terms: e.terms }, ...e.termsDen && { termsDen: e.termsDen }, chosen: true, ...e.capped === true && { capped: true } };
+        if (e.symbol === symbol) {
+          return convOut9(ctx, e, { ...template, v: e.v, ...e.vx && { vx: e.vx }, ...e.terms && { terms: e.terms }, ...e.termsDen && { termsDen: e.termsDen }, chosen: true, ...e.capped === true && { capped: true } });
+        }
         const aligned = alignForAdd(template, e, ctx);
         if (aligned.t === "e") return aligned;
-        return { ...aligned, chosen: true, ...e.capped === true && { capped: true } };
+        return convOut9(ctx, aligned, { ...aligned, chosen: true, ...e.capped === true && { capped: true } });
       })();
-      return capCoarse9(res$9, [e], "convert");
+      return convOut9(ctx, res$9, capCoarse9(res$9, [e], "convert"));
     }
     case "bin": {
-      let l2 = evalAst(ast.l, env, ctx);
-      let r3 = evalAst(ast.r, env, ctx);
-      if (l2.t === "e") return l2;
-      if (r3.t === "e") return r3;
-      {
-        const hasShadow$ = (o2) => (o2.t === "d" || o2.t === "f") && (o2.terms !== void 0 || o2.termsDen !== void 0);
-        if ((ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/") && (hasShadow$(l2) || hasShadow$(r3))) {
-          const toCarrier$ = (o2) => {
-            if (o2.t !== "d" && o2.t !== "f") return o2;
-            const o9 = o2;
-            const base9 = o2.t === "d" ? { v: o9.v, ...o9.vx && { vx: o9.vx } } : qv(numRat(o2));
-            return {
-              t: "q",
-              ...base9,
-              dim: {},
-              symbol: "",
-              comps: [],
-              ...o9.terms && { terms: o9.terms },
-              ...o9.termsDen && { termsDen: o9.termsDen },
-              ...o9.capF && { capF: o9.capF },
-              ...o9.capped === true && { capped: true }
-            };
-          };
-          l2 = toCarrier$(l2);
-          r3 = toCarrier$(r3);
+      const b1BinaryBoundary9 = nextB1BinaryBoundary9(ctx);
+      let l2 = binaryOperands9 === void 0 ? evalAst(ast.l, env, ctx) : binaryOperands9[0];
+      let r3 = binaryOperands9 === void 0 ? evalAst(ast.r, env, ctx) : binaryOperands9[1];
+      if (l2.t === "e") return emitB1BinaryOutput9(ctx, b1BinaryBoundary9, [l2, r3], l2);
+      if (r3.t === "e") return emitB1BinaryOutput9(ctx, b1BinaryBoundary9, [l2, r3], r3);
+      const eagerOperands9 = [l2, r3];
+      let powerCapture9;
+      let powerExponentCapture9;
+      let powerExponent9;
+      let boundedPower9 = false;
+      let percentageCapture9;
+      if (ctx.__b1CausalUnary9 === true && (ctx.__b1Transform9 !== void 0 || ctx.__b1ProductionCausal9 !== void 0) && ast.op === "^") {
+        const pool9 = createUnitDefSnapshotPool9();
+        const left9 = b1CaptureOperand9(l2, ctx.monthToDays === "30", pool9);
+        const right9 = left9.kind === "unavailable" ? Object.freeze({ kind: "unavailable", stage: "outer" }) : b1CaptureOperand9(r3, ctx.monthToDays === "30", pool9);
+        const operation9 = left9.kind === "unavailable" ? Object.freeze({
+          kind: "unavailable",
+          side: "left",
+          stage: left9.stage,
+          ...left9.reason !== void 0 && { reason: left9.reason }
+        }) : right9.kind === "unavailable" ? Object.freeze({
+          kind: "unavailable",
+          side: "right",
+          stage: right9.stage,
+          ...right9.reason !== void 0 && { reason: right9.reason }
+        }) : Object.freeze({ kind: "ok", left: left9, right: right9 });
+        const eligibility9 = ctx.__b1EligibilityPartition9 === true ? (() => {
+          if (ctx.__b1OperationEligibility9 === void 0) {
+            throw new Error("B1 operation eligibility authority is missing in the E0 world");
+          }
+          return ctx.__b1OperationEligibility9(operation9);
+        })() : null;
+        if (eligibility9 === null && (left9.kind === "unavailable" || right9.kind === "unavailable")) {
+          return emitB1BinaryOutput9(
+            ctx,
+            b1BinaryBoundary9,
+            [l2, r3],
+            { t: "e", code: "b1-compose-refused", detail: "transform:capture-unavailable" },
+            b1BinaryAuthoritySnapshot9(operation9)
+          );
+        }
+        if (eligibility9 === null && left9.kind === "ok" && right9.kind === "ok") {
+          l2 = left9.rt;
+          r3 = right9.rt;
+        }
+        const ownsPower9 = eligibility9 === null ? right9.kind === "ok" && right9.exactRead?.d === 1n : right9.kind === "ok" && right9.exactRead?.d === 1n || eligibility9.kind !== "mechanism";
+        if (ownsPower9) {
+          powerCapture9 = left9;
+          powerExponentCapture9 = right9;
+          powerExponent9 = right9.kind === "ok" ? right9.exactRead : null;
+        }
+        if (ctx.__b1ProductionCausal9 !== void 0 && powerCapture9 !== void 0 && powerExponentCapture9 !== void 0) {
+          const exponent9 = powerExponent9 ?? null;
+          boundedPower9 = powerCapture9.kind === "ok" && (powerCapture9.boundedCause !== void 0 || exponent9 !== null && exponent9.d !== 1n && eligibility9?.kind === "causal");
+          if (!boundedPower9) {
+            return b1TransformProduction9(ctx, {
+              site: "power",
+              host: "evalAst",
+              capture: powerCapture9,
+              frameOp: exponent9?.d === 1n ? { kind: "pow", exponent: exponent9 } : { kind: "refuse", code: "b1-transform-refused", detail: "power:non-integer-exponent" },
+              meta: { kind: "causal-unary", op: "pow", exponent: exponent9, exponentCapture: powerExponentCapture9 }
+            }, (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, eagerOperands9));
+          }
+        }
+        if (powerCapture9 !== void 0 && powerExponentCapture9 !== void 0 && powerExponent9 !== null && powerExponent9 !== void 0 && powerExponent9.d === 1n && powerExponent9.n < 0n && left9.kind === "ok" && left9.exactRead?.n === 0n) {
+          const legacyZero9 = ctx.__b1EligibilityPartition9 !== true ? err("not-understood", "exact arithmetic: zero denominator") : (() => {
+            const legacyCtx9 = ctx.__convAuth9 === true ? { ...ctx, __convAuth9: false } : ctx;
+            const exponentInt9 = Number(powerExponent9.n);
+            const fraction9 = l2.t === "q" ? fracOf(l2) : null;
+            return divProjZero(
+              exponentInt9 === -1 && fraction9 !== null ? fraction9.den : null,
+              exponentInt9 === -1 && fraction9 !== null ? fraction9.num : null,
+              l2,
+              legacyCtx9
+            );
+          })();
+          ctx.__b1Capture9?.("power");
+          return emitB1BinaryOutput9(ctx, b1BinaryBoundary9, [l2, r3], b1Transform9(ctx, {
+            site: "power",
+            host: "evalAst",
+            capture: left9,
+            out: legacyZero9,
+            frameOp: { kind: "pow", exponent: powerExponent9 },
+            meta: { kind: "causal-unary", op: "pow", exponent: powerExponent9, exponentCapture: powerExponentCapture9 }
+          }), b1BinaryAuthoritySnapshot9(operation9));
+        }
+      }
+      if (ctx.__b1ProductionCausal9 !== void 0 && (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/")) {
+        const pLeft9 = l2.t === "p";
+        const pRight9 = r3.t === "p";
+        const plainLeft9 = l2.t === "d" || l2.t === "f";
+        const plainRight9 = r3.t === "d" || r3.t === "f";
+        const ownsPercentage9 = pLeft9 && pRight9 || (ast.op === "*" || ast.op === "/") && (pLeft9 && plainRight9 || plainLeft9 && pRight9);
+        if (ownsPercentage9) {
+          const percentageOp9 = ast.op;
+          const owned9 = b1PreOwn9(
+            ctx,
+            { site: "evalAst-percentage", host: "evalAst", op: percentageOp9 },
+            l2,
+            r3,
+            (capture9) => b1PercentagePrepared9(capture9, percentageOp9, true),
+            (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, eagerOperands9)
+          );
+          if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_PERCENTAGE_OWNER_MISSING");
+          return emitB1BinaryOutput9(
+            ctx,
+            b1BinaryBoundary9,
+            [l2, r3],
+            owned9.published,
+            b1BinaryAuthoritySnapshot9(
+              owned9.call.capture,
+              percentageOp9,
+              owned9.decision.output === B1_MECHANISM_ROUTE9
+            ),
+            percentageOp9
+          );
+        }
+      }
+      if (ctx.__b1Compose9 !== void 0 && (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/")) {
+        const pLeft9 = l2.t === "p";
+        const pRight9 = r3.t === "p";
+        const plainLeft9 = l2.t === "d" || l2.t === "f";
+        const plainRight9 = r3.t === "d" || r3.t === "f";
+        const ownsPercentage9 = pLeft9 && pRight9 || (ast.op === "*" || ast.op === "/") && (pLeft9 && plainRight9 || plainLeft9 && pRight9);
+        if (ownsPercentage9) {
+          ctx.__b1Capture9?.("compose");
+          percentageCapture9 = b1OperationCaptureInPool9(
+            l2,
+            r3,
+            ctx.monthToDays === "30",
+            createUnitDefSnapshotPool9()
+          );
+          if (percentageCapture9.kind !== "ok") {
+            return emitB1BinaryOutput9(
+              ctx,
+              b1BinaryBoundary9,
+              [l2, r3],
+              { t: "e", code: "b1-compose-refused", detail: "capture-unavailable:percentage" },
+              b1BinaryAuthoritySnapshot9(percentageCapture9)
+            );
+          }
+          if (ctx.__b1EligibilityPartition9 !== true) {
+            l2 = percentageCapture9.left.rt;
+            r3 = percentageCapture9.right.rt;
+          }
+        }
+      }
+      if ((ctx.__b1ProductionCausal9 !== void 0 || ctx.__b1Router9 !== void 0 || ctx.__b1ScalarCompose9 !== void 0 || ctx.__b1Compose9 !== void 0 || ctx.__b1ValueTransport9 !== void 0) && (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/") || (powerCapture9 !== void 0 || ctx.__b1ValueTransport9 !== void 0) && ast.op === "^" || ctx.__b1ValueTransport9 !== void 0 && ast.op === "mod") {
+        const initialAuthoritySnapshot9 = percentageCapture9 !== void 0 ? b1BinaryAuthoritySnapshot9(percentageCapture9) : powerCapture9 !== void 0 && powerExponentCapture9 !== void 0 ? Object.freeze({
+          left: powerCapture9.kind === "ok" ? powerCapture9.authority : void 0,
+          right: powerExponentCapture9.kind === "ok" ? powerExponentCapture9.authority : void 0,
+          algebraVerdict: void 0
+        }) : void 0;
+        (ctx.__b1Stack9 ??= []).push({
+          ast9: ast,
+          op9: ast.op,
+          l9: l2,
+          r9: r3,
+          handled9: false,
+          ...b1BinaryBoundary9 !== null && { binaryBoundary9: b1BinaryBoundary9 },
+          ...initialAuthoritySnapshot9 !== void 0 && { authoritySnapshot9: initialAuthoritySnapshot9 },
+          ...ast.op === "^" && powerExponent9 !== void 0 && { exponent9: powerExponent9 },
+          ...ast.op === "^" && powerCapture9 !== void 0 && { unaryCapture9: powerCapture9 },
+          ...ast.op === "^" && powerExponentCapture9 !== void 0 && { exponentCapture9: powerExponentCapture9 },
+          ...ast.op === "^" && boundedPower9 && { boundedPower9: true },
+          ...percentageCapture9 !== void 0 && { percentageCapture9 }
+        });
+      }
+      if (ctx.__b1ProductionCausal9 !== void 0 && boundedPower9 && powerCapture9?.kind === "ok" && powerCapture9.exactRead !== null && powerCapture9.exactRead.n < 0n && powerExponentCapture9 !== void 0 && !capturedExponentFaithful9(powerExponentCapture9, ctx.monthToDays === "30")) {
+        return err("inexact", "this exponent\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
+      }
+      if (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/" || ast.op === "mod") {
+        const lp9 = promoteShadowScalar9(l2);
+        const rp9 = promoteShadowScalar9(r3);
+        if (lp9 !== l2 || rp9 !== r3) {
+          if (ast.op === "mod") {
+            l2 = lp9;
+            r3 = rp9;
+          } else {
+            const causalPartner9 = ctx.__b1ScalarCompose9 !== void 0 || ctx.__b1ProductionCausal9 !== void 0;
+            l2 = lp9 === l2 ? promoteShadowScalar9(l2, true, causalPartner9) : lp9;
+            r3 = rp9 === r3 ? promoteShadowScalar9(r3, true, causalPartner9) : rp9;
+          }
+        }
+      }
+      if (ctx.__b1ProductionCausal9 !== void 0 && (ast.op === "+" || ast.op === "-" || ast.op === "*" || ast.op === "/") && (l2.t === "d" || l2.t === "f") && (r3.t === "d" || r3.t === "f")) {
+        const call9 = scalarB1Call9(ctx, ast.op, l2, r3);
+        if (call9 !== null) {
+          const decision9 = ctx.__b1ProductionCausal9.scalar(call9);
+          return b1PublishProduction9(
+            ctx,
+            { kind: "scalar", call: call9 },
+            decision9,
+            (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, eagerOperands9)
+          );
         }
       }
       const lPreCap9 = l2.capped === true;
@@ -35000,7 +40750,7 @@ function evalAst(ast, env, ctx = {}) {
       if (ast.op === "^" && r3.t === "q" && dimIsEmpty(r3.dim)) {
         const rProv$9 = capFOf9(r3);
         const rxOld$9 = qx(r3);
-        const rQ9 = foldIrrationalResidueRaw(r3, ctx.monthToDays === "30");
+        const rQ9 = foldIrrationalResidueRaw(r3, ctx.monthToDays === "30", ctx, "expRaw");
         const rE9 = rQ9.t === "q" && isCarrier(rQ9) ? engineExactRat(rQ9, ctx.monthToDays === "30") : null;
         if (rQ9.t === "q" && isCarrier(rQ9) && rE9 === null && !carrierFaithful(rQ9, ctx.monthToDays === "30")) {
           return err("inexact", "this exponent\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
@@ -35008,7 +40758,7 @@ function evalAst(ast, env, ctx = {}) {
         if (rE9 !== null) {
           r3 = { t: "d", ...qv(rE9) };
         } else {
-          const rF9 = carrierNum(rQ9.t === "q" ? rQ9 : r3, ctx);
+          const rF9 = carrierNum(rQ9.t === "q" ? rQ9 : r3, ctx, "exponent");
           if (rF9.t === "e") return rF9;
           if (rF9.t === "d" || rF9.t === "f") r3 = rF9;
         }
@@ -35021,7 +40771,7 @@ function evalAst(ast, env, ctx = {}) {
         }
       }
       if (ast.op === "^" && l2.t === "q" && dimIsEmpty(l2.dim) && (r3.t === "d" || r3.t === "f") && numRat(r3).d !== 1n) {
-        const lQ9 = foldIrrationalResidue(l2, ctx.monthToDays === "30");
+        const lQ9 = foldIrrationalResidue(l2, ctx.monthToDays === "30", ctx, "powBase");
         const lE9 = lQ9.t === "q" && isCarrier(lQ9) ? engineExactRat(lQ9, ctx.monthToDays === "30") : null;
         if (lQ9.t === "q" && isCarrier(lQ9) && lE9 === null && !carrierFaithful(lQ9, ctx.monthToDays === "30")) {
           return err("inexact", "this base\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
@@ -35029,7 +40779,7 @@ function evalAst(ast, env, ctx = {}) {
         if (lE9 !== null) {
           l2 = { t: "d", ...qv(lE9) };
         } else {
-          const lF9 = carrierNum(lQ9.t === "q" ? lQ9 : l2, ctx);
+          const lF9 = carrierNum(lQ9.t === "q" ? lQ9 : l2, ctx, "fracPowBase");
           if (lF9.t === "e") return lF9;
           if (lF9.t === "d" || lF9.t === "f") l2 = lF9;
         }
@@ -35054,23 +40804,58 @@ function evalAst(ast, env, ctx = {}) {
               case "+": {
                 const k9 = rDiv(rAdd(cent, p2), cent);
                 if (ffQ9 !== null) return applyFracFactor(l2, rMul(qx(l2), k9), ffQ9, ctx, r3.capped === true);
-                return routeScale9(ctx, "qPlusPct", l2, k9, ctx.monthToDays === "30", { m: "uniform" }, r3.capped === true, affineFactor9(r3, k9, { n: 1n, d: 100n }, "qppmul"), () => ({ ...l2, ...qv(rMul(qx(l2), k9)), ...scaleTerms(l2, k9), ...r3.capped === true && { capped: true } }));
+                return routeScale9(
+                  ctx,
+                  "qPlusPct",
+                  l2,
+                  k9,
+                  ctx.monthToDays === "30",
+                  { m: "uniform" },
+                  r3.capped === true,
+                  { proof: affineFactor9(r3, k9, { n: 1n, d: 100n }, "qppmul"), authoritySource: r3 },
+                  () => ({ ...l2, ...qv(rMul(qx(l2), k9)), ...scaleTerms(l2, k9), ...r3.capped === true && { capped: true } })
+                );
               }
               case "-": {
                 const k9 = rDiv(rSub(cent, p2), cent);
                 if (ffQ9 !== null) return applyFracFactor(l2, rMul(qx(l2), k9), ffQ9, ctx, r3.capped === true);
-                return routeScale9(ctx, "qMinusPct", l2, k9, ctx.monthToDays === "30", { m: "uniform" }, r3.capped === true, affineFactor9(r3, k9, { n: -1n, d: 100n }, "qmpmul"), () => ({ ...l2, ...qv(rMul(qx(l2), k9)), ...scaleTerms(l2, k9), ...r3.capped === true && { capped: true } }));
+                return routeScale9(
+                  ctx,
+                  "qMinusPct",
+                  l2,
+                  k9,
+                  ctx.monthToDays === "30",
+                  { m: "uniform" },
+                  r3.capped === true,
+                  { proof: affineFactor9(r3, k9, { n: -1n, d: 100n }, "qmpmul"), authoritySource: r3 },
+                  () => ({ ...l2, ...qv(rMul(qx(l2), k9)), ...scaleTerms(l2, k9), ...r3.capped === true && { capped: true } })
+                );
               }
               case "*": {
                 const k9 = rDiv(p2, cent);
                 if (ffQ9 !== null) return applyFracFactor(l2, rMul(qx(l2), k9), ffQ9, ctx, r3.capped === true);
-                return routeScale9(ctx, "qTimesPct", l2, k9, ctx.monthToDays === "30", { m: "uniform" }, r3.capped === true, pctFactor9(r3, { n: 1n, d: 100n }, "qtpmul"), () => ({ ...l2, ...qv(rMul(qx(l2), k9)), ...scaleTerms(l2, k9), ...r3.capped === true && { capped: true } }));
+                return routeScale9(
+                  ctx,
+                  "qTimesPct",
+                  l2,
+                  k9,
+                  ctx.monthToDays === "30",
+                  { m: "uniform" },
+                  r3.capped === true,
+                  { proof: pctFactor9(r3, { n: 1n, d: 100n }, "qtpmul"), authoritySource: r3 },
+                  () => ({ ...l2, ...qv(rMul(qx(l2), k9)), ...scaleTerms(l2, k9), ...r3.capped === true && { capped: true } })
+                );
               }
               case "/": {
                 if (p2.n === 0n) {
                   if (ffQ9 === null) return err("division-by-zero");
                   const t30z = ctx.monthToDays === "30";
-                  const fl0 = fracOf(l2);
+                  let fl0 = fracOf(l2);
+                  if (ctx.__convAuth9 === true && (l2.terms !== void 0 || l2.termsDen !== void 0)) {
+                    const flz9 = shadowFracA9(l2, ctx);
+                    if (flz9.kind === "refuse") return flz9.err;
+                    fl0 = flz9;
+                  }
                   const n0 = distributeTerms(fl0.num, ffQ9.num, t30z);
                   const d0 = distributeTerms(fl0.den, ffQ9.den, t30z);
                   return divProjZero(n0, d0, r3, ctx, l2);
@@ -35087,7 +40872,9 @@ function evalAst(ast, env, ctx = {}) {
             const lp9 = l2.vx ?? decToRat(l2.v);
             const t30c = ctx.monthToDays === "30";
             const fa9 = { num: l2.terms ?? [{ x: lp9, comps: [], aux: rnorm(lp9).d !== 1n }], den: l2.termsDen ?? ONE_TERMS() };
-            const fb9 = fracOf(r3);
+            const fbv9 = shadowFracA9(r3, ctx);
+            if (fbv9.kind === "refuse") return fbv9.err;
+            const fb9 = fbv9;
             const sh9 = l2.terms !== void 0 || l2.termsDen !== void 0 || r3.terms !== void 0 || r3.termsDen !== void 0;
             const cap9 = l2.capped === true || r3.capped === true;
             if (ast.op === "/" && qx(r3).n === 0n) {
@@ -35115,13 +40902,47 @@ function evalAst(ast, env, ctx = {}) {
               const k9 = rDiv(l2.vx ?? decToRat(l2.v), { n: 100n, d: 1n });
               const ffP9 = pctFactorFrac(l2, "of", ctx.monthToDays === "30");
               if (ffP9 !== null) return applyFracFactor(r3, rMul(qx(r3), k9), ffP9, ctx, l2.capped === true);
-              return routeScale9(ctx, "pctTimesQ", r3, k9, ctx.monthToDays === "30", { m: "uniform" }, l2.capped === true, pctFactor9(l2, { n: 1n, d: 100n }, "ptqmul"), () => ({ ...r3, ...qv(rMul(qx(r3), k9)), ...scaleTerms(r3, k9), ...l2.capped === true && { capped: true } }));
+              return routeScale9(
+                ctx,
+                "pctTimesQ",
+                r3,
+                k9,
+                ctx.monthToDays === "30",
+                { m: "uniform" },
+                l2.capped === true,
+                { proof: pctFactor9(l2, { n: 1n, d: 100n }, "ptqmul"), authoritySource: l2 },
+                () => ({ ...r3, ...qv(rMul(qx(r3), k9)), ...scaleTerms(r3, k9), ...l2.capped === true && { capped: true } })
+              );
             }
           }
           if (l2.t === "q" && r3.t === "q") {
             if (ast.op === "+" || ast.op === "-") {
+              const tempOp9 = ast.op;
               const isAbsTemp = (q2) => dimEquals(q2.dim, { temperature: 1 });
               const isDeltaTemp = (q2) => dimEquals(q2.dim, { tempdelta: 1 });
+              if (ctx.__b1ProductionCausal9 !== void 0) {
+                const absAbs9 = isAbsTemp(l2) && isAbsTemp(r3);
+                const deltaAbs9 = isDeltaTemp(l2) && isAbsTemp(r3);
+                const absDelta9 = isAbsTemp(l2) && isDeltaTemp(r3);
+                if (absAbs9 && tempOp9 === "+") {
+                  return err("unit-mismatch", "adding two absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for an offset");
+                }
+                if (deltaAbs9 && tempOp9 === "-") {
+                  return err("unit-mismatch", "subtracting an absolute temperature from a delta is undefined");
+                }
+                if (absAbs9 && tempOp9 === "-" || deltaAbs9 && tempOp9 === "+" || absDelta9) {
+                  const owned9 = b1PreOwn9(
+                    ctx,
+                    { site: "thermal-add", host: "finishTemp9", op: tempOp9 },
+                    l2,
+                    r3,
+                    (capture9, pool9) => b1PrepareThermal9(capture9, tempOp9, pool9),
+                    (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, [l2, r3])
+                  );
+                  if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_THERMAL_OWNER_MISSING");
+                  return owned9.published;
+                }
+              }
               const canonTemp = (q2) => {
                 if (!(isAbsTemp(q2) || isDeltaTemp(q2))) return q2;
                 if (q2.def && (q2.def.affine || q2.def.factor)) return q2;
@@ -35133,16 +40954,33 @@ function evalAst(ast, env, ctx = {}) {
               const rT = canonTemp(r3);
               const irrT = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               const kelvinTerms = (q9) => {
-                if (q9.terms !== void 0 || q9.def?.affine === void 0) return termsOf(q9);
-                const cv9 = convertQuantity(q9, lookupUnit("K"), ctx);
-                return cv9.t === "q" ? [{ x: qx(cv9), comps: [{ def: lookupUnit("K"), exp: 1 }], aux: false }] : termsOf(q9);
+                if (q9.terms !== void 0 || q9.def?.affine === void 0) return shadowTermsA9(q9, ctx);
+                const cv9 = convertQuantityInner9(q9, lookupUnit("K"), ctx, null);
+                if (cv9.t !== "q") return shadowTermsA9(q9, ctx);
+                if (ctx.__convAuth9 === true) {
+                  const kc9 = authStateOf9(cv9.foldA9, false);
+                  if (kc9 === "unknown") return err("undecidable-authority", `cannot synthesize a kelvin term from the uncertified value \u201C${q9.symbol}\u201D \u2014 provenance is never inferred from the value`);
+                  return [{ x: qx(cv9), comps: [{ def: lookupUnit("K"), exp: 1 }], aux: kc9 === "aux" }];
+                }
+                return [{ x: qx(cv9), comps: [{ def: lookupUnit("K"), exp: 1 }], aux: false }];
               };
-              const tempShadow = (sign9) => irrT(l2) || irrT(r3) ? mergeTerms(kelvinTerms(l2), kelvinTerms(r3), sign9) : null;
+              const tempShadow = (sign9) => {
+                if (!(irrT(l2) || irrT(r3))) return null;
+                const kl9 = kelvinTerms(l2);
+                if (!Array.isArray(kl9)) return kl9;
+                const kr9 = kelvinTerms(r3);
+                if (!Array.isArray(kr9)) return kr9;
+                return mergeTerms(kl9, kr9, sign9);
+              };
               const tempFrac9 = (sign9) => {
                 if (l2.termsDen === void 0 && r3.termsDen === void 0) return null;
                 const t30 = ctx.monthToDays === "30";
-                const a9 = distributeTerms(kelvinTerms(l2), r3.termsDen ?? ONE_TERMS(), t30);
-                const b9 = distributeTerms(kelvinTerms(r3), l2.termsDen ?? ONE_TERMS(), t30);
+                const kfl9 = kelvinTerms(l2);
+                if (!Array.isArray(kfl9)) return kfl9;
+                const kfr9 = kelvinTerms(r3);
+                if (!Array.isArray(kfr9)) return kfr9;
+                const a9 = distributeTerms(kfl9, r3.termsDen ?? ONE_TERMS(), t30);
+                const b9 = distributeTerms(kfr9, l2.termsDen ?? ONE_TERMS(), t30);
                 const dd9 = distributeTerms(l2.termsDen ?? ONE_TERMS(), r3.termsDen ?? ONE_TERMS(), t30);
                 if (a9 === null || b9 === null || dd9 === null) {
                   ctx.capNotes?.push("sum");
@@ -35162,11 +41000,22 @@ function evalAst(ast, env, ctx = {}) {
                 q9.capped = true;
                 return q9;
               };
+              const finishTemp9 = (out9) => {
+                if (out9.t !== "q") return out9;
+                return b1Own9(
+                  ctx,
+                  { site: "thermal-add", host: "finishTemp9", op: tempOp9 },
+                  l2,
+                  r3,
+                  (capture9, pool9) => b1PrepareThermal9(capture9, tempOp9, pool9),
+                  out9
+                );
+              };
               if (isAbsTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
                 if (ast.op === "+") {
                   return err("unit-mismatch", "adding two absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for an offset");
                 }
-                const conv = convertQuantity(rT, lT.def, ctx);
+                const conv = convertQuantityInner9(rT, lT.def, ctx, null);
                 if (conv.t === "e") return conv;
                 const diff = rSub(qx(lT), qx(conv));
                 const triL = lT.def.affine ?? { a: lT.def.factor.n, b: 0n, c: lT.def.factor.d };
@@ -35178,11 +41027,16 @@ function evalAst(ast, env, ctx = {}) {
                 const jacAA9 = rDiv({ n: triL.a, d: triL.c }, ratOfFactor(dDef.factor));
                 const fAA9 = capFAdd9(capFScale9(capFOf9(lT), jacAA9), capFScale9(capFOf9(conv), jacAA9), -1n);
                 const fs9 = tempFrac9(-1n);
-                if (fs9 === "dropped") return tempStamp9(base9, fAA9);
-                if (fs9 !== null) return tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAA9);
+                if (fs9 !== null && typeof fs9 === "object" && "t" in fs9) return fs9;
+                if (fs9 === "dropped") return finishTemp9(tempStamp9(base9, fAA9));
+                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAA9));
                 const sh9 = tempShadow(-1n);
-                if (sh9 !== null && sh9.length === 0) return tempStamp9({ ...base9, ...qv({ n: 0n, d: 1n }) }, fAA9);
-                return tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAA9);
+                if (sh9 !== null && !Array.isArray(sh9)) return sh9;
+                if (sh9 !== null && sh9.length === 0) {
+                  const { vx: _baseVx9, ...zeroBase9 } = base9;
+                  return finishTemp9(tempStamp9({ ...zeroBase9, v: new DecC(0) }, fAA9));
+                }
+                return finishTemp9(tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAA9));
               }
               if (isDeltaTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
                 if (ast.op !== "+") {
@@ -35194,10 +41048,12 @@ function evalAst(ast, env, ctx = {}) {
                 const jacDA9 = rMul(ratOfFactor(lT.def.factor), { n: tri.c, d: tri.a });
                 const fDA9 = capFAdd9(capFOf9(rT) ?? [], capFScale9(capFOf9(lT), jacDA9), 1n);
                 const fs9 = tempFrac9(1n);
-                if (fs9 === "dropped") return tempStamp9(base9, fDA9);
-                if (fs9 !== null) return tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fDA9);
+                if (fs9 !== null && typeof fs9 === "object" && "t" in fs9) return fs9;
+                if (fs9 === "dropped") return finishTemp9(tempStamp9(base9, fDA9));
+                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fDA9));
                 const sh9 = tempShadow(1n);
-                return tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fDA9);
+                if (sh9 !== null && !Array.isArray(sh9)) return sh9;
+                return finishTemp9(tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fDA9));
               }
               if (isAbsTemp(lT) && isDeltaTemp(rT) && lT.def && rT.def) {
                 const dK = rMul(qx(rT), ratOfFactor(rT.def.factor));
@@ -35208,23 +41064,91 @@ function evalAst(ast, env, ctx = {}) {
                 const jacAD9 = rMul(ratOfFactor(rT.def.factor), { n: tri.c, d: tri.a });
                 const fAD9 = capFAdd9(capFOf9(lT) ?? [], capFScale9(capFOf9(rT), jacAD9), ast.op === "+" ? 1n : -1n);
                 const fs9 = tempFrac9(ast.op === "+" ? 1n : -1n);
-                if (fs9 === "dropped") return tempStamp9(base9, fAD9);
-                if (fs9 !== null) return tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAD9);
+                if (fs9 !== null && typeof fs9 === "object" && "t" in fs9) return fs9;
+                if (fs9 === "dropped") return finishTemp9(tempStamp9(base9, fAD9));
+                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAD9));
                 const sh9 = tempShadow(ast.op === "+" ? 1n : -1n);
-                return tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAD9);
+                if (sh9 !== null && !Array.isArray(sh9)) return sh9;
+                return finishTemp9(tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAD9));
               }
               if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
                 return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
               }
-              const rhs = alignForAdd(l2, r3, ctx);
+              const rhs = alignedRight9 ?? alignForAdd(l2, r3, ctx);
               if (rhs.t === "e") return rhs;
-              const xr = qx(rhs);
+              const rhsQ9 = rhs;
+              const xr = qx(rhsQ9);
+              const addOp9 = ast.op;
+              const addX9 = addOp9 === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
+              const addOwnerSite9 = l2.termsDen !== void 0 || r3.termsDen !== void 0 || rhsQ9.termsDen !== void 0 ? "evalAst-addfrac" : "evalAst-add";
+              const addFrame9 = (capture9) => {
+                if (capture9.left.rt.t !== "q") {
+                  return { kind: "unavailable", reason: "non-numeric-mechanism" };
+                }
+                const shell9 = b1QValue9(capture9.left.rt, addX9);
+                const comps9 = b1CapturedCompsOf9(capture9.left);
+                if (comps9 !== null) {
+                  const envelope9 = quantityEnvelope9(addX9, dimOfComps(comps9), comps9.map((c9) => ({ ...c9 })));
+                  if (shell9.def === void 0 && envelope9.def !== void 0) shell9.def = envelope9.def;
+                  if (shell9.rate === void 0 && envelope9.rate !== void 0) shell9.rate = envelope9.rate;
+                }
+                const frame9 = b1NumericFrame9(shell9, addX9);
+                if (frame9.kind !== "numeric") return frame9;
+                const scalarEnvelope9 = (operand9) => operand9.kind === "ok" && operand9.envelope !== null && operand9.envelope.numComps.length === 0 && operand9.envelope.denComps === null;
+                const cappedScalarOwner9 = ctx.__b1ProductionCausal9 !== void 0 && (frame9.shell.t !== "q" || dimIsEmpty(frame9.shell.dim)) && scalarEnvelope9(capture9.left) && scalarEnvelope9(capture9.right) && capture9.left.rt.capped === true && capture9.right.rt.capped === true && (capFOf9(capture9.left.rt)?.length ?? 0) > 0 && (capFOf9(capture9.right.rt)?.length ?? 0) > 0 && (capture9.left.shadow.kind === "ok" || capture9.right.shadow.kind === "ok");
+                if (!cappedScalarOwner9) return frame9;
+                const gate9 = capAddGate9(
+                  capture9.left.rt,
+                  capture9.right.rt,
+                  addX9,
+                  addOp9 === "+" ? 1n : -1n
+                );
+                if (gate9.err?.t === "e") return { ...frame9, preSiteRefusal: gate9.err };
+                if (capture9.left.rt.capped === true || capture9.right.rt.capped === true) {
+                  const boundedShell9 = capStamp9({ ...frame9.shell, capped: true }, gate9);
+                  return { ...frame9, shell: boundedShell9, certifiedBoundedScalarAdd: true };
+                }
+                return frame9;
+              };
+              const addPreOwned9 = ctx.__b1EligibilityPartition9 === true || ctx.__b1ProductionCausal9 !== void 0 ? b1PreOwn9(
+                ctx,
+                { site: addOwnerSite9, host: "finishAdd9", op: addOp9 },
+                l2,
+                rhsQ9,
+                addFrame9,
+                // Keep the original operand for the legacy shadow seed:
+                // 1 cm is not an auxiliary decimal 0.01 m. Reuse the
+                // already aligned value, so FX/providers are not re-read.
+                (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, [l2, r3], void 0, void 0, rhsQ9)
+              ) : null;
+              if (addPreOwned9?.kind === "production") return addPreOwned9.published;
+              const addMechanismCtx9 = ctx.__b1EligibilityPartition9 === true && addPreOwned9 !== null && ctx.__convAuth9 === true ? { ...ctx, __convAuth9: false } : ctx;
+              const finishAdd9 = (site9, out9, undefinedSlots9) => {
+                if (site9 !== addOwnerSite9) throw new Error(`B1 additive owner drift: ${addOwnerSite9} -> ${site9}`);
+                if (addPreOwned9 !== null) return b1FinishPreOwn9(ctx, addPreOwned9, out9);
+                return b1Own9(
+                  ctx,
+                  { site: site9, host: "finishAdd9", op: addOp9 },
+                  l2,
+                  rhsQ9,
+                  (capture9) => {
+                    const frame9 = addFrame9(capture9);
+                    return frame9.kind === "numeric" && undefinedSlots9 !== void 0 ? { ...frame9, undefinedSlots: undefinedSlots9 } : frame9;
+                  },
+                  out9
+                );
+              };
+              const finishAddRefusal9 = (site9, refusal9) => addPreOwned9 === null ? refusal9 : finishAdd9(site9, refusal9);
               const irr = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               if (l2.termsDen !== void 0 || r3.termsDen !== void 0 || rhs.termsDen !== void 0) {
-                const t30 = ctx.monthToDays === "30";
+                const t30 = addMechanismCtx9.monthToDays === "30";
                 const rr9 = rhs.terms !== void 0 || rhs.termsDen !== void 0 ? rhs : r3;
-                const fl9 = fracOf(l2);
-                const fr9 = fracOf(rr9);
+                const flv9 = shadowFracA9(l2, addMechanismCtx9);
+                if (flv9.kind === "refuse") return finishAddRefusal9("evalAst-addfrac", flv9.err);
+                const frv9 = shadowFracA9(rr9, addMechanismCtx9);
+                if (frv9.kind === "refuse") return finishAddRefusal9("evalAst-addfrac", frv9.err);
+                const fl9 = flv9;
+                const fr9 = frv9;
                 const a9 = distributeTerms(fl9.num, fr9.den, t30);
                 const b9 = distributeTerms(fr9.num, fl9.den, t30);
                 const dd9 = distributeTerms(fl9.den, fr9.den, t30);
@@ -35232,24 +41156,29 @@ function evalAst(ast, env, ctx = {}) {
                   const nn9 = mergeTerms(a9, b9, ast.op === "+" ? 1n : -1n, t30);
                   if (nn9.length === 0) {
                     const gz9 = capAddGate9(l2, rr9, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
-                    if (gz9.err !== void 0) return gz9.err;
-                    return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+                    if (gz9.err !== void 0) return finishAddRefusal9("evalAst-addfrac", gz9.err);
+                    return finishAdd9("evalAst-addfrac", b1QValue9(l2, { n: 0n, d: 1n }, { terms: null, termsDen: null }));
                   }
                   const xr9 = qx(rhs);
                   const dec9 = ast.op === "+" ? rAdd(qx(l2), xr9) : rSub(qx(l2), xr9);
-                  return attachFrac({ ...l2, ...qv(dec9) }, nn9, dd9);
+                  return finishAdd9("evalAst-addfrac", attachFrac({ ...l2, ...qv(dec9) }, nn9, dd9));
                 }
-                ctx.capNotes?.push("sum");
+                addMechanismCtx9.capNotes?.push("sum");
                 const xr8 = qx(rhs);
-                return { ...l2, ...qv(ast.op === "+" ? rAdd(qx(l2), xr8) : rSub(qx(l2), xr8)), terms: void 0, termsDen: void 0 };
+                return finishAdd9("evalAst-addfrac", b1QValue9(l2, ast.op === "+" ? rAdd(qx(l2), xr8) : rSub(qx(l2), xr8), { terms: null, termsDen: null }));
               }
               if (irr(l2) || irr(r3) || rhs.terms !== void 0) {
-                const merged = mergeTerms(termsOf(l2), termsOf(rhs.terms !== void 0 ? rhs : r3), ast.op === "+" ? 1n : -1n, ctx.monthToDays === "30");
+                const rPick9 = rhs.terms !== void 0 ? rhs : r3;
+                const ltA9 = shadowViewIfNeeded9([l2, rPick9], l2, addMechanismCtx9);
+                if (!Array.isArray(ltA9)) return finishAddRefusal9("evalAst-add", ltA9);
+                const rtA9 = shadowViewIfNeeded9([l2, rPick9], rPick9, addMechanismCtx9);
+                if (!Array.isArray(rtA9)) return finishAddRefusal9("evalAst-add", rtA9);
+                const merged = mergeTerms(ltA9, rtA9, ast.op === "+" ? 1n : -1n, addMechanismCtx9.monthToDays === "30");
                 if (merged.length === 0) {
                   const rSide9 = rhs.terms !== void 0 ? rhs : r3;
                   const gz9 = capAddGate9(l2, rSide9, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
-                  if (gz9.err !== void 0) return gz9.err;
-                  return { ...l2, ...qv({ n: 0n, d: 1n }), terms: void 0 };
+                  if (gz9.err !== void 0) return finishAddRefusal9("evalAst-add", gz9.err);
+                  return finishAdd9("evalAst-add", b1QValue9(l2, { n: 0n, d: 1n }, { terms: null }));
                 }
                 if (merged.length === 1 && !merged[0].comps.some((c9) => c9.def.currency !== void 0)) {
                   const t9 = merged[0];
@@ -35261,49 +41190,129 @@ function evalAst(ast, env, ctx = {}) {
                     symbol: compsSymbol(t9.comps),
                     comps: t9.comps
                   };
-                  return combineQuantities(one9, raw9, "*", ctx);
+                  return finishAdd9("evalAst-add", combineQuantities(one9, raw9, "*", addMechanismCtx9));
                 }
                 const dec9 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
-                return { ...l2, ...qv(dec9), terms: merged };
+                return finishAdd9("evalAst-add", b1QValue9(l2, dec9, { terms: merged }));
               }
               {
                 const dec8 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
                 const rGate8 = rhs.t === "q" ? rhs : r3;
                 const g8 = capAddGate9(l2, rGate8, dec8, ast.op === "+" ? 1n : -1n);
-                if (g8.err) return g8.err;
-                return capStamp9({
-                  ...l2,
-                  ...qv(dec8),
-                  terms: void 0,
-                  ...(r3.capped === true || l2.capped === true) && { capped: true }
-                }, g8);
+                if (g8.err) return finishAddRefusal9("evalAst-add", g8.err);
+                return finishAdd9(
+                  "evalAst-add",
+                  capStamp9({
+                    ...l2,
+                    ...qv(dec8),
+                    terms: void 0,
+                    ...(r3.capped === true || l2.capped === true) && { capped: true }
+                  }, g8),
+                  // The historical spread owns both undefined slots. The frame
+                  // records that raw presence independently instead of reading
+                  // the already-built legacy output.
+                  ["vx", "terms"]
+                );
               }
             }
             if (ast.op === "*" || ast.op === "/") {
+              const mulOp9 = ast.op;
               if (isOffsetScale(l2) || isOffsetScale(r3)) {
                 return err("unit-mismatch", "multiplying or dividing offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
               }
-              if (ast.op === "/" && qx(r3).n === 0n) {
+              if (ctx.__b1EligibilityPartition9 !== true && ast.op === "/" && qx(r3).n === 0n) {
                 const t30z = ctx.monthToDays === "30";
-                const fl0 = fracOf(l2);
-                const fr0 = fracOf(r3);
+                let fl0 = fracOf(l2);
+                let fr0 = fracOf(r3);
+                if (ctx.__convAuth9 === true && (r3.terms !== void 0 || r3.termsDen !== void 0)) {
+                  const flv0 = shadowFracA9(l2, ctx);
+                  if (flv0.kind === "refuse") return flv0.err;
+                  const frv0 = shadowFracA9(r3, ctx);
+                  if (frv0.kind === "refuse") return frv0.err;
+                  fl0 = flv0;
+                  fr0 = frv0;
+                }
                 const n0 = distributeTerms(fl0.num, fr0.den, t30z);
                 const d0 = distributeTerms(fl0.den, fr0.num, t30z);
                 return divProjZero(n0, d0, r3, ctx, l2);
               }
-              let prod9 = combineQuantities(l2, r3, ast.op, ctx);
+              const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
+              const overlap9 = (a9, b9) => Object.keys(a9.dim).some((k9) => (b9.dim[k9] ?? 0) !== 0);
+              const frame9 = (capture9) => {
+                const raw9 = b1MulDivFrame9(capture9.left, capture9.right, mulOp9, ctx);
+                if (raw9.kind !== "numeric") return raw9;
+                const shell9 = { ...raw9.shell };
+                const leftRT9 = capture9.left.rt;
+                const rightRT9 = capture9.right.rt;
+                if (leftRT9.capped === true || rightRT9.capped === true) shell9.capped = true;
+                const fl9 = capFOf9(leftRT9);
+                const fr9 = capFOf9(rightRT9);
+                if ((fl9?.length ?? 0) > 0 || (fr9?.length ?? 0) > 0) {
+                  const xl9 = capture9.left.exactRead;
+                  const xr9 = capture9.right.exactRead;
+                  let pf9;
+                  if (mulOp9 === "*") {
+                    pf9 = capFAdd9(capFScale9(fl9, xr9), capFScale9(fr9, xl9), 1n);
+                    const cross9 = rMul(capFBound9(fl9 ?? []), capFBound9(fr9 ?? []));
+                    if (rnorm(cross9).n !== 0n) pf9 = capFAdd9(pf9, [{ s: `rem:qmul(${capFDig9(fl9)};${capFDig9(fr9)};${capFnv9(`${xl9.n}/${xl9.d}|${xr9.n}/${xr9.d}`)})`, x: { n: 1n, d: 1n }, b: cross9 }], 1n);
+                  } else if (xr9.n === 0n) pf9 = [];
+                  else {
+                    const inv9 = rDiv({ n: 1n, d: 1n }, xr9);
+                    pf9 = capFAdd9(capFScale9(fl9, inv9), capFScale9(fr9, rMul({ n: -1n, d: 1n }, rMul(xl9, rMul(inv9, inv9)))), 1n);
+                  }
+                  if (pf9.length > 0) shell9.capF = pf9;
+                }
+                if (shell9.t === "q" && leftRT9.t === "q" && rightRT9.t === "q" && (leftRT9.chosen && !hasCur9(rightRT9) && !overlap9(leftRT9, rightRT9) || rightRT9.chosen && !hasCur9(leftRT9) && !overlap9(rightRT9, leftRT9))) shell9.chosen = true;
+                return { ...raw9, shell: shell9 };
+              };
+              const shadowMechanism9 = (q9) => hasShadowFromRT(q9) || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+              const preOwner9 = shadowMechanism9(l2) || shadowMechanism9(r3) ? { site: "evalAst-frac", host: "finishQ9", op: ast.op } : { site: "combineQuantities", host: "finishQ9", op: ast.op };
+              const directZeroMechanism9 = ast.op === "/" && qx(r3).n === 0n && r3.terms === void 0 && r3.termsDen === void 0;
+              const preOwned9 = directZeroMechanism9 ? null : b1PreOwn9(
+                ctx,
+                preOwner9,
+                l2,
+                r3,
+                frame9,
+                (legacyCtx92) => evalAstInner(ast, env, legacyCtx92, [l2, r3])
+              );
+              if (preOwned9?.kind === "production") return preOwned9.published;
+              const finishPre9 = (legacyOut9) => preOwned9 === null ? legacyOut9 : b1FinishPreOwn9(ctx, preOwned9, legacyOut9);
+              const legacyCtx9 = ctx.__b1EligibilityPartition9 === true && preOwned9 !== null && ctx.__convAuth9 === true ? { ...ctx, __convAuth9: false } : ctx;
+              if (ast.op === "/" && qx(r3).n === 0n) {
+                const t30z = legacyCtx9.monthToDays === "30";
+                let fl0 = fracOf(l2);
+                let fr0 = fracOf(r3);
+                if (legacyCtx9.__convAuth9 === true && (r3.terms !== void 0 || r3.termsDen !== void 0)) {
+                  const flv0 = shadowFracA9(l2, legacyCtx9);
+                  if (flv0.kind === "refuse") return finishPre9(flv0.err);
+                  const frv0 = shadowFracA9(r3, legacyCtx9);
+                  if (frv0.kind === "refuse") return finishPre9(frv0.err);
+                  fl0 = flv0;
+                  fr0 = frv0;
+                }
+                const n0 = distributeTerms(fl0.num, fr0.den, t30z);
+                const d0 = distributeTerms(fl0.den, fr0.num, t30z);
+                return finishPre9(divProjZero(n0, d0, r3, legacyCtx9, l2));
+              }
+              const mechanicalProd9 = combineQuantities(l2, r3, ast.op, legacyCtx9);
+              let prod9 = mechanicalProd9;
+              let fracOwned9 = false;
               {
                 const sh9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-                const lt9 = termsOf(l2);
-                const rt9 = termsOf(r3);
                 if ((prod9.t === "q" || prod9.t === "d") && (sh9(l2) || sh9(r3) || l2.termsDen !== void 0 || r3.termsDen !== void 0)) {
-                  const t30 = ctx.monthToDays === "30";
-                  const fl9 = fracOf(l2);
-                  const fr9 = fracOf(r3);
+                  const t30 = legacyCtx9.monthToDays === "30";
+                  fracOwned9 = true;
+                  const flv9 = shadowFracA9(l2, legacyCtx9);
+                  if (flv9.kind === "refuse") return finishPre9(flv9.err);
+                  const frv9 = shadowFracA9(r3, legacyCtx9);
+                  if (frv9.kind === "refuse") return finishPre9(frv9.err);
+                  const fl9 = flv9;
+                  const fr9 = frv9;
                   const num9 = ast.op === "*" ? distributeTerms(fl9.num, fr9.num, t30) : distributeTerms(fl9.num, fr9.den, t30);
                   const den9 = ast.op === "*" ? distributeTerms(fl9.den, fr9.den, t30) : distributeTerms(fl9.den, fr9.num, t30);
                   if (num9 === null || den9 === null) {
-                    ctx.capNotes?.push("product");
+                    legacyCtx9.capNotes?.push("product");
                     if (prod9.t === "q") prod9 = attachFrac(prod9, null, null);
                   } else {
                     const quot9 = fracQuotient(num9, den9, t30);
@@ -35340,7 +41349,7 @@ function evalAst(ast, env, ctx = {}) {
                   const xl$9 = qx(l2);
                   const xr$9 = qx(r3);
                   let pf$9;
-                  if (ast.op === "*") {
+                  if (mulOp9 === "*") {
                     pf$9 = capFAdd9(capFScale9(capFOf9(l2), xr$9), capFScale9(capFOf9(r3), xl$9), 1n);
                     const cross$9 = rMul(capFBound9(capFOf9(l2) ?? []), capFBound9(capFOf9(r3) ?? []));
                     if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:qmul(${capFDig9(capFOf9(l2))};${capFDig9(capFOf9(r3))};${capFnv9(`${xl$9.n}/${xl$9.d}|${xr$9.n}/${xr$9.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
@@ -35355,18 +41364,17 @@ function evalAst(ast, env, ctx = {}) {
                 } catch {
                 }
               }
-              const hasCur9 = (x9) => x9.def?.currency !== void 0 || x9.rate?.num.currency !== void 0 || (x9.comps?.some((c9) => c9.def.currency) ?? false);
-              const overlap9 = (a9, b9) => Object.keys(a9.dim).some((k9) => (b9.dim[k9] ?? 0) !== 0);
+              const owner9 = fracOwned9 ? { site: "evalAst-frac", host: "finishQ9", op: ast.op } : { site: "combineQuantities", host: "finishQ9", op: ast.op };
               if (prod9.t === "q" && (l2.chosen && !hasCur9(r3) && !overlap9(l2, r3) || r3.chosen && !hasCur9(l2) && !overlap9(r3, l2))) {
-                return { ...prod9, chosen: true };
+                prod9 = { ...prod9, chosen: true };
               }
-              return prod9;
+              return preOwned9 === null ? b1Own9(ctx, owner9, l2, r3, frame9, prod9) : b1FinishPreOwn9(ctx, preOwned9, prod9);
             }
             return err("unsupported-pair", `quantity ^ quantity is undefined`);
           }
           if (ast.op === "mod" && (isCarrier(l2) || isCarrier(r3))) {
-            const lN9 = carrierNum(l2, ctx);
-            const rN9 = carrierNum(r3, ctx);
+            const lN9 = carrierNum(l2, ctx, "modLeft");
+            const rN9 = carrierNum(r3, ctx, "modRight");
             if ((lN9.t === "d" || lN9.t === "f") && (rN9.t === "d" || rN9.t === "f")) {
               const a9 = numRat(lN9);
               const b9 = numRat(rN9);
@@ -35383,19 +41391,29 @@ function evalAst(ast, env, ctx = {}) {
             }
             const b3 = r3.t === "f" ? rnorm({ n: r3.n, d: r3.d }) : r3.vx ?? decToRat(r3.v);
             if (ast.op === "*") {
-              return routeScale9(ctx, "qTimesScalar", l2, b3, ctx.monthToDays === "30", { m: "uniform" }, r3.capped === true, scalarFactor9(r3, "qdmul", "BF"), () => {
-                const qsRes9 = { ...l2, ...qv(rMul(qx(l2), b3)), ...scaleTerms(l2, b3), ...r3.capped === true && { capped: true } };
-                const fl$9 = capFOf9(l2);
-                const fr$9 = capFOf9(r3);
-                if ((fl$9?.length ?? 0) > 0 || (fr$9?.length ?? 0) > 0) {
-                  let pf$9 = capFAdd9(capFScale9(fl$9, b3), capFScale9(fr$9, qx(l2)), 1n);
-                  const cross$9 = rMul(capFBound9(fl$9 ?? []), capFBound9(fr$9 ?? []));
-                  if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:qdmul(${capFDig9(fl$9)};${capFDig9(fr$9)};${capFnv9(`${b3.n}/${b3.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
-                  if (pf$9.length > 0) qsRes9.capF = pf$9;
-                  else delete qsRes9.capF;
-                } else delete qsRes9.capF;
-                return qsRes9;
-              });
+              return routeScale9(
+                ctx,
+                "qTimesScalar",
+                l2,
+                b3,
+                ctx.monthToDays === "30",
+                { m: "uniform" },
+                r3.capped === true,
+                { proof: scalarFactor9(r3, "qdmul", "BF"), authoritySource: r3 },
+                () => {
+                  const qsRes9 = { ...l2, ...qv(rMul(qx(l2), b3)), ...scaleTerms(l2, b3), ...r3.capped === true && { capped: true } };
+                  const fl$9 = capFOf9(l2);
+                  const fr$9 = capFOf9(r3);
+                  if ((fl$9?.length ?? 0) > 0 || (fr$9?.length ?? 0) > 0) {
+                    let pf$9 = capFAdd9(capFScale9(fl$9, b3), capFScale9(fr$9, qx(l2)), 1n);
+                    const cross$9 = rMul(capFBound9(fl$9 ?? []), capFBound9(fr$9 ?? []));
+                    if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:qdmul(${capFDig9(fl$9)};${capFDig9(fr$9)};${capFnv9(`${b3.n}/${b3.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
+                    if (pf$9.length > 0) qsRes9.capF = pf$9;
+                    else delete qsRes9.capF;
+                  } else delete qsRes9.capF;
+                  return qsRes9;
+                }
+              );
             }
             if (ast.op === "/") {
               if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
@@ -35423,7 +41441,12 @@ function evalAst(ast, env, ctx = {}) {
               if (e0 < 0 && l2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (e0 < 0 && qx(l2).n === 0n) {
                 const t30z = ctx.monthToDays === "30";
-                const fl0 = fracOf(l2);
+                let fl0 = fracOf(l2);
+                if (ctx.__convAuth9 === true && (l2.terms !== void 0 || l2.termsDen !== void 0)) {
+                  const flz9 = shadowFracA9(l2, ctx);
+                  if (flz9.kind === "refuse") return flz9.err;
+                  fl0 = flz9;
+                }
                 return divProjZero(e0 === -1 ? fl0.den : null, e0 === -1 ? fl0.num : null, l2, ctx);
               }
               if (e0 === -1 && l2.rate) {
@@ -35440,7 +41463,9 @@ function evalAst(ast, env, ctx = {}) {
                   ...l2.chosen && { chosen: true }
                 };
                 if (!sh9) return base9;
-                const f9 = fracOf(l2);
+                const fv9 = shadowFracViewIfNeeded9([l2], l2, ctx);
+                if (fv9.kind === "refuse") return fv9.err;
+                const f9 = fv9;
                 if (f9.num.length === 1 && l2.termsDen === void 0) {
                   return { ...base9, terms: [{ x: rDiv({ n: 1n, d: 1n }, f9.num[0].x), comps: f9.num[0].comps.map((c9) => ({ def: c9.def, exp: -c9.exp })), aux: f9.num[0].aux }] };
                 }
@@ -35459,7 +41484,9 @@ function evalAst(ast, env, ctx = {}) {
               };
               const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
               let pow9 = combineQuantities(one9, raw9, "*", ctx);
-              const lt9 = termsOf(l2);
+              const ltv9 = shadowViewIfNeeded9([l2], l2, ctx);
+              if (!Array.isArray(ltv9)) return ltv9;
+              const lt9 = ltv9;
               const shadowed9 = l2.terms !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               if (pow9.t === "d" && (shadowed9 || l2.termsDen !== void 0)) {
                 pow9 = { t: "q", ...qv(numRat(pow9)), dim: {}, symbol: "", comps: [] };
@@ -35469,7 +41496,9 @@ function evalAst(ast, env, ctx = {}) {
                   pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))), aux: lt9[0].aux }] };
                 } else {
                   const t30 = ctx.monthToDays === "30";
-                  const f9 = fracOf(l2);
+                  const fpv9 = shadowFracViewIfNeeded9([l2], l2, ctx);
+                  if (fpv9.kind === "refuse") return fpv9.err;
+                  const f9 = fpv9;
                   const powList9 = (list9, n9) => {
                     let acc9 = ONE_TERMS();
                     for (let p9 = 1; p9 <= n9 && acc9 !== null; p9++) acc9 = distributeTerms(acc9, list9, t30);
@@ -35486,44 +41515,112 @@ function evalAst(ast, env, ctx = {}) {
               }
               return l2.chosen && pow9.t === "q" ? { ...pow9, chosen: true } : pow9;
             }
-            if ((ast.op === "+" || ast.op === "-") && (isCarrier(l2) || dimIsEmpty(l2.dim) && isCarrier(foldIrrationalResidue(l2, ctx.monthToDays === "30")))) {
-              const lC9 = isCarrier(l2) ? l2 : foldIrrationalResidue(l2, ctx.monthToDays === "30");
+            if ((ast.op === "+" || ast.op === "-") && (isCarrier(l2) || dimIsEmpty(l2.dim) && isCarrier(foldIrrationalResidue(l2, ctx.monthToDays === "30", ctx, "qPlusNLeftProbe")))) {
+              const addOp9 = ast.op;
+              const lC9 = isCarrier(l2) ? l2 : foldIrrationalResidue(l2, ctx.monthToDays === "30", ctx, "qPlusNLeftUse");
               const t30c = ctx.monthToDays === "30";
-              const fc9 = fracOf(lC9);
-              const decC9 = ast.op === "+" ? rAdd(qx(lC9), b3) : rSub(qx(lC9), b3);
+              const fcv9 = shadowFracA9(lC9, ctx);
+              if (fcv9.kind === "refuse") return fcv9.err;
+              const fc9 = fcv9;
+              const decC9 = addOp9 === "+" ? rAdd(qx(lC9), b3) : rSub(qx(lC9), b3);
+              const finishCarrierAdd9 = (outputKind9, legacyThunk9) => {
+                const frame9 = (capture9) => {
+                  if (capture9.left.exactRead === null || capture9.right.exactRead === null) {
+                    return { kind: "unavailable", reason: "non-numeric-mechanism" };
+                  }
+                  const exact9 = addOp9 === "+" ? rAdd(capture9.left.exactRead, capture9.right.exactRead) : rSub(capture9.left.exactRead, capture9.right.exactRead);
+                  const shell9 = outputKind9 === "d" ? dOf9(exact9) : dimlessQOf9(exact9);
+                  return b1NumericFrame9(shell9, exact9);
+                };
+                if (ctx.__b1ProductionCausal9 !== void 0) {
+                  const owned9 = b1PreOwn9(
+                    ctx,
+                    { site: "evalAst-add", host: "finishAdd9", op: addOp9 },
+                    lC9,
+                    r3,
+                    frame9,
+                    legacyThunk9
+                  );
+                  if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_LEFT_CARRIER_OWNER_MISSING");
+                  return owned9.published;
+                }
+                const out9 = legacyThunk9(ctx);
+                return ctx.__b1CausalUnary9 !== true ? out9 : b1Own9(
+                  ctx,
+                  { site: "evalAst-add", host: "finishAdd9", op: addOp9 },
+                  lC9,
+                  r3,
+                  frame9,
+                  out9
+                );
+              };
               const bd9 = distributeTerms(fc9.den, [{ x: b3, comps: [], aux: rnorm(b3).d !== 1n }], t30c);
               if (bd9 === null) {
                 ctx.capNotes?.push("sum");
-                return { t: "d", ...qv(decC9) };
+                return finishCarrierAdd9("d", () => dOf9(decC9));
               }
-              const nn9 = mergeTerms(fc9.num, bd9, ast.op === "+" ? 1n : -1n, t30c);
+              const nn9 = mergeTerms(fc9.num, bd9, addOp9 === "+" ? 1n : -1n, t30c);
               if (nn9.length === 0) {
-                const gz9 = capAddGate9(l2, r3, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
+                const gz9 = capAddGate9(l2, r3, { n: 0n, d: 1n }, addOp9 === "+" ? 1n : -1n);
                 if (gz9.err !== void 0) return gz9.err;
-                return { t: "d", ...qv({ n: 0n, d: 1n }) };
+                return finishCarrierAdd9("d", () => dOf9({ n: 0n, d: 1n }));
               }
-              return attachFrac({ t: "q", ...qv(decC9), dim: {}, symbol: "", comps: [] }, nn9, fc9.den);
+              return finishCarrierAdd9("q", () => attachFrac(dimlessQOf9(decC9), nn9, fc9.den));
             }
             return err("unit-mismatch", `\u201C${l2.symbol} ${ast.op} ${toDec(r3).toString()}\u201D mixes a quantity with a bare number`);
           }
-          if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && (ast.op === "+" || ast.op === "-") && dimIsEmpty(r3.dim) && (isCarrier(r3) || isCarrier(foldIrrationalResidue(r3, ctx.monthToDays === "30")))) {
-            const rC8 = isCarrier(r3) ? r3 : foldIrrationalResidue(r3, ctx.monthToDays === "30");
+          if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && (ast.op === "+" || ast.op === "-") && dimIsEmpty(r3.dim) && (isCarrier(r3) || isCarrier(foldIrrationalResidue(r3, ctx.monthToDays === "30", ctx, "qPlusNRightProbe")))) {
+            const addOp9 = ast.op;
+            const rC8 = isCarrier(r3) ? r3 : foldIrrationalResidue(r3, ctx.monthToDays === "30", ctx, "qPlusNRightUse");
             const b8 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : l2.vx ?? decToRat(l2.v);
             const t30c = ctx.monthToDays === "30";
-            const fc9 = fracOf(rC8);
-            const decC9 = ast.op === "+" ? rAdd(b8, qx(rC8)) : rSub(b8, qx(rC8));
+            const fcv8 = shadowFracA9(rC8, ctx);
+            if (fcv8.kind === "refuse") return fcv8.err;
+            const fc9 = fcv8;
+            const decC9 = addOp9 === "+" ? rAdd(b8, qx(rC8)) : rSub(b8, qx(rC8));
+            const finishCarrierAdd9 = (outputKind9, legacyThunk9) => {
+              const frame9 = (capture9) => {
+                if (capture9.left.exactRead === null || capture9.right.exactRead === null) {
+                  return { kind: "unavailable", reason: "non-numeric-mechanism" };
+                }
+                const exact9 = addOp9 === "+" ? rAdd(capture9.left.exactRead, capture9.right.exactRead) : rSub(capture9.left.exactRead, capture9.right.exactRead);
+                const shell9 = outputKind9 === "d" ? dOf9(exact9) : dimlessQOf9(exact9);
+                return b1NumericFrame9(shell9, exact9);
+              };
+              if (ctx.__b1ProductionCausal9 !== void 0) {
+                const owned9 = b1PreOwn9(
+                  ctx,
+                  { site: "evalAst-add", host: "finishAdd9", op: addOp9 },
+                  l2,
+                  rC8,
+                  frame9,
+                  legacyThunk9
+                );
+                if (owned9?.kind !== "production") throw new Error("CAPTURE_CAUSAL_RIGHT_CARRIER_OWNER_MISSING");
+                return owned9.published;
+              }
+              const out9 = legacyThunk9(ctx);
+              return ctx.__b1CausalUnary9 !== true ? out9 : b1Own9(
+                ctx,
+                { site: "evalAst-add", host: "finishAdd9", op: addOp9 },
+                l2,
+                rC8,
+                frame9,
+                out9
+              );
+            };
             const bd9 = distributeTerms(fc9.den, [{ x: b8, comps: [], aux: rnorm(b8).d !== 1n }], t30c);
             if (bd9 === null) {
               ctx.capNotes?.push("sum");
-              return { t: "d", ...qv(decC9) };
+              return finishCarrierAdd9("d", () => dOf9(decC9));
             }
-            const nn9 = mergeTerms(bd9, fc9.num, ast.op === "+" ? 1n : -1n, t30c);
+            const nn9 = mergeTerms(bd9, fc9.num, addOp9 === "+" ? 1n : -1n, t30c);
             if (nn9.length === 0) {
-              const gz9 = capAddGate9(l2, r3, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
+              const gz9 = capAddGate9(l2, r3, { n: 0n, d: 1n }, addOp9 === "+" ? 1n : -1n);
               if (gz9.err !== void 0) return gz9.err;
-              return { t: "d", ...qv({ n: 0n, d: 1n }) };
+              return finishCarrierAdd9("d", () => dOf9({ n: 0n, d: 1n }));
             }
-            return attachFrac({ t: "q", ...qv(decC9), dim: {}, symbol: "", comps: [] }, nn9, fc9.den);
+            return finishCarrierAdd9("q", () => attachFrac(dimlessQOf9(decC9), nn9, fc9.den));
           }
           if (r3.t === "q" && (l2.t === "d" || l2.t === "f") && (ast.op === "*" || ast.op === "/")) {
             if (isOffsetScale(r3)) {
@@ -35531,49 +41628,161 @@ function evalAst(ast, env, ctx = {}) {
             }
             const b3 = l2.t === "f" ? rnorm({ n: l2.n, d: l2.d }) : l2.vx ?? decToRat(l2.v);
             if (ast.op === "*") {
-              return routeScale9(ctx, "scalarTimesQ", r3, b3, ctx.monthToDays === "30", { m: "uniform" }, l2.capped === true, scalarFactor9(l2, "dqmul", "FB"), () => {
-                const dqRes9 = { ...r3, ...qv(rMul(qx(r3), b3)), ...scaleTerms(r3, b3), ...l2.capped === true && { capped: true } };
-                const fl$9 = capFOf9(l2);
-                const fr$9 = capFOf9(r3);
-                if ((fl$9?.length ?? 0) > 0 || (fr$9?.length ?? 0) > 0) {
-                  let pf$9 = capFAdd9(capFScale9(fl$9, qx(r3)), capFScale9(fr$9, b3), 1n);
-                  const cross$9 = rMul(capFBound9(fl$9 ?? []), capFBound9(fr$9 ?? []));
-                  if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:dqmul(${capFDig9(fl$9)};${capFDig9(fr$9)};${capFnv9(`${b3.n}/${b3.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
-                  if (pf$9.length > 0) dqRes9.capF = pf$9;
-                  else delete dqRes9.capF;
+              return routeScale9(
+                ctx,
+                "scalarTimesQ",
+                r3,
+                b3,
+                ctx.monthToDays === "30",
+                { m: "uniform" },
+                l2.capped === true,
+                { proof: scalarFactor9(l2, "dqmul", "FB"), authoritySource: l2 },
+                () => {
+                  const dqRes9 = { ...r3, ...qv(rMul(qx(r3), b3)), ...scaleTerms(r3, b3), ...l2.capped === true && { capped: true } };
+                  const fl$9 = capFOf9(l2);
+                  const fr$9 = capFOf9(r3);
+                  if ((fl$9?.length ?? 0) > 0 || (fr$9?.length ?? 0) > 0) {
+                    let pf$9 = capFAdd9(capFScale9(fl$9, qx(r3)), capFScale9(fr$9, b3), 1n);
+                    const cross$9 = rMul(capFBound9(fl$9 ?? []), capFBound9(fr$9 ?? []));
+                    if (rnorm(cross$9).n !== 0n) pf$9 = capFAdd9(pf$9, [{ s: `rem:dqmul(${capFDig9(fl$9)};${capFDig9(fr$9)};${capFnv9(`${b3.n}/${b3.d}`)})`, x: { n: 1n, d: 1n }, b: cross$9 }], 1n);
+                    if (pf$9.length > 0) dqRes9.capF = pf$9;
+                    else delete dqRes9.capF;
+                  }
+                  return dqRes9;
                 }
-                return dqRes9;
-              });
+              );
             }
             if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
             if (qx(r3).n === 0n) {
+              const inverseComps9 = (compsOf(r3) ?? []).map((c9) => ({ def: c9.def, exp: -c9.exp }));
+              const inverseShell9 = {
+                t: "q",
+                v: new DecC(0),
+                dim: dimOfComps(inverseComps9),
+                symbol: compsSymbol(inverseComps9),
+                comps: inverseComps9
+              };
+              const inversePre92 = b1PreOwn9(
+                ctx,
+                { site: "evalAst-inverse", host: "evalAst", op: "/" },
+                l2,
+                r3,
+                () => ({
+                  ...b1NumericFrame9(inverseShell9, { n: 0n, d: 1n }),
+                  projectedZeroInverse: true
+                }),
+                (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, [l2, r3])
+              );
+              if (inversePre92?.kind === "production") return inversePre92.published;
               const t30z = ctx.monthToDays === "30";
-              const fr0 = fracOf(r3);
-              return divProjZero(fr0.den.map((t9) => ({ ...t9, x: rMul(t9.x, b3) })), fr0.num, r3, ctx);
+              let fr0 = fracOf(r3);
+              if (ctx.__convAuth9 === true && (r3.terms !== void 0 || r3.termsDen !== void 0)) {
+                const frz9 = shadowFracA9(r3, ctx);
+                if (frz9.kind === "refuse") return inversePre92 === null ? frz9.err : b1FinishPreOwn9(ctx, inversePre92, frz9.err);
+                fr0 = frz9;
+              }
+              const legacyInverse92 = divProjZero(fr0.den.map((t9) => ({ ...t9, x: rMul(t9.x, b3) })), fr0.num, r3, ctx);
+              return inversePre92 === null ? legacyInverse92 : b1FinishPreOwn9(ctx, inversePre92, legacyInverse92);
             }
+            const inversePre9 = ctx.__b1EligibilityPartition9 === true || ctx.__b1ProductionCausal9 !== void 0 ? b1PreOwn9(
+              ctx,
+              { site: "evalAst-inverse", host: "evalAst", op: "/" },
+              l2,
+              r3,
+              (capture9) => {
+                const frame9 = b1MulDivFrame9(capture9.left, capture9.right, "/", ctx);
+                return frame9.kind === "numeric" && frame9.shell.t === "q" && capture9.right.rt.t === "q" && capture9.right.rt.chosen === true ? { ...frame9, shell: { ...frame9.shell, chosen: true } } : frame9;
+              },
+              (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, [l2, r3])
+            ) : null;
+            if (inversePre9?.kind === "production") return inversePre9.published;
             const lq = { t: "q", ...qv(b3), dim: {}, symbol: "", comps: [] };
             let invRes = combineQuantities(lq, r3, "/", ctx);
             const shInv9 = r3.terms !== void 0 || r3.termsDen !== void 0 || (compsOf(r3)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
             if (shInv9 && (invRes.t === "q" || invRes.t === "d")) {
-              const f9 = fracOf(r3);
+              const fiv9 = shadowFracA9(r3, ctx);
+              if (fiv9.kind === "refuse") return inversePre9 === null ? fiv9.err : b1FinishPreOwn9(ctx, inversePre9, fiv9.err);
+              const f9 = fiv9;
               const num9 = f9.den.map((t9) => ({ ...t9, x: rMul(t9.x, b3) }));
               const base9 = invRes.t === "q" ? invRes : { t: "q", ...qv(numRat(invRes)), dim: {}, symbol: "", comps: [] };
               invRes = attachFrac(base9, num9, f9.num);
             }
-            return r3.chosen && invRes.t === "q" ? { ...invRes, chosen: true } : invRes;
+            const legacyInverse9 = r3.chosen && invRes.t === "q" ? { ...invRes, chosen: true } : invRes;
+            return inversePre9 === null ? legacyInverse9 : b1FinishPreOwn9(ctx, inversePre9, legacyInverse9);
           }
           {
             const isErr = (x0) => "t" in x0;
             const tsSide = l2.t === "ts" ? l2 : r3.t === "ts" ? r3 : null;
-            const qSide = l2.t === "q" ? l2 : r3.t === "q" ? r3 : null;
-            if (tsSide && qSide && (ast.op === "*" || ast.op === "/")) {
+            const qRaw9 = l2.t === "q" ? l2 : r3.t === "q" ? r3 : null;
+            if (tsSide && qRaw9 && (ast.op === "*" || ast.op === "/")) {
+              const calendarCapture9 = ctx.__b1Transform9 === void 0 && ctx.__b1ProductionCausal9 === void 0 ? null : (() => {
+                return b1CaptureOperand9(qRaw9, ctx.monthToDays === "30");
+              })();
+              const qSide = qRaw9;
+              const spanCapture9 = b1CaptureOperand9(tsSide, ctx.monthToDays === "30");
+              const calendarOrientation9 = ast.op === "/" && l2.t === "ts" ? "invert" : "preserve";
+              const calendarZero9 = !tsSide.c.years && !tsSide.c.months && !tsSide.c.weeks && !tsSide.c.days;
+              const calendarZeroAuth9 = authStateOf9(tsSide.foldA9, false) === "auth";
+              const calendarEffect9 = calendarZero9 && tsSide.capped !== true && calendarZeroAuth9 && !(ast.op === "/" && r3.t === "ts") ? "annihilate" : "carry";
+              const spanScalePlan9 = {
+                kind: "calendar",
+                plan: { kind: "span-scale", span: spanCapture9, op: ast.op }
+              };
+              const zeroAbsorbPlan9 = {
+                kind: "calendar",
+                plan: { kind: "zero-absorb", span: spanCapture9, op: ast.op }
+              };
+              const quantityComposePlan9 = (spanQ9) => {
+                const qCapture9 = calendarCapture9 ?? b1CaptureOperand9(qRaw9, ctx.monthToDays === "30");
+                const spanAuthority9 = authPreserve9(tsSide.foldA9);
+                const ownedSpanQ9 = spanAuthority9 === void 0 ? spanQ9 : stampAuth9(spanQ9, spanAuthority9);
+                const spanQCapture9 = b1CaptureOperand9(ownedSpanQ9, ctx.monthToDays === "30");
+                return l2.t === "ts" ? { kind: "calendar", plan: { kind: "quantity-compose", left: spanQCapture9, right: qCapture9, op: ast.op } } : { kind: "calendar", plan: { kind: "quantity-compose", left: qCapture9, right: spanQCapture9, op: ast.op } };
+              };
+              const publishCalendar9 = (frameOp9) => b1TransformProduction9(ctx, {
+                site: "calendarQuantity",
+                host: "finishCalendarQuantity9",
+                capture: calendarCapture9,
+                frameOp: frameOp9,
+                meta: { kind: "calendar", orientation: calendarOrientation9, effect: calendarEffect9 }
+              }, (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, [l2, r3]));
+              const finishCalendarQuantity9 = (out9, frameOp9 = spanScalePlan9) => {
+                const cert9 = calendarEffect9 === "annihilate" ? authAbsorbZero9(tsSide.foldA9) : authJoin9(tsSide.foldA9, qSide.foldA9);
+                const framed9 = out9.t !== "e" && !hasShadowFromRT(out9) && cert9 !== void 0 ? stampAuth9(out9, cert9) : out9;
+                if (calendarCapture9 !== null) ctx.__b1Capture9?.("transform");
+                return b1Transform9(ctx, {
+                  site: "calendarQuantity",
+                  host: "finishCalendarQuantity9",
+                  capture: calendarCapture9,
+                  out: framed9,
+                  frameOp: frameOp9,
+                  meta: {
+                    kind: "calendar",
+                    orientation: calendarOrientation9,
+                    effect: calendarEffect9
+                  }
+                });
+              };
+              const finishCalendarRefusal9 = (reason9, code9, detail9) => ctx.__b1ProductionCausal9 !== void 0 ? publishCalendar9({ kind: "calendar", plan: { kind: "refuse", reason: reason9, code: code9, detail: detail9 } }) : finishCalendarQuantity9(
+                err(code9, detail9),
+                { kind: "calendar", plan: { kind: "refuse", reason: reason9, code: code9, detail: detail9 } }
+              );
               if (!tsSide.c.years && !tsSide.c.months && !tsSide.c.weeks && !tsSide.c.days && dimIsEmpty(qSide.dim) && (compsOf(qSide)?.length ?? 0) === 0) {
                 if (ast.op === "/" && r3.t === "ts") return err("division-by-zero");
                 if (ast.op === "/") {
                   if (qSide.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
-                  if (zeroState(qSide, ctx.monthToDays === "30") === "zero") return err("division-by-zero");
+                  const auxiliaryZeroDivisor9 = calendarCapture9?.kind === "ok" && calendarCapture9.shadow.kind === "ok" && calendarCapture9.shadow.value.zeroState() === "auxiliary-zero" && calendarCapture9.shadow.value.provResidue9() !== null;
+                  if (zeroState(qSide, ctx.monthToDays === "30") === "zero" && !auxiliaryZeroDivisor9) return err("division-by-zero");
+                  if (auxiliaryZeroDivisor9) {
+                    if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(zeroAbsorbPlan9);
+                    return finishCalendarQuantity9(
+                      { t: "ts", c: { ...tsSide.c } },
+                      zeroAbsorbPlan9
+                    );
+                  }
                 }
-                return { t: "ts", c: { ...tsSide.c }, ...qSide.capped === true && { capped: true } };
+                if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(spanScalePlan9);
+                return finishCalendarQuantity9({ t: "ts", c: { ...tsSide.c }, ...qSide.capped === true && { capped: true } });
               }
               {
                 const qF8 = isCarrier(qSide) ? qSide : dimIsEmpty(qSide.dim) && (qSide.terms !== void 0 || qSide.termsDen !== void 0) ? {
@@ -35587,12 +41796,17 @@ function evalAst(ast, env, ctx = {}) {
                   ...qSide.termsDen && { termsDen: qSide.termsDen }
                 } : qSide;
                 if (isCarrier(qF8) && dimIsEmpty(qF8.dim) && (compsOf(qF8) ?? []).every((c9) => c9.def.currency === void 0) && [...qF8.terms ?? [], ...qF8.termsDen ?? []].every((t9) => t9.comps.every((c9) => c9.def.currency === void 0)) && (ast.op === "*" || l2.t === "ts")) {
-                  if (qF8.capped === true || qSide.capped === true) return err("inexact", TS_IRR_MSG);
+                  if (qF8.capped === true || qSide.capped === true) return finishCalendarRefusal9("capped-factor", "inexact", TS_IRR_MSG);
                   const zero8 = qx(qF8).n === 0n && (qF8.terms === void 0 || qF8.terms.every((t9) => t9.x.n === 0n));
                   const k8 = (zero8 ? { n: 0n, d: 1n } : null) ?? fracReduce(qF8, ctx.monthToDays === "30") ?? (qF8.terms === void 0 && qF8.termsDen === void 0 && (compsOf(qF8) ?? []).every((c9) => c9.def.factorDec === void 0) ? qx(qF8) : null);
-                  if (k8 === null) return err("inexact", "scaling a timespan by this factor is not exact \u2014 the factor is irrational");
+                  if (k8 === null) return finishCalendarRefusal9(
+                    "irrational-factor",
+                    "inexact",
+                    "scaling a timespan by this factor is not exact \u2014 the factor is irrational"
+                  );
                   if (ast.op === "/" && k8.n === 0n) return err("division-by-zero");
-                  return tsScale(tsSide, ast.op === "*" ? k8 : rDiv({ n: 1n, d: 1n }, k8), ctx);
+                  if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(spanScalePlan9);
+                  return finishCalendarQuantity9(tsScaleWithAuthority9(tsSide, ast.op === "*" ? k8 : rDiv({ n: 1n, d: 1n }, k8), qSide, ctx));
                 }
               }
               const tsIsZero = !tsSide.c.years && !tsSide.c.months && !tsSide.c.weeks && !tsSide.c.days;
@@ -35602,8 +41816,12 @@ function evalAst(ast, env, ctx = {}) {
                 const written = "years" in tsSide.c ? CAL_RATE_DEFS.year : "months" in tsSide.c ? CAL_RATE_DEFS.month : "weeks" in tsSide.c ? CAL_RATE_DEFS.week : "days" in tsSide.c ? CAL_RATE_DEFS.day : void 0;
                 const zeroDef = written ?? (calComp && calComp.exp < 0 ? calComp.def : CAL_RATE_DEFS.day);
                 const zq = { t: "q", v: new DecC(0), dim: zeroDef.dim, symbol: zeroDef.symbol, def: zeroDef, comps: [{ def: zeroDef, exp: 1 }] };
+                if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(quantityComposePlan9(zq));
                 const zres = combineQuantities(qSide, zq, "*", ctx);
-                return qSide.chosen && zres.t === "q" ? { ...zres, chosen: true } : zres;
+                return finishCalendarQuantity9(
+                  qSide.chosen && zres.t === "q" ? { ...zres, chosen: true } : zres,
+                  quantityComposePlan9(zq)
+                );
               }
               const den = calUnitForSpan(tsSide.c, ctx);
               if ("t" in den) return den;
@@ -35613,6 +41831,7 @@ function evalAst(ast, env, ctx = {}) {
               const lq = l2.t === "ts" ? tq : l2;
               const rq = r3.t === "ts" ? tq : r3;
               if (ast.op === "/" && qx(rq).n === 0n) return err("division-by-zero");
+              if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(quantityComposePlan9(tq));
               let tres = combineQuantities(lq, rq, ast.op, ctx);
               if ((tres.t === "d" || tres.t === "f") && (qSide.terms !== void 0 || qSide.termsDen !== void 0)) {
                 const x8 = tres.t === "d" ? tres.vx ?? decToRat(tres.v) : numRat(tres);
@@ -35630,7 +41849,15 @@ function evalAst(ast, env, ctx = {}) {
                   } else comps0.push({ def: den, exp: dExp });
                   return { x: x0, comps: comps0.filter((c9) => c9.exp !== 0), aux: t0.aux };
                 };
-                const f9 = fracOf(qSide);
+                const fqv9 = shadowFracA9(qSide, ctx);
+                if (fqv9.kind === "refuse") {
+                  return finishCalendarRefusal9(
+                    "shadow-refusal",
+                    fqv9.err.code,
+                    fqv9.err.detail ?? "the calendar quantity shadow is not exact"
+                  );
+                }
+                const f9 = fqv9;
                 if (l2.t !== "ts" || ast.op === "*") {
                   const k0 = ast.op === "*" ? count : rDiv({ n: 1n, d: 1n }, count);
                   const dExp = ast.op === "*" ? 1 : -1;
@@ -35640,9 +41867,16 @@ function evalAst(ast, env, ctx = {}) {
                 }
               }
               if (tres.t === "ts" && (qSide.terms !== void 0 || qSide.termsDen !== void 0) && fracReduce(qSide, ctx.monthToDays === "30") === null) {
-                return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
+                return finishCalendarRefusal9(
+                  "irreducible-count",
+                  "inexact",
+                  "a timespan count carrying an irreducible shadow is not exact"
+                );
               }
-              return qSide.chosen && tres.t === "q" ? { ...tres, chosen: true } : tres;
+              return finishCalendarQuantity9(
+                qSide.chosen && tres.t === "q" ? { ...tres, chosen: true } : tres,
+                quantityComposePlan9(tq)
+              );
             }
           }
           return err("unsupported-pair", "this combination of quantity operands is undefined");
@@ -35722,14 +41956,15 @@ function evalAst(ast, env, ctx = {}) {
                   const s9 = ast.op === "+" ? 1n : -1n;
                   const ga = spanGroups(l2.c);
                   const gb = spanGroups(r3.c);
-                  return spanEmit(
+                  const out9 = spanEmit(
                     a9.months + s9 * b9.months,
                     a9.days + s9 * b9.days,
                     { hasM: ga.hasM || gb.hasM, hasD: ga.hasD || gb.hasD },
                     ctx.monthToDays === "30"
                   );
+                  return stampTimespan9(out9, authJoin9(l2.foldA9, r3.foldA9));
                 }
-                return { t: "ts", c: sum2 };
+                return stampTimespan9({ t: "ts", c: sum2 }, authJoin9(l2.foldA9, r3.foldA9));
               }
               if (ast.op === "/") return tsRatio(l2, r3, ctx);
               return err("unsupported-pair", `timespan ${ast.op} timespan is undefined`);
@@ -35752,25 +41987,17 @@ function evalAst(ast, env, ctx = {}) {
                 const zsT9 = zeroState(r3, ctx.monthToDays === "30");
                 if (zsT9 === "zero") return err("division-by-zero");
               }
-              return { t: "ts", c: { ...l2.c } };
+              return stampTimespan9({ t: "ts", c: { ...l2.c } }, authAbsorbZero9(l2.foldA9));
             }
-            const k9 = tsScalarOf(r3, ctx);
-            if (k9 === "irr") return err("inexact", TS_IRR_MSG);
-            if (k9 !== null) {
-              if (ast.op === "/") {
-                if (rnorm(k9).n === 0n) return err("division-by-zero");
-                return tsScale(l2, rDiv({ n: 1n, d: 1n }, k9), ctx);
-              }
-              return tsScale(l2, k9, ctx);
-            }
+            const ts9 = tsScaleByRT9(l2, r3, ast.op === "/" ? "/" : "*", ctx);
+            if (ts9 !== null) return ts9;
           }
           if (r3.t === "ts" && l2.t !== "ds" && l2.t !== "ts" && ast.op === "*") {
             if (!r3.c.years && !r3.c.months && !r3.c.weeks && !r3.c.days && (l2.t === "p" || l2.t === "d" || l2.t === "f" || l2.t === "q")) {
-              return { t: "ts", c: { ...r3.c } };
+              return stampTimespan9({ t: "ts", c: { ...r3.c } }, authAbsorbZero9(r3.foldA9));
             }
-            const k9 = tsScalarOf(l2, ctx);
-            if (k9 === "irr") return err("inexact", TS_IRR_MSG);
-            if (k9 !== null) return tsScale(r3, k9, ctx);
+            const ts8 = tsScaleByRT9(r3, l2, "*", ctx);
+            if (ts8 !== null) return ts8;
           }
           return err("unsupported-pair", `this combination of date/timespan operands is undefined`);
         }
@@ -36172,7 +42399,11 @@ function evalAst(ast, env, ctx = {}) {
         }
         return err("unsupported-pair", "this combination of operands is undefined");
       })();
-      const binJ9 = (l2.capped === true || r3.capped === true) && bin9.capped !== true ? { ...bin9, capped: true } : bin9;
+      let binJ9 = bin9;
+      if ((l2.capped === true || r3.capped === true) && bin9.capped !== true) {
+        if (ctx.__b1Compose9 !== void 0) bin9.capped = true;
+        else binJ9 = { ...bin9, capped: true };
+      }
       const rf$9 = capFOf9(binJ9);
       if ((binJ9.t === "d" || binJ9.t === "f" || binJ9.t === "q" || binJ9.t === "p") && ((capFOf9(l2)?.length ?? 0) > 0 || (capFOf9(r3)?.length ?? 0) > 0) && // the []-sentinel means « transported and exactly cancelled »
       // (x − x) — never a partial transport (audit CA)
@@ -36867,7 +43098,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       const text2 = line.slice(start, i2);
       if (valid) {
         const value = BigInt((isHex2 ? "0x" : isOct ? "0o" : "0b") + body);
-        tokens.push({ kind: "number", text: text2, start, end: i2, dec: new DecC(value.toString()), plainInt: false });
+        tokens.push({ kind: "number", text: text2, start, end: i2, dec: new DecC(value.toString()), plainInt: false, auth: true });
       } else {
         tokens.push({ kind: "badnumber", text: text2, start, end: i2 });
       }
@@ -36939,7 +43170,7 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       return n9 === "" || !/[\p{L}\d]/u.test(n9);
     })() && segs.length === 0 && intDigits.length > 0) {
       i2 += 1;
-      tokens.push({ kind: "number", text: line.slice(start, i2), start, end: i2, dec: new DecC(intDigits), plainInt: true, ordinalOf: intDigits });
+      tokens.push({ kind: "number", text: line.slice(start, i2), start, end: i2, dec: new DecC(intDigits), plainInt: true, auth: true, ordinalOf: intDigits });
       return;
     }
     let scalarPow = 0;
@@ -36990,14 +43221,14 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
         const digits = intDigits + segs.map((s2) => s2.digits).join("");
         let d2 = new DecC(digits + exp2);
         if (scalarPow) d2 = d2.times(new DecC(10).pow(scalarPow));
-        tokens.push({ kind: "number", text, start, end: i2, dec: d2, plainInt: false });
+        tokens.push({ kind: "number", text, start, end: i2, dec: d2, plainInt: false, auth: exp2 === "" });
         return;
       }
       if (misplacedGroupSeparator === "decimalPoint" && segs.length > 0) {
         const head = intDigits + segs.slice(0, -1).map((s2) => s2.digits).join("");
         let d2 = new DecC(`${head}.${segs[segs.length - 1].digits}${exp2}`);
         if (scalarPow) d2 = d2.times(new DecC(10).pow(scalarPow));
-        tokens.push({ kind: "number", text, start, end: i2, dec: d2, plainInt: false });
+        tokens.push({ kind: "number", text, start, end: i2, dec: d2, plainInt: false, auth: false });
         return;
       }
       tokens.push({ kind: "badnumber", text, start, end: i2, errorCode: error2 });
@@ -37018,7 +43249,10 @@ function lex(line, grammar, dateOrder = "dmy", misplacedGroupSeparator = "error"
       start,
       end: i2,
       dec: dec2,
-      plainInt: segs.length === 0 && !exp2 && !scalarPow
+      plainInt: segs.length === 0 && !exp2 && !scalarPow,
+      // grouping and the EXACT scalar suffix transport the class of their number;
+      // a decimal separator (even 1.0) or scientific notation (even 1e2) is aux.
+      auth: decimalIdx < 0 && exp2 === ""
     });
     {
       const last2 = tokens[tokens.length - 1];
@@ -38037,7 +44271,7 @@ function parse3(tokens) {
             return { k: "date", year, month, day, iso: false };
           }
         }
-        return { k: "num", dec: t2.dec };
+        return { k: "num", dec: t2.dec, ...t2.auth !== void 0 && { auth: t2.auth } };
       }
       case "fraction":
         return { k: "frac", num: t2.num, den: t2.den };
@@ -38050,7 +44284,7 @@ function parse3(tokens) {
         if (lower === "pi" || lower === "\u03C0") return { k: "mathConst", name: "pi" };
         if (lower === "tau") return { k: "mathConst", name: "tau" };
         const constant = CONSTANTS[lower];
-        if (constant !== void 0) return { k: "num", dec: new DecC(constant) };
+        if (constant !== void 0) return { k: "num", dec: new DecC(constant), auth: false };
         const fnDef = FUNCTION_DEFS[lower];
         if (fnDef && tokens[pos]?.kind === "lparen") {
           pos++;
@@ -38222,14 +44456,14 @@ function parse3(tokens) {
         }
         if (isCurrencyWord(t2.text) && tokens[pos]?.kind === "number") {
           const amount = tokens[pos++];
-          return tryRateSuffix({ k: "unit", e: { k: "num", dec: amount.dec }, word: t2.text });
+          return tryRateSuffix({ k: "unit", e: { k: "num", dec: amount.dec, ...amount.auth !== void 0 && { auth: amount.auth } }, word: t2.text });
         }
         const wf = WORD_FRACTIONS[lower];
         if (wf) {
           const next = tokens[pos];
           if (next?.kind === "word" && PERCENT_PREPOSITIONS[next.text.toLowerCase()] === "of") pos++;
           const arg = expr(30);
-          const factor = wf.den === 1n ? { k: "num", dec: new DecC(wf.num.toString()) } : { k: "frac", num: wf.num, den: wf.den };
+          const factor = wf.den === 1n ? { k: "num", dec: new DecC(wf.num.toString()), auth: true } : { k: "frac", num: wf.num, den: wf.den };
           return { k: "bin", op: "*", l: factor, r: arg };
         }
         return { k: "var", name: t2.text };
@@ -38334,7 +44568,7 @@ function parse3(tokens) {
             const n2 = tokens[pos];
             const u2 = spanUnitOf(tokens[pos + 1].text);
             pos += 2;
-            left = { k: "bin", op: "+", l: left, r: { k: "span", e: { k: "num", dec: n2.dec }, unit: u2 } };
+            left = { k: "bin", op: "+", l: left, r: { k: "span", e: { k: "num", dec: n2.dec, ...n2.auth !== void 0 && { auth: n2.auth } }, unit: u2 } };
           }
           continue;
         }
@@ -38412,7 +44646,7 @@ function parse3(tokens) {
             throw new ParseError("syntax", `\u201C${t2.text} ${n2.text}\u201D must be followed by \u201Cd\xE9cimales\u201D/\u201Cdp\u201D`);
           }
           pos++;
-          left = { k: "call", fn: "round", args: [left, { k: "num", dec: n2.dec }] };
+          left = { k: "call", fn: "round", args: [left, { k: "num", dec: n2.dec, ...n2.auth !== void 0 && { auth: n2.auth } }] };
           continue;
         }
         const prep = PERCENT_PREPOSITIONS[t2.text.toLowerCase()];
@@ -38437,12 +44671,12 @@ function parse3(tokens) {
             const denSpan = spanUnitOf(denTok.text);
             if (denSpan !== void 0 && !isUnitWord(denTok.text)) {
               pos++;
-              left = { k: "bin", op: "/", l: left, r: { k: "span", e: { k: "num", dec: new DecC(1) }, unit: denSpan } };
+              left = { k: "bin", op: "/", l: left, r: { k: "span", e: { k: "num", dec: new DecC(1), auth: true }, unit: denSpan } };
               continue;
             }
             if (isUnitWord(denTok.text)) {
               pos++;
-              left = { k: "bin", op: "/", l: left, r: { k: "unit", e: { k: "num", dec: new DecC(1) }, word: denTok.text } };
+              left = { k: "bin", op: "/", l: left, r: { k: "unit", e: { k: "num", dec: new DecC(1), auth: true }, word: denTok.text } };
               continue;
             }
           }
@@ -38551,7 +44785,7 @@ function parseSpanTokens(tokens) {
     const u2 = tokens[i2 + 1];
     const unit = u2?.kind === "word" ? spanUnitOf(u2.text) : void 0;
     if (n2?.kind === "number" && unit) {
-      parts.push({ k: "span", e: { k: "num", dec: n2.dec }, unit });
+      parts.push({ k: "span", e: { k: "num", dec: n2.dec, ...n2.auth !== void 0 && { auth: n2.auth } }, unit });
       i2 += 2;
     } else {
       parts.length = 0;
@@ -38632,7 +44866,7 @@ function matchFinancePrototypes(tokens) {
     let years;
     if (tokens[n2 - 1]?.kind === "word" && spanUnitOf(tokens[n2 - 1].text) === "year" && tokens[n2 - 2]?.kind === "number") {
       yearsStart = n2 - 2;
-      years = { k: "span", e: { k: "num", dec: tokens[n2 - 2].dec }, unit: "year" };
+      years = { k: "span", e: { k: "num", dec: tokens[n2 - 2].dec, ...tokens[n2 - 2].auth !== void 0 && { auth: tokens[n2 - 2].auth } }, unit: "year" };
     } else if (refStart9(n2) !== null) {
       yearsStart = refStart9(n2);
       years = parse3(tokens.slice(yearsStart));
@@ -39180,6 +45414,2497 @@ function monetize(ast, currency) {
 function resolveFinancialCurrency(financial) {
   if (!financial) return null;
   return typeof financial === "object" ? financial.currency ?? "CHF" : "CHF";
+}
+
+// ../textual-calculator/core/packages/engine/src/provider-residue.ts
+var enc94 = (parts) => `v1(${parts.map((p9) => `${p9.length}:${p9}`).join(",")})`;
+function contribCanonKey9(c2) {
+  if (!ProviderContribution.is9(c2)) throw new Error("provider-residue: forged ProviderContribution rejected");
+  const poly9 = (p9) => p9.entries.flatMap((e9) => [e9.shape.key, e9.mono.key, `${e9.coeff.n}/${e9.coeff.d}`]);
+  return enc94(["pcv1", c2.thirty ? "t30" : "std", "N", ...poly9(c2.num), "D", ...poly9(c2.den)]);
+}
+function compositeOfResidue9(residue9) {
+  const decoded9 = captureResidueMetadata9(residue9);
+  return decoded9.ok ? { ok: true, provider: decoded9.provider, authority: decoded9.hasAuthority ? true : null } : decoded9;
+}
+function residueOfContribution9(c2) {
+  if (!ProviderContribution.is9(c2)) throw new Error("provider-residue: forged ProviderContribution rejected");
+  return Object.freeze({ key: contribCanonKey9(c2), value: c2 });
+}
+function contributionOfResidue9(r3) {
+  const decoded9 = compositeOfResidue9(r3);
+  if (!decoded9.ok) return decoded9;
+  if (decoded9.provider === null) return { ok: false, reason: "no-provider" };
+  return { ok: true, value: decoded9.provider };
+}
+function replaceFractionResidueComponents9(fraction9, patch9) {
+  const decoded9 = captureBoundResidue9(fraction9);
+  if (!decoded9.ok) return decoded9;
+  const provider9 = "provider" in patch9 ? patch9.provider ?? null : decoded9.provider;
+  const authority9 = "authority" in patch9 ? patch9.authority ?? null : decoded9.authority;
+  if (authority9 !== null) {
+    if (captureBoundFraction9(authority9) !== fraction9) return { ok: false, reason: "face-mismatch" };
+    if (provider9 !== null) {
+      const providerBound9 = bindResidue9(fraction9.withoutProvResidue9(), provider9);
+      if (!providerBound9.ok) return providerBound9;
+    }
+    return { ok: true, fraction: captureBoundFraction9(captureAttachProvider9(authority9, provider9)) };
+  }
+  const bare9 = fraction9.withoutProvResidue9();
+  if (provider9 === null) return { ok: true, fraction: bare9 };
+  const bound9 = bindResidue9(bare9, provider9);
+  return bound9.ok ? { ok: true, fraction: bare9.withProvResidue9(bound9.residue) } : bound9;
+}
+var providerComponent9 = (result9) => {
+  if (!result9.ok) return result9;
+  const reduced9 = contribReduce9(result9.value);
+  if (reduced9.kind === "error") return { ok: false, reason: reduced9.reason };
+  return { ok: true, value: reduced9.kind === "zero-provider-free" || reduced9.providerFree ? null : result9.value };
+};
+var emitProviderOnly9 = (provider9) => {
+  if (!provider9.ok) return { kind: "error", reason: provider9.reason };
+  if (provider9.value === null) return { kind: "purged" };
+  return { kind: "residue", residue: residueOfContribution9(provider9.value) };
+};
+function resAdd9(a9, b9) {
+  return resBinaryComposite9("+", a9, b9);
+}
+function resSub9(a9, b9) {
+  return resBinaryComposite9("-", a9, b9);
+}
+function resMul9(a9, b9) {
+  return resBinaryComposite9("*", a9, b9);
+}
+function resDiv9(a9, b9) {
+  return resBinaryComposite9("/", a9, b9);
+}
+function resBinaryComposite9(op9, a9, b9) {
+  const da9 = compositeOfResidue9(a9);
+  if (!da9.ok) return { kind: "error", reason: da9.reason };
+  const db9 = compositeOfResidue9(b9);
+  if (!db9.ok) return { kind: "error", reason: db9.reason };
+  const provider9 = da9.provider === null && db9.provider === null ? { ok: true, value: null } : da9.provider === null || db9.provider === null ? { ok: false, reason: "no-provider" } : providerComponent9(op9 === "+" ? contribAdd9(da9.provider, db9.provider) : op9 === "-" ? contribSub9(da9.provider, db9.provider) : op9 === "*" ? contribMul9(da9.provider, db9.provider) : contribDiv9(da9.provider, db9.provider));
+  if (da9.authority !== null || db9.authority !== null) return { kind: "error", reason: "missing-operation-authority" };
+  return emitProviderOnly9(provider9);
+}
+var projFree9 = (p9) => {
+  const out9 = /* @__PURE__ */ new Map();
+  for (const e9 of p9.entries) {
+    const prev9 = out9.get(e9.shape.key);
+    out9.set(e9.shape.key, prev9 === void 0 ? rnorm(e9.coeff) : rAdd(prev9, e9.coeff));
+  }
+  for (const [k9, v9] of out9) if (rnorm(v9).n === 0n) out9.delete(k9);
+  return out9;
+};
+var canonFace9 = (list9, thirty9) => {
+  const out9 = /* @__PURE__ */ new Map();
+  for (const t9 of list9) {
+    const b9 = termShapeOfIrr9(t9, thirty9);
+    const prev9 = out9.get(b9.shape.key);
+    out9.set(b9.shape.key, prev9 === void 0 ? rnorm(b9.coeff) : rAdd(prev9, b9.coeff));
+  }
+  for (const [k9, v9] of out9) if (rnorm(v9).n === 0n) out9.delete(k9);
+  return out9;
+};
+var facesEqual9 = (a9, b9) => {
+  if (a9.size !== b9.size) return false;
+  for (const [k9, v9] of a9) {
+    const w9 = b9.get(k9);
+    if (w9 === void 0) return false;
+    const nv9 = rnorm(v9);
+    const nw9 = rnorm(w9);
+    if (nv9.n !== nw9.n || nv9.d !== nw9.d) return false;
+  }
+  return true;
+};
+function bindResidue9(sf, c2) {
+  if (!ProviderContribution.is9(c2)) return { ok: false, reason: "forged-contribution" };
+  const thirty9 = sf.thirty9();
+  if (thirty9 !== c2.thirty) return { ok: false, reason: "calendar-mismatch" };
+  const slots92 = sf.writeLegacy();
+  if (!facesEqual9(projFree9(c2.num), canonFace9(slots92.terms, thirty9))) return { ok: false, reason: "face-mismatch" };
+  if (!facesEqual9(projFree9(c2.den), canonFace9(slots92.termsDen ?? ONE_TERMS(), thirty9))) return { ok: false, reason: "face-mismatch" };
+  return { ok: true, residue: residueOfContribution9(c2) };
+}
+function resCombine9(op, a2, b2, thirty) {
+  void thirty;
+  switch (op) {
+    case "+":
+      return resAdd9(a2, b2);
+    case "-":
+      return resSub9(a2, b2);
+    case "*":
+      return resMul9(a2, b2);
+    case "/":
+      return resDiv9(a2, b2);
+  }
+}
+function liftFractionResidue9(sf) {
+  const thirty9 = sf.thirty9();
+  const z9 = sf.zeroState();
+  if (z9 === "auxiliary-zero") return { ok: false, reason: "undecidable" };
+  const slots92 = sf.writeLegacy();
+  const polyOf9 = (list9) => {
+    let acc9 = { ok: true, value: polyZero9(thirty9) };
+    for (const t9 of list9) {
+      const e9 = polyEntry9(termShapeOfIrr9(t9, thirty9), MONO_UNIT9);
+      if (!e9.ok) return e9;
+      acc9 = polyAdd9(acc9.value, e9.value);
+      if (!acc9.ok) return acc9;
+    }
+    return acc9;
+  };
+  const num9 = polyOf9(slots92.terms);
+  if (!num9.ok) return { ok: false, reason: num9.reason };
+  const den9 = slots92.termsDen === void 0 ? { ok: true, value: polyUnit9(thirty9) } : polyOf9(slots92.termsDen);
+  if (!den9.ok) return { ok: false, reason: den9.reason };
+  const c9 = contribOf9(num9.value, den9.value);
+  if (!c9.ok) return { ok: false, reason: c9.reason === "non-integer-exponent" ? "undecidable" : c9.reason };
+  return residueOfContribution9(c9.value);
+}
+function attachBound9(sf, c2) {
+  const b9 = bindResidue9(sf, c2);
+  if (!b9.ok) return b9;
+  const prev9 = sf.provResidue9();
+  if (prev9 !== null) {
+    const dec9 = captureBoundResidue9(sf);
+    if (!dec9.ok) return dec9;
+    if (dec9.authority !== null) {
+      if (dec9.provider !== null) {
+        const pb9 = bindResidue9(sf, dec9.provider);
+        if (!pb9.ok) return pb9;
+        if (contribCanonKey9(dec9.provider) === contribCanonKey9(c2)) return { ok: true, fraction: sf };
+        return { ok: false, reason: "already-bound" };
+      }
+      return { ok: true, fraction: captureBoundFraction9(captureAttachProvider9(dec9.authority, c2)) };
+    }
+    if (dec9.provider !== null) {
+      const pb9 = bindResidue9(sf, dec9.provider);
+      if (!pb9.ok) return pb9;
+      if (contribCanonKey9(dec9.provider) === contribCanonKey9(c2)) return { ok: true, fraction: sf };
+      return { ok: false, reason: "already-bound" };
+    }
+    return { ok: false, reason: "forged-payload" };
+  }
+  return { ok: true, fraction: sf.withProvResidue9(b9.residue) };
+}
+var captureCleanLiftSeed9 = (rt9, exactReadOverride9, authority9, selectedOverride9) => {
+  if (rt9.t !== "d" && rt9.t !== "f" && rt9.t !== "p" && rt9.t !== "q") return { ok: false, reason: "non-numeric" };
+  const exactRead9 = exactReadOverride9 === void 0 ? readB1RT9(rt9) : exactReadOverride9;
+  if (exactRead9 === null) return { ok: false, reason: "non-numeric" };
+  if (rt9.t !== "q") return { ok: true, seed: Object.freeze({
+    exactRead: rnorm(exactRead9),
+    authority: authority9,
+    numComps: Object.freeze([]),
+    denComps: null,
+    affine: false
+  }) };
+  const q9 = rt9;
+  const mechanism9 = selectedOverride9 ?? selectB1UnitEnvelope9(q9);
+  if (mechanism9.kind === "invalid-unit-envelope") return { ok: false, reason: "invalid-unit-envelope" };
+  const cache9 = /* @__PURE__ */ new Map();
+  const snapDef92 = (raw9) => {
+    let snap9 = cache9.get(raw9);
+    if (snap9 === void 0) {
+      snap9 = snapshotUnitDefForReemit9(raw9);
+      cache9.set(raw9, snap9);
+    }
+    return snap9;
+  };
+  const snapComp9 = (raw9) => {
+    const def9 = raw9.def;
+    const exp9 = raw9.exp;
+    return Object.freeze({ def: snapDef92(def9), exp: exp9 });
+  };
+  let numComps9;
+  let denComps9 = null;
+  if (mechanism9.kind === "comps") {
+    numComps9 = mechanism9.comps.map(snapComp9);
+  } else if (mechanism9.kind === "rate") {
+    const num9 = mechanism9.rate.num;
+    const den9 = mechanism9.rate.den;
+    numComps9 = [Object.freeze({ def: snapDef92(num9), exp: 1 })];
+    denComps9 = [Object.freeze({ def: snapDef92(den9), exp: 1 })];
+  } else if (mechanism9.kind === "def") {
+    numComps9 = [Object.freeze({ def: snapDef92(mechanism9.def), exp: 1 })];
+  } else {
+    numComps9 = [];
+  }
+  const selected9 = denComps9 === null ? numComps9 : [...numComps9, ...denComps9];
+  if (selected9.some((c9) => c9.def.currency !== void 0 && !pureCurrencyLabelForReemit9(c9.def))) {
+    return { ok: false, reason: "dirty-currency" };
+  }
+  return { ok: true, seed: Object.freeze({
+    exactRead: rnorm(exactRead9),
+    authority: authority9,
+    numComps: Object.freeze(numComps9),
+    denComps: denComps9 === null ? null : Object.freeze(denComps9),
+    affine: selected9.some((c9) => c9.def.affine !== void 0)
+  }) };
+};
+var attachCaptureAuthority9 = (sourceRT9, numComps9, denComps9, thirty9) => {
+  const built9 = captureLexicalFraction9(sourceRT9, numComps9, denComps9, thirty9);
+  if (!built9.ok) return {
+    ok: false,
+    reason: built9.reason === "missing-capture-source" ? "missing-operation-authority" : `shadow:${built9.reason}`
+  };
+  return { ok: true, fraction: captureBoundFraction9(built9.value) };
+};
+var fractionHasAux9 = (fraction9) => {
+  const [num9, den9] = fractionFaces9(fraction9);
+  return num9.some((term9) => term9.aux) || den9.some((term9) => term9.aux);
+};
+var prepareCausalShadow9 = (fraction9, sourceRT9, sourceExactRead9) => {
+  const residue9 = fraction9.provResidue9();
+  if (residue9 !== null) {
+    const decoded9 = captureBoundResidue9(fraction9);
+    if (!decoded9.ok) return decoded9;
+    if (decoded9.authority !== null) return { ok: true, fraction: fraction9 };
+  }
+  if (sourceRT9 !== null && captureLexicalValue9(sourceRT9) !== null) {
+    const [num9, den9] = fractionFaces9(fraction9);
+    const sourceRead9 = sourceExactRead9 === void 0 ? readB1RT9(sourceRT9) : sourceExactRead9;
+    const numRead9 = num9.length === 1 ? rnorm(num9[0].x) : null;
+    const exact9 = sourceRead9 === null ? null : rnorm(sourceRead9);
+    if (numRead9 === null || exact9 === null || numRead9.n !== exact9.n || numRead9.d !== exact9.d) {
+      return { ok: false, reason: "missing-operation-authority" };
+    }
+    const denTrivial9 = den9.length === 1 && den9[0].comps.length === 0 && rnorm(den9[0].x).n === 1n && rnorm(den9[0].x).d === 1n;
+    const denUnit9 = denTrivial9 || den9.length === 1 && rnorm(den9[0].x).n === 1n && rnorm(den9[0].x).d === 1n;
+    if (!denUnit9) return { ok: false, reason: "missing-operation-authority" };
+    return attachCaptureAuthority9(sourceRT9, num9[0].comps, denTrivial9 ? null : den9[0].comps, fraction9.thirty9());
+  }
+  if (fractionHasAux9(fraction9)) return { ok: false, reason: "missing-operation-authority" };
+  return { ok: true, fraction: fraction9 };
+};
+var liftCapturedCleanB1Operand9 = (seed9, thirty9, sourceRT9 = null, enforceCausal9 = false, boundedApproximation9 = false) => {
+  if (seed9.affine) return { ok: false, reason: "affine-unproven" };
+  const state9 = authStateOf9(seed9.authority.authority, false);
+  const hasSource9 = sourceRT9 !== null && captureLexicalValue9(sourceRT9) !== null;
+  if (enforceCausal9 && state9 !== "auth" && !hasSource9 && !boundedApproximation9) {
+    return { ok: false, reason: "missing-operation-authority" };
+  }
+  const aux9 = enforceCausal9 ? hasSource9 : state9 !== "auth";
+  let fraction9;
+  if (seed9.numComps.length === 0 && seed9.denComps === null) {
+    fraction9 = ShadowFraction.scalar(seed9.exactRead, aux9, thirty9);
+  } else {
+    const num9 = [{ x: seed9.exactRead, comps: [...seed9.numComps], aux: aux9 }];
+    const den9 = seed9.denComps === null ? void 0 : [{ x: { n: 1n, d: 1n }, comps: [...seed9.denComps], aux: false }];
+    const fr9 = ShadowFraction.fromLegacy(num9, den9, thirty9);
+    if (fr9.kind !== "ok") return { ok: false, reason: `shadow:${fr9.kind}` };
+    fraction9 = fr9.value;
+  }
+  return enforceCausal9 && hasSource9 ? attachCaptureAuthority9(sourceRT9, seed9.numComps, seed9.denComps, thirty9) : { ok: true, fraction: fraction9 };
+};
+var liftB1OperandCaptured9 = (rt2, exactRead, thirty9, authorityOverride9, enforceCausal9 = false) => {
+  const hasSource9 = captureLexicalValue9(rt2) !== null;
+  const captured9 = snapshotShadowRT9(rt2, thirty9);
+  if (captured9.kind === "invalid-authority-state") return { ok: false, reason: "invalid-authority-state" };
+  const frozenRT9 = captured9.rt;
+  const authority9 = { authority: frozenRT9.foldA9 };
+  const hasShadow9 = captured9.shadow.kind !== "no-shadow";
+  if (authStateOf9(authority9.authority, hasShadow9) === "invalid-authority-state") {
+    return { ok: false, reason: "invalid-authority-state" };
+  }
+  const mechanism9 = frozenRT9.t === "q" ? selectB1UnitEnvelope9(frozenRT9) : void 0;
+  if (mechanism9?.kind === "invalid-unit-envelope") return { ok: false, reason: "invalid-unit-envelope" };
+  if (hasShadow9) {
+    if (captured9.shadow.kind !== "ok") return { ok: false, reason: `shadow:${captured9.shadow.kind}` };
+    return enforceCausal9 ? prepareCausalShadow9(captured9.shadow.value, hasSource9 ? rt2 : null) : { ok: true, fraction: captured9.shadow.value };
+  }
+  const seed9 = captureCleanLiftSeed9(frozenRT9, exactRead, authorityOverride9 ?? authority9, mechanism9);
+  return seed9.ok ? liftCapturedCleanB1Operand9(seed9.seed, thirty9, hasSource9 ? rt2 : null, enforceCausal9) : seed9;
+};
+var liftKnownCleanB1Operand9 = (rt9, exactRead9, thirty9, authority9, selected9, sourceRT9 = null, enforceCausal9 = false) => {
+  const seed9 = captureCleanLiftSeed9(rt9, exactRead9, authority9, selected9);
+  return seed9.ok ? liftCapturedCleanB1Operand9(seed9.seed, thirty9, sourceRT9, enforceCausal9) : seed9;
+};
+var readB1RT9 = (rt9) => {
+  if (rt9.t === "f") return rnorm({ n: rt9.n, d: rt9.d });
+  if (rt9.t === "d" || rt9.t === "p" || rt9.t === "q") return rt9.vx ?? decToRat(rt9.v);
+  return null;
+};
+var existingBoundResidue9 = (sf9) => {
+  const residue9 = sf9.provResidue9();
+  if (residue9 === null) return { kind: "none", authority: null };
+  const decoded9 = captureBoundResidue9(sf9);
+  if (!decoded9.ok) return {
+    kind: "error",
+    reason: decoded9.reason
+  };
+  if (decoded9.provider === null) return { kind: "none", authority: decoded9.authority };
+  const bound9 = bindResidue9(sf9, decoded9.provider);
+  if (!bound9.ok) return { kind: "error", reason: bound9.reason };
+  return { kind: "bound", contribution: decoded9.provider, authority: decoded9.authority };
+};
+var existingOutputResidueFromShadow9 = (shadow9) => {
+  if (shadow9.kind === "no-shadow") return { kind: "none", authority: null };
+  if (shadow9.kind === "invalid-denominator") return { kind: "error", reason: "shadow:invalid-denominator" };
+  if (shadow9.kind === "undecidable-denominator") return { kind: "error", reason: "shadow:undecidable-denominator" };
+  return existingBoundResidue9(shadow9.value);
+};
+var transformError9 = (failure9) => ({
+  kind: "error",
+  reason: failure9.reason
+});
+var captureTransformReason9 = (reason9) => reason9 === "forged-bound" ? "forged-payload" : reason9 === "shadow-refused" ? "shadow:unsupported" : reason9;
+var carryCaptureAuthority9 = (input9, output9, authority9, orientation9, effect9) => {
+  const outputParts9 = existingBoundResidue9(output9);
+  if (outputParts9.kind === "error") return { ok: false, reason: outputParts9.reason };
+  if (effect9 === "annihilate" && authority9 !== null) return { ok: false, reason: "missing-operation-authority" };
+  if (effect9 === "annihilate") return { ok: true, fraction: output9 };
+  if (authority9 === null) {
+    return outputParts9.authority === null ? { ok: true, fraction: output9 } : { ok: false, reason: "already-bound" };
+  }
+  void input9;
+  const reframed9 = captureReframeBound9(authority9, output9, orientation9);
+  if (reframed9.kind === "error") return {
+    ok: false,
+    reason: reframed9.reason === "face-mismatch" ? "missing-operation-authority" : captureTransformReason9(reframed9.reason)
+  };
+  const provider9 = outputParts9.kind === "bound" ? outputParts9.contribution : null;
+  if (reframed9.kind === "purged") {
+    if (provider9 === null) return { ok: true, fraction: reframed9.fraction };
+    const rebound9 = attachBound9(reframed9.fraction, provider9);
+    return rebound9.ok ? { ok: true, fraction: rebound9.fraction } : { ok: false, reason: rebound9.reason };
+  }
+  try {
+    return { ok: true, fraction: captureBoundFraction9(captureAttachProvider9(reframed9.value, provider9)) };
+  } catch {
+    return { ok: false, reason: "missing-operation-authority" };
+  }
+};
+var inspectCapturedTransformInput9 = (captured9, thirty9, causalAuthority9) => {
+  if (captured9.kind === "unavailable") return {
+    kind: "error",
+    reason: captured9.reason === "invalid-unit-envelope" ? "invalid-unit-envelope" : "capture-unavailable"
+  };
+  const authority9 = { authority: captured9.authority };
+  const hasShadow9 = captured9.shadow.kind !== "no-shadow";
+  if (authStateOf9(authority9.authority, hasShadow9) === "invalid-authority-state" || captured9.shadow.kind === "invalid-authority-state") {
+    return { kind: "error", reason: "invalid-authority-state" };
+  }
+  const sourceRT9 = captured9.sourceAtom === null ? null : captured9.rt;
+  if (captured9.shadow.kind === "no-shadow") {
+    return { kind: "no-shadow", causalAuthority: causalAuthority9, authority: authority9, sourceRT: sourceRT9 };
+  }
+  if (captured9.shadow.kind !== "ok") return { kind: "error", reason: `shadow:${captured9.shadow.kind}` };
+  const causal9 = causalAuthority9 ? prepareCausalShadow9(captured9.shadow.value, sourceRT9, captured9.exactRead) : { ok: true, fraction: captured9.shadow.value };
+  if (!causal9.ok) return { kind: "error", reason: causal9.reason };
+  const residue9 = existingBoundResidue9(causal9.fraction);
+  if (residue9.kind === "error") return residue9;
+  return {
+    kind: "shadow",
+    causalAuthority: causalAuthority9,
+    fraction: causal9.fraction,
+    residue: residue9,
+    authority: authority9,
+    sourceRT: sourceRT9
+  };
+};
+var monoFromFx9 = (atoms9) => {
+  let mono9 = MONO_UNIT9;
+  for (const a9 of atoms9) {
+    let atom9;
+    try {
+      atom9 = quoteAtom9(a9.from, a9.to, a9.rate, a9.asOf, a9.source);
+    } catch {
+      return { ok: false, reason: "invalid-provider-identity" };
+    }
+    const next9 = monoMul9(mono9, monoOfAtom9(atom9, a9.exp));
+    if (!next9.ok) return { ok: false, reason: "provider-monomial-budget" };
+    mono9 = next9.value;
+  }
+  return mono9;
+};
+var fxFace9 = (input9, output9, recipe9, old9, thirty9) => {
+  if (input9.length !== output9.length || input9.length !== recipe9.length) return { ok: false, reason: "key-mismatch" };
+  const groups9 = /* @__PURE__ */ new Map();
+  for (let i9 = 0; i9 < input9.length; i9++) {
+    const ib9 = termShapeOfIrr9(input9[i9], thirty9);
+    const ob9 = termShapeOfIrr9(output9[i9], thirty9);
+    const mono9 = monoFromFx9(recipe9[i9]);
+    if ("ok" in mono9) return mono9;
+    const prev9 = groups9.get(ib9.shape.key);
+    if (prev9 === void 0) groups9.set(ib9.shape.key, { inCoeff: ib9.coeff, mono: mono9, outs: [ob9] });
+    else {
+      if (prev9.mono.key !== mono9.key) return { ok: false, reason: "key-mismatch" };
+      prev9.inCoeff = rAdd(prev9.inCoeff, ib9.coeff);
+      prev9.outs.push(ob9);
+    }
+  }
+  let acc9 = { ok: true, value: polyZero9(thirty9) };
+  for (const entry9 of old9.entries) {
+    const group9 = groups9.get(entry9.shape.key);
+    if (group9 === void 0 || group9.inCoeff.n === 0n) return { ok: false, reason: "key-mismatch" };
+    const mm9 = monoMul9(entry9.mono, group9.mono);
+    if (!mm9.ok) return { ok: false, reason: "provider-monomial-budget" };
+    const share9 = rDiv(entry9.coeff, group9.inCoeff);
+    for (const outBuilt9 of group9.outs) {
+      const pe9 = polyEntry9(outBuilt9, mm9.value, share9);
+      if (!pe9.ok) return pe9;
+      acc9 = polyAdd9(acc9.value, pe9.value);
+      if (!acc9.ok) return acc9;
+    }
+  }
+  return acc9;
+};
+var reframeCurrencyAliases9 = (input9, targetDefs9) => {
+  const decoded9 = existingBoundResidue9(input9);
+  if (decoded9.kind === "error") return {
+    ok: false,
+    reason: decoded9.reason === "calendar-mismatch" ? "calendar-mismatch" : decoded9.reason === "forged-payload" || decoded9.reason === "key-mismatch" ? "key-mismatch" : "incongruent-output"
+  };
+  const [inNum9, inDen9] = fractionFaces9(input9);
+  let sawCurrency9 = false;
+  const face9 = (terms9) => {
+    const out9 = [];
+    for (const term9 of terms9) {
+      const comps9 = [];
+      for (const comp9 of term9.comps) {
+        const currency9 = comp9.def.currency;
+        if (currency9 === void 0) {
+          comps9.push({ def: comp9.def, exp: comp9.exp });
+          continue;
+        }
+        sawCurrency9 = true;
+        const target9 = targetDefs9.get(currency9);
+        if (target9 === void 0 || !pureCurrencyLabelForReemit9(comp9.def) || !pureCurrencyLabelForReemit9(target9)) return null;
+        comps9.push({ def: target9, exp: comp9.exp });
+      }
+      out9.push({ x: term9.x, comps: comps9, aux: term9.aux });
+    }
+    return out9;
+  };
+  const outNum9 = face9(inNum9);
+  const outDen9 = face9(inDen9);
+  if (outNum9 === null || outDen9 === null) return { ok: false, reason: "dirty-currency" };
+  if (!sawCurrency9) return { ok: false, reason: "key-mismatch" };
+  const rebuilt9 = ShadowFraction.fromLegacy(outNum9, outDen9, input9.thirty9());
+  if (rebuilt9.kind !== "ok") return { ok: false, reason: "incongruent-output" };
+  let providerOut9 = rebuilt9.value;
+  if (decoded9.kind === "bound") {
+    const emptyRecipe9 = (face92) => face92.map(() => []);
+    const num9 = fxFace9(inNum9, outNum9, emptyRecipe9(inNum9), decoded9.contribution.num, input9.thirty9());
+    if (!num9.ok) return { ok: false, reason: num9.reason === "calendar-mismatch" ? "calendar-mismatch" : "incongruent-output" };
+    const den9 = fxFace9(inDen9, outDen9, emptyRecipe9(inDen9), decoded9.contribution.den, input9.thirty9());
+    if (!den9.ok) return { ok: false, reason: den9.reason === "calendar-mismatch" ? "calendar-mismatch" : "incongruent-output" };
+    const reframed9 = contribOf9(num9.value, den9.value);
+    if (!reframed9.ok) return { ok: false, reason: reframed9.reason === "calendar-mismatch" ? "calendar-mismatch" : "incongruent-output" };
+    const reduced9 = contribReduce9(reframed9.value);
+    if (reduced9.kind === "error") return { ok: false, reason: "incongruent-output" };
+    if (reduced9.kind !== "zero-provider-free" && !reduced9.providerFree) {
+      const attached9 = attachBound9(providerOut9, reframed9.value);
+      if (!attached9.ok) return { ok: false, reason: attached9.reason === "calendar-mismatch" ? "calendar-mismatch" : "incongruent-output" };
+      providerOut9 = attached9.fraction;
+    }
+  }
+  const carried9 = carryCaptureAuthority9(input9, providerOut9, decoded9.authority, "preserve", "carry");
+  return carried9.ok ? carried9 : {
+    ok: false,
+    reason: carried9.reason === "calendar-mismatch" ? "calendar-mismatch" : carried9.reason === "dirty-currency" ? "dirty-currency" : "incongruent-output"
+  };
+};
+var prepareCurrencyAliasQuotient9 = (left9, right9) => {
+  if (left9.thirty9() !== right9.thirty9()) return { ok: false, reason: "calendar-mismatch" };
+  const defsOf9 = (fraction9) => {
+    const defs9 = /* @__PURE__ */ new Map();
+    const [num9, den9] = fractionFaces9(fraction9);
+    for (const term9 of [...num9, ...den9]) {
+      for (const comp9 of term9.comps) {
+        const currency9 = comp9.def.currency;
+        if (currency9 === void 0) continue;
+        if (!pureCurrencyLabelForReemit9(comp9.def)) return { ok: false, reason: "dirty-currency" };
+        const prior9 = defs9.get(currency9);
+        if (prior9 !== void 0 && prior9.id !== comp9.def.id) return { ok: false, reason: "key-mismatch" };
+        defs9.set(currency9, comp9.def);
+      }
+    }
+    return { ok: true, defs: defs9 };
+  };
+  const leftDefs9 = defsOf9(left9);
+  if (!leftDefs9.ok) return leftDefs9;
+  const rightDefs9 = defsOf9(right9);
+  if (!rightDefs9.ok) return rightDefs9;
+  if (leftDefs9.defs.size === 0 && rightDefs9.defs.size === 0) return { ok: true, left: left9, right: right9 };
+  if (leftDefs9.defs.size !== rightDefs9.defs.size || [...leftDefs9.defs].some(([currency9]) => !rightDefs9.defs.has(currency9))) {
+    return { ok: false, reason: "key-mismatch" };
+  }
+  const needsReframe9 = [...leftDefs9.defs].some(([currency9, def9]) => rightDefs9.defs.get(currency9).id !== def9.id);
+  if (!needsReframe9) return { ok: true, left: left9, right: right9 };
+  const targetDefs9 = leftDefs9.defs;
+  const rightOut9 = reframeCurrencyAliases9(right9, targetDefs9);
+  return rightOut9.ok ? { ok: true, left: left9, right: rightOut9.fraction } : rightOut9;
+};
+var materializeFxOutputShadow9 = (input9, out9, meta9, thirty9) => {
+  const [rawInNum9, rawInDen9] = fractionFaces9(input9);
+  const normalizeLaurentFaces9 = (numRaw9, denRaw9) => {
+    const mergeIds9 = (comps9) => {
+      const merged9 = /* @__PURE__ */ new Map();
+      for (const comp9 of comps9) {
+        const prior9 = merged9.get(comp9.def.id);
+        if (prior9 === void 0) merged9.set(comp9.def.id, { def: comp9.def, exp: comp9.exp });
+        else prior9.exp += comp9.exp;
+      }
+      return [...merged9.values()].filter((comp9) => comp9.exp !== 0);
+    };
+    const num92 = numRaw9.map((term9) => ({ ...term9, comps: mergeIds9(term9.comps) }));
+    const den92 = denRaw9.map((term9) => ({ ...term9, comps: mergeIds9(term9.comps) }));
+    if (num92.length === 0 || den92.length === 0) return { num: num92, den: den92 };
+    const currencies9 = /* @__PURE__ */ new Set();
+    for (const term9 of [...num92, ...den92]) {
+      for (const comp9 of term9.comps) {
+        if (comp9.def.currency !== void 0) currencies9.add(comp9.def.currency);
+      }
+    }
+    for (const currency9 of currencies9) {
+      const exponent9 = (term9) => term9.comps.filter((comp9) => comp9.def.currency === currency9).reduce((sum9, comp9) => sum9 + comp9.exp, 0);
+      const exponents9 = [...num92.map(exponent9), ...den92.map(exponent9)];
+      const cut9 = exponents9.some((exp9) => exp9 === 0) ? 0 : Math.min(...exponents9);
+      if (cut9 === 0) continue;
+      const def9 = [...num92, ...den92].flatMap((term9) => term9.comps).find((comp9) => comp9.def.currency === currency9).def;
+      const translate9 = (term9) => ({
+        x: term9.x,
+        comps: mergeIds9([...term9.comps, { def: def9, exp: -cut9 }]),
+        aux: term9.aux
+      });
+      for (let index9 = 0; index9 < num92.length; index9++) num92[index9] = translate9(num92[index9]);
+      for (let index9 = 0; index9 < den92.length; index9++) den92[index9] = translate9(den92[index9]);
+    }
+    return { num: num92, den: den92 };
+  };
+  const normalized9 = normalizeLaurentFaces9(rawInNum9, rawInDen9);
+  const inNum9 = normalized9.num;
+  const inDen9 = normalized9.den;
+  const targetDefs9 = /* @__PURE__ */ new Map();
+  if (out9.t === "q") {
+    for (const comp9 of out9.comps ?? []) if (comp9.def.currency !== void 0) targetDefs9.set(comp9.def.currency, comp9.def);
+    if (out9.def?.currency !== void 0) targetDefs9.set(out9.def.currency, out9.def);
+  }
+  const sameCurrencyShape9 = (a9, b9) => a9.size === b9.size && [...a9].every(([currency9, exp9]) => b9.get(currency9) === exp9);
+  const currencyShapeOf9 = (term9) => {
+    const shape9 = /* @__PURE__ */ new Map();
+    for (const comp9 of term9.comps) {
+      const currency9 = comp9.def.currency;
+      if (currency9 === void 0) continue;
+      const exp9 = (shape9.get(currency9) ?? 0) + comp9.exp;
+      if (exp9 === 0) shape9.delete(currency9);
+      else shape9.set(currency9, exp9);
+    }
+    return shape9;
+  };
+  const face9 = (terms9, recipe9) => {
+    if (terms9.length !== recipe9.length) return { ok: false };
+    const value9 = [];
+    for (let index9 = 0; index9 < terms9.length; index9++) {
+      const term9 = terms9[index9];
+      const atoms9 = recipe9[index9];
+      let x9 = term9.x;
+      for (const atom9 of atoms9) {
+        const exp92 = Number(atom9.exp);
+        if (!Number.isSafeInteger(exp92)) return { ok: false };
+        x9 = rMul(x9, rPowInt(decToRat(new DecC(atom9.rate)), exp92));
+      }
+      if (atoms9.length === 0) {
+        value9.push({ x: x9, comps: term9.comps.map((comp9) => ({ def: comp9.def, exp: comp9.exp })), aux: term9.aux });
+        continue;
+      }
+      const first9 = atoms9[0];
+      const last9 = atoms9.at(-1);
+      const exp9 = first9.exp;
+      const homogeneousChain9 = exp9 !== 0n && atoms9.every((atom9) => atom9.exp === exp9) && atoms9.slice(1).every((atom9, i9) => atoms9[i9].to === atom9.from);
+      if (homogeneousChain9) {
+        const source9 = exp9 > 0n ? first9.from : last9.to;
+        const targetCurrency9 = exp9 > 0n ? last9.to : first9.from;
+        const targetDef9 = targetDefs9.get(targetCurrency9);
+        if (targetDef9 === void 0) return { ok: false };
+        let matches9 = 0;
+        const comps9 = term9.comps.map((comp9) => {
+          const compExp9 = BigInt(comp9.exp);
+          if (comp9.def.currency !== source9 || (compExp9 < 0n ? -compExp9 : compExp9) !== (exp9 < 0n ? -exp9 : exp9)) {
+            return { def: comp9.def, exp: comp9.exp };
+          }
+          matches9++;
+          return { def: targetDef9, exp: comp9.exp };
+        });
+        if (matches9 !== 1) return { ok: false };
+        value9.push({ x: x9, comps: comps9, aux: term9.aux });
+        continue;
+      }
+      const currencyExps9 = currencyShapeOf9(term9);
+      const inputDefs9 = /* @__PURE__ */ new Map();
+      for (const comp9 of term9.comps) if (comp9.def.currency !== void 0) inputDefs9.set(comp9.def.currency, comp9.def);
+      const addCurrency9 = (currency9, delta9) => {
+        const deltaNum9 = Number(delta9);
+        if (!Number.isSafeInteger(deltaNum9)) return false;
+        const next9 = (currencyExps9.get(currency9) ?? 0) + deltaNum9;
+        if (!Number.isSafeInteger(next9)) return false;
+        if (next9 === 0) currencyExps9.delete(currency9);
+        else currencyExps9.set(currency9, next9);
+        return true;
+      };
+      for (const atom9 of atoms9) {
+        if (!addCurrency9(atom9.from, -atom9.exp) || !addCurrency9(atom9.to, atom9.exp)) return { ok: false };
+      }
+      const seen9 = /* @__PURE__ */ new Set();
+      const currencyComps9 = [];
+      const appendCurrency9 = (currency9, def9) => {
+        const actual9 = currencyExps9.get(currency9);
+        if (actual9 === void 0 || actual9 === 0 || seen9.has(currency9)) return;
+        seen9.add(currency9);
+        currencyComps9.push({ def: def9, exp: actual9 });
+      };
+      if (out9.t === "q") {
+        for (const comp9 of out9.comps ?? []) if (comp9.def.currency !== void 0) appendCurrency9(comp9.def.currency, comp9.def);
+        if (out9.def?.currency !== void 0) appendCurrency9(out9.def.currency, out9.def);
+      }
+      for (const [currency9, actual9] of currencyExps9) {
+        if (seen9.has(currency9)) continue;
+        const def9 = targetDefs9.get(currency9) ?? inputDefs9.get(currency9);
+        if (def9 === void 0) return { ok: false };
+        seen9.add(currency9);
+        currencyComps9.push({ def: def9, exp: actual9 });
+      }
+      value9.push({
+        x: x9,
+        comps: [
+          ...term9.comps.filter((comp9) => comp9.def.currency === void 0).map((comp9) => ({ def: comp9.def, exp: comp9.exp })),
+          ...currencyComps9
+        ],
+        aux: term9.aux
+      });
+    }
+    let currencyShape9 = null;
+    for (const term9 of value9) {
+      if (term9.x.n === 0n) continue;
+      const termShape9 = currencyShapeOf9(term9);
+      if (currencyShape9 !== null && !sameCurrencyShape9(currencyShape9, termShape9)) return { ok: false };
+      currencyShape9 = termShape9;
+    }
+    return { ok: true, value: value9, currencyShape: currencyShape9 };
+  };
+  const num9 = face9(inNum9, meta9.num);
+  const den9 = face9(inDen9, meta9.den);
+  if (!num9.ok || !den9.ok) return { kind: "error", reason: "key-mismatch" };
+  if (num9.currencyShape !== null && den9.currencyShape !== null) {
+    const actual9 = new Map(num9.currencyShape);
+    for (const [currency9, exp9] of den9.currencyShape) {
+      const next9 = (actual9.get(currency9) ?? 0) - exp9;
+      if (next9 === 0) actual9.delete(currency9);
+      else actual9.set(currency9, next9);
+    }
+    const expected9 = /* @__PURE__ */ new Map();
+    if (out9.t === "q") {
+      const envelope9 = out9.comps ?? (out9.def === void 0 ? [] : [{ def: out9.def, exp: 1 }]);
+      for (const comp9 of envelope9) {
+        const currency9 = comp9.def.currency;
+        if (currency9 === void 0) continue;
+        const next9 = (expected9.get(currency9) ?? 0) + comp9.exp;
+        if (next9 === 0) expected9.delete(currency9);
+        else expected9.set(currency9, next9);
+      }
+    }
+    if (!sameCurrencyShape9(actual9, expected9)) return { kind: "error", reason: "key-mismatch" };
+  }
+  const fraction9 = ShadowFraction.fromLegacy(num9.value, den9.value, thirty9);
+  return fraction9.kind === "ok" ? { kind: "ok", rt: replaceShadowFromFraction9(out9, fraction9.value) } : { kind: "error", reason: `shadow:${fraction9.kind}` };
+};
+var attachFxTransform9 = (captured9, out9, meta9, thirty9, inspected9) => {
+  if (captured9.kind !== "ok") return { kind: "error", reason: "capture-unavailable" };
+  const input9 = captured9.rt;
+  const inRead9 = captured9.exactRead;
+  const outRead9 = readB1RT9(out9);
+  if (inspected9.kind === "error") return inspected9;
+  const inLift9 = inspected9.kind === "shadow" ? { ok: true, fraction: inspected9.fraction } : liftKnownCleanB1Operand9(input9, inRead9, thirty9, inspected9.authority, inspected9.unitMechanism, inspected9.sourceRT, inspected9.causalAuthority);
+  if (!inLift9.ok) return { kind: "error", reason: inLift9.reason };
+  if (inspected9.kind === "shadow" && shadowFromRT(out9, thirty9).kind === "no-shadow") {
+    const rebuilt9 = materializeFxOutputShadow9(inLift9.fraction, out9, meta9, thirty9);
+    if (rebuilt9.kind === "error") return rebuilt9;
+    out9 = rebuilt9.rt;
+  }
+  const existingIn9 = existingBoundResidue9(inLift9.fraction);
+  if (existingIn9.kind === "error") return existingIn9;
+  const outLift9 = liftB1OperandCaptured9(out9, outRead9, thirty9, inspected9.authority);
+  if (!outLift9.ok) return { kind: "error", reason: outLift9.reason };
+  const existingOut9 = existingBoundResidue9(outLift9.fraction);
+  if (existingOut9.kind === "error") return existingOut9;
+  if (existingIn9.kind === "none" && existingOut9.kind === "bound") return { kind: "error", reason: "already-bound" };
+  let oldContribution9;
+  if (existingIn9.kind === "bound") oldContribution9 = existingIn9.contribution;
+  else {
+    const oldResidue9 = liftFractionResidue9(inLift9.fraction);
+    if (!("key" in oldResidue9)) return { kind: "error", reason: oldResidue9.reason };
+    const old9 = contributionOfResidue9(oldResidue9);
+    if (!old9.ok) return { kind: "error", reason: old9.reason === "no-provider" ? "forged-payload" : old9.reason };
+    oldContribution9 = old9.value;
+  }
+  if (existingOut9.kind === "bound" && contribCanonKey9(existingOut9.contribution) !== contribCanonKey9(oldContribution9)) {
+    return { kind: "error", reason: "already-bound" };
+  }
+  const [inNum9, inDen9] = fractionFaces9(inLift9.fraction);
+  const [outNum9, outDen9] = fractionFaces9(outLift9.fraction);
+  const num9 = fxFace9(inNum9, outNum9, meta9.num, oldContribution9.num, thirty9);
+  if (!num9.ok) return { kind: "error", reason: num9.reason };
+  const den9 = fxFace9(inDen9, outDen9, meta9.den, oldContribution9.den, thirty9);
+  if (!den9.ok) return { kind: "error", reason: den9.reason };
+  const joined9 = contribOf9(num9.value, den9.value);
+  if (!joined9.ok) return { kind: "error", reason: joined9.reason };
+  const reduced9 = contribReduce9(joined9.value);
+  if (reduced9.kind === "error") return { kind: "error", reason: reduced9.reason };
+  const cleanOutResult9 = replaceFractionResidueComponents9(outLift9.fraction, { provider: null });
+  if (!cleanOutResult9.ok) return { kind: "error", reason: cleanOutResult9.reason };
+  const cleanOut9 = cleanOutResult9.fraction;
+  if (reduced9.kind === "zero-provider-free" || reduced9.providerFree) {
+    const authorityOut92 = carryCaptureAuthority9(inLift9.fraction, cleanOut9, existingIn9.authority, "preserve", "carry");
+    return authorityOut92.ok ? {
+      kind: "ok",
+      rt: replaceShadowFromFraction9(out9, authorityOut92.fraction),
+      ownedCausalEffect9: existingIn9.authority === null ? "purged" : "bound"
+    } : transformError9(authorityOut92);
+  }
+  const bound9 = attachBound9(cleanOut9, joined9.value);
+  if (!bound9.ok) return { kind: "error", reason: bound9.reason };
+  const authorityOut9 = carryCaptureAuthority9(inLift9.fraction, bound9.fraction, existingIn9.authority, "preserve", "carry");
+  return authorityOut9.ok ? { kind: "ok", rt: replaceShadowFromFraction9(out9, authorityOut9.fraction), ownedCausalEffect9: "bound" } : transformError9(authorityOut9);
+};
+var carryTransform9 = (captured9, out9, _factor9, thirty9, inspected9, orientation9 = "preserve", effect9 = "carry", authority9 = { kind: "preserve" }) => {
+  if (captured9.kind !== "ok") return { kind: "error", reason: "capture-unavailable" };
+  const input9 = captured9.rt;
+  if (inspected9.kind === "error") return inspected9;
+  const capturedOut9 = snapshotShadowRT9(out9, thirty9);
+  if (capturedOut9.kind === "invalid-authority-state") return { kind: "error", reason: "invalid-authority-state" };
+  const outRT9 = capturedOut9.rt;
+  const outShadow9 = capturedOut9.shadow;
+  if (outShadow9.kind === "ok" && !outShadow9.value.currencyLabelsValidForReemit9()) return { kind: "error", reason: "dirty-currency" };
+  const existingOut9 = existingOutputResidueFromShadow9(outShadow9);
+  if (existingOut9.kind === "error") return existingOut9;
+  if (outRT9.t === "e") return { kind: "ok", rt: outRT9 };
+  if (authority9.kind === "join" && authority9.factorCapture !== void 0) {
+    const baseLift9 = inspected9.kind === "shadow" ? { ok: true, fraction: inspected9.fraction } : liftKnownCleanB1Operand9(
+      input9,
+      captured9.exactRead,
+      thirty9,
+      inspected9.authority,
+      inspected9.unitMechanism,
+      inspected9.sourceRT,
+      true
+    );
+    if (!baseLift9.ok) return { kind: "error", reason: baseLift9.reason };
+    const factorCaptured9 = authority9.factorCapture;
+    if (factorCaptured9.kind !== "ok" || factorCaptured9.exactRead === null) return { kind: "error", reason: "capture-unavailable" };
+    const factorInput9 = inspectCapturedTransformInput9(factorCaptured9, thirty9, true);
+    if (factorInput9.kind === "error") return factorInput9;
+    const factorLift0 = factorInput9.kind === "shadow" ? { ok: true, fraction: factorInput9.fraction } : liftKnownCleanB1Operand9(
+      factorCaptured9.rt,
+      factorCaptured9.exactRead,
+      thirty9,
+      factorInput9.authority,
+      factorInput9.unitMechanism,
+      factorInput9.sourceRT,
+      true
+    );
+    if (!factorLift0.ok) return { kind: "error", reason: factorLift0.reason };
+    const factorScale9 = factorCaptured9.causalScale ?? { n: 1n, d: 1n };
+    if (_factor9 === null || rnorm(rMul(factorCaptured9.exactRead, factorScale9)).n !== rnorm(_factor9).n || rnorm(rMul(factorCaptured9.exactRead, factorScale9)).d !== rnorm(_factor9).d) {
+      return { kind: "error", reason: "key-mismatch" };
+    }
+    const factorTransformed9 = rnorm(factorScale9).n === rnorm(factorScale9).d ? { result: { kind: "ok", fraction: factorLift0.fraction }, causalEffect: "bound" } : transformWithShadowCausal9({ kind: "scale", factor: factorScale9 }, factorLift0.fraction);
+    if (factorTransformed9.result.kind === "shadow-refused") return { kind: "error", reason: `shadow:${factorTransformed9.result.shadow.kind}` };
+    if (factorTransformed9.result.kind === "error") return {
+      kind: "error",
+      reason: factorTransformed9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : factorTransformed9.result.reason
+    };
+    const composed9 = composeWithShadowCausal9("*", baseLift9.fraction, factorTransformed9.result.fraction);
+    if (composed9.result.kind === "shadow-refused") return { kind: "error", reason: `shadow:${composed9.result.shadow.kind}` };
+    if (composed9.result.kind === "error") return {
+      kind: "error",
+      reason: composed9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : composed9.result.reason
+    };
+    if (composed9.causalEffect === "unexpected-loss") return { kind: "error", reason: "missing-operation-authority" };
+    return {
+      kind: "ok",
+      rt: replaceShadowFromFraction9(stripShadowFromRT9(outRT9), composed9.result.fraction),
+      ownedCausalEffect9: composed9.causalEffect
+    };
+  }
+  if (inspected9.kind === "no-shadow") {
+    if (existingOut9.kind === "bound") return { kind: "error", reason: "already-bound" };
+    const sourceState9 = authStateOf9(inspected9.authority.authority, false);
+    if (inspected9.causalAuthority && sourceState9 === "aux" && inspected9.sourceRT === null) {
+      return { kind: "error", reason: "missing-operation-authority" };
+    }
+    if (inspected9.causalAuthority && inspected9.sourceRT !== null) {
+      const causalIn9 = liftKnownCleanB1Operand9(
+        input9,
+        captured9.exactRead,
+        thirty9,
+        inspected9.authority,
+        inspected9.unitMechanism,
+        inspected9.sourceRT,
+        true
+      );
+      if (!causalIn9.ok) return { kind: "error", reason: causalIn9.reason };
+      const factor9 = _factor9 ?? { n: 1n, d: 1n };
+      const transformed9 = transformWithShadowCausal9({ kind: "scale", factor: factor9 }, causalIn9.fraction);
+      if (transformed9.result.kind === "shadow-refused") return { kind: "error", reason: `shadow:${transformed9.result.shadow.kind}` };
+      if (transformed9.result.kind === "error") return {
+        kind: "error",
+        reason: transformed9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : transformed9.result.reason
+      };
+      if (transformed9.causalEffect === "unexpected-loss") return { kind: "error", reason: "missing-operation-authority" };
+      const { foldA9: _consumed9, ...bareOut9 } = stripShadowFromRT9(outRT9);
+      const materialized9 = replaceShadowFromFraction9(bareOut9, transformed9.result.fraction);
+      if (!hasShadowFromRT(materialized9)) return { kind: "error", reason: "missing-operation-authority" };
+      return { kind: "ok", rt: materialized9 };
+    }
+    if (outShadow9.kind !== "no-shadow") return { kind: "ok", rt: outRT9 };
+    const right9 = authority9.kind === "preserve" ? AUTH9 : authority9.factor;
+    const cert9 = authJoin9(inspected9.authority.authority, right9);
+    const evidence9 = Object.freeze({ left: inspected9.authority.authority, right: right9, joined: cert9 });
+    return {
+      kind: "ok",
+      rt: cert9 === void 0 ? outRT9 : stampAuth9(outRT9, cert9),
+      authority: evidence9
+    };
+  }
+  const inShadow9 = inspected9.fraction;
+  const existingIn9 = inspected9.residue;
+  if (existingIn9.kind === "error") return existingIn9;
+  if (existingIn9.kind === "none" && existingIn9.authority === null) {
+    if (existingOut9.kind === "bound") return { kind: "error", reason: "already-bound" };
+    return outShadow9.kind === "no-shadow" ? { kind: "ok", rt: replaceShadowFromFraction9(outRT9, inShadow9) } : { kind: "ok", rt: outRT9 };
+  }
+  if (existingIn9.kind === "none" && existingOut9.kind === "bound") return { kind: "error", reason: "already-bound" };
+  if (existingIn9.kind === "bound" && existingOut9.kind === "bound" && contribCanonKey9(existingOut9.contribution) !== contribCanonKey9(existingIn9.contribution)) {
+    return { kind: "error", reason: "already-bound" };
+  }
+  if (effect9 === "annihilate") {
+    if (_factor9 === null || rnorm(_factor9).n !== 0n || orientation9 !== "preserve") {
+      return { kind: "error", reason: "key-mismatch" };
+    }
+    const annihilated9 = transformWithShadowCausal9({ kind: "scale", factor: _factor9 }, inShadow9);
+    if (annihilated9.result.kind === "shadow-refused") {
+      return { kind: "error", reason: `shadow:${annihilated9.result.shadow.kind}` };
+    }
+    if (annihilated9.result.kind === "error") return {
+      kind: "error",
+      reason: annihilated9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : annihilated9.result.reason
+    };
+    if (annihilated9.causalEffect !== "purged") return { kind: "error", reason: "incongruent-output" };
+    return {
+      kind: "ok",
+      rt: capturedOut9.replace(annihilated9.result.fraction),
+      ownedCausalEffect9: annihilated9.causalEffect
+    };
+  }
+  if (_factor9 !== null && rnorm(_factor9).n === 0n) {
+    return existingOut9.kind === "bound" ? { kind: "ok", rt: outRT9 } : { kind: "error", reason: "undecidable" };
+  }
+  if (_factor9 !== null && (existingIn9.authority !== null || existingIn9.kind === "bound") && orientation9 === "preserve" && effect9 === "carry") {
+    const scaled9 = transformWithShadowCausal9({ kind: "scale", factor: _factor9 }, inShadow9);
+    if (scaled9.result.kind === "shadow-refused") return { kind: "error", reason: `shadow:${scaled9.result.shadow.kind}` };
+    if (scaled9.result.kind === "error") return {
+      kind: "error",
+      reason: scaled9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : scaled9.result.reason
+    };
+    return {
+      kind: "ok",
+      rt: capturedOut9.replace(scaled9.result.fraction),
+      ownedCausalEffect9: scaled9.causalEffect
+    };
+  }
+  if (existingIn9.kind === "none" && existingIn9.authority !== null && existingOut9.kind === "none" && _factor9 === null && orientation9 === "preserve" && effect9 === "carry") {
+    const authorityOut92 = carryCaptureAuthority9(
+      inShadow9,
+      inShadow9,
+      existingIn9.authority,
+      "preserve",
+      "carry"
+    );
+    return authorityOut92.ok ? { kind: "ok", rt: capturedOut9.replace(authorityOut92.fraction) } : transformError9(authorityOut92);
+  }
+  if (existingIn9.kind === "none" && outShadow9.kind === "no-shadow") {
+    const authorityOut92 = carryCaptureAuthority9(
+      inShadow9,
+      inShadow9,
+      existingIn9.authority,
+      orientation9,
+      effect9
+    );
+    return authorityOut92.ok ? { kind: "ok", rt: capturedOut9.replace(authorityOut92.fraction) } : transformError9(authorityOut92);
+  }
+  const outRead9 = readB1RT9(outRT9);
+  const outLift9 = outShadow9.kind === "ok" ? { ok: true, fraction: outShadow9.value } : liftKnownCleanB1Operand9(outRT9, outRead9, thirty9, inspected9.authority);
+  if (!outLift9.ok) return { kind: "error", reason: outLift9.reason };
+  let providerOut9 = outLift9.fraction;
+  let providerEffect9;
+  if (existingIn9.kind === "bound") {
+    const [rawNum9, rawDen9] = fractionFaces9(inShadow9);
+    const oriented9 = orientation9 === "invert" ? contribInv9(existingIn9.contribution) : { ok: true, value: existingIn9.contribution };
+    if (!oriented9.ok) return { kind: "error", reason: oriented9.reason };
+    const inNum9 = orientation9 === "invert" ? rawDen9 : rawNum9;
+    const inDen9 = orientation9 === "invert" ? rawNum9 : rawDen9;
+    const [outNum9, outDen9] = fractionFaces9(outLift9.fraction);
+    const emptyRecipe9 = (face9) => face9.map(() => []);
+    const num9 = fxFace9(inNum9, outNum9, emptyRecipe9(inNum9), oriented9.value.num, thirty9);
+    if (!num9.ok) return { kind: "error", reason: num9.reason };
+    const den9 = fxFace9(inDen9, outDen9, emptyRecipe9(inDen9), oriented9.value.den, thirty9);
+    if (!den9.ok) return { kind: "error", reason: den9.reason };
+    const reframed9 = contribOf9(num9.value, den9.value);
+    if (!reframed9.ok) return { kind: "error", reason: reframed9.reason };
+    const red9 = contribReduce9(reframed9.value);
+    if (red9.kind === "error") return { kind: "error", reason: red9.reason };
+    const cleanOutResult9 = replaceFractionResidueComponents9(outLift9.fraction, { provider: null });
+    if (!cleanOutResult9.ok) return { kind: "error", reason: cleanOutResult9.reason };
+    providerOut9 = cleanOutResult9.fraction;
+    if (red9.kind === "zero-provider-free" || red9.providerFree) {
+      providerEffect9 = "purged";
+    } else {
+      const bound9 = attachBound9(providerOut9, reframed9.value);
+      if (!bound9.ok) return { kind: "error", reason: bound9.reason };
+      providerOut9 = bound9.fraction;
+      providerEffect9 = "bound";
+    }
+  }
+  const authorityOut9 = carryCaptureAuthority9(inShadow9, providerOut9, existingIn9.authority, orientation9, effect9);
+  return authorityOut9.ok ? {
+    kind: "ok",
+    rt: capturedOut9.replace(authorityOut9.fraction),
+    ...providerEffect9 === void 0 ? {} : { ownedCausalEffect9: providerEffect9 }
+  } : transformError9(authorityOut9);
+};
+var calendarTransform9 = (out9, thirty9, inspected9, orientation9, effect9) => {
+  if (inspected9.kind === "error") return inspected9;
+  const capturedOut9 = snapshotShadowRT9(out9, thirty9);
+  if (capturedOut9.kind === "invalid-authority-state") return { kind: "error", reason: "invalid-authority-state" };
+  const outRT9 = capturedOut9.rt;
+  const outShadow9 = capturedOut9.shadow;
+  if (outShadow9.kind === "ok" && !outShadow9.value.currencyLabelsValidForReemit9()) return { kind: "error", reason: "dirty-currency" };
+  const outResidue9 = existingOutputResidueFromShadow9(outShadow9);
+  if (outResidue9.kind === "error") return outResidue9;
+  if (inspected9.kind === "no-shadow") {
+    if (outResidue9.kind === "bound") return { kind: "error", reason: "already-bound" };
+    if (outShadow9.kind !== "no-shadow") return { kind: "ok", rt: outRT9 };
+    const cert9 = authJoin9(inspected9.authority.authority, AUTH9);
+    const evidence9 = Object.freeze({ left: inspected9.authority.authority, right: AUTH9, joined: cert9 });
+    return {
+      kind: "ok",
+      rt: cert9 === void 0 ? outRT9 : stampAuth9(outRT9, cert9),
+      authority: evidence9
+    };
+  }
+  if (inspected9.residue.kind === "error") return inspected9.residue;
+  if (inspected9.residue.kind === "none" && inspected9.residue.authority === null) {
+    return outResidue9.kind === "bound" ? { kind: "error", reason: "already-bound" } : { kind: "ok", rt: outRT9 };
+  }
+  if (inspected9.residue.kind === "none" && outResidue9.kind === "bound") return { kind: "error", reason: "already-bound" };
+  if (inspected9.residue.kind === "bound" && outResidue9.kind === "bound" && contribCanonKey9(outResidue9.contribution) !== contribCanonKey9(inspected9.residue.contribution)) {
+    return { kind: "error", reason: "already-bound" };
+  }
+  if (effect9 === "annihilate") {
+    if (inspected9.residue.authority !== null) {
+      const zero9 = ShadowFraction.scalar({ n: 0n, d: 1n }, false, thirty9);
+      const purged9 = captureAbsorbAuthoritativeZero9(
+        inspected9.residue.authority,
+        zero9,
+        orientation9 === "invert" ? "zero-over-bound" : "product"
+      );
+      if (purged9.kind === "error") return { kind: "error", reason: captureTransformReason9(purged9.reason) };
+      if (purged9.kind !== "purged") return { kind: "error", reason: "incongruent-output" };
+      const stripped92 = outShadow9.kind === "ok" ? replaceFractionResidueComponents9(outShadow9.value, { provider: null, authority: null }) : null;
+      if (stripped92 !== null && !stripped92.ok) return { kind: "error", reason: stripped92.reason };
+      return {
+        kind: "ok",
+        rt: stripped92?.ok === true ? capturedOut9.replace(stripped92.fraction) : outRT9,
+        ownedCausalEffect9: "purged"
+      };
+    }
+    const rewritten9 = outShadow9.kind === "ok" ? carryCaptureAuthority9(inspected9.fraction, outShadow9.value, inspected9.residue.authority, orientation9, "annihilate") : null;
+    if (rewritten9 !== null && !rewritten9.ok) return { kind: "error", reason: rewritten9.reason };
+    const stripped9 = rewritten9?.ok === true ? replaceFractionResidueComponents9(rewritten9.fraction, { provider: null, authority: null }) : null;
+    if (stripped9 !== null && !stripped9.ok) return { kind: "error", reason: stripped9.reason };
+    return {
+      kind: "ok",
+      rt: outShadow9.kind === "ok" ? capturedOut9.replace(stripped9.fraction) : outRT9,
+      ownedCausalEffect9: "purged"
+    };
+  }
+  if (outShadow9.kind !== "ok") return { kind: "error", reason: `shadow:${outShadow9.kind}` };
+  let providerOut9 = outShadow9.value;
+  if (inspected9.residue.kind === "bound") {
+    const oriented9 = orientation9 === "invert" ? contribInv9(inspected9.residue.contribution) : { ok: true, value: inspected9.residue.contribution };
+    if (!oriented9.ok) return { kind: "error", reason: oriented9.reason };
+    const [rawNum9, rawDen9] = fractionFaces9(inspected9.fraction);
+    const inNum9 = orientation9 === "invert" ? rawDen9 : rawNum9;
+    const inDen9 = orientation9 === "invert" ? rawNum9 : rawDen9;
+    const [outNum9, outDen9] = fractionFaces9(outShadow9.value);
+    const emptyRecipe9 = (face9) => face9.map(() => []);
+    const num9 = fxFace9(inNum9, outNum9, emptyRecipe9(inNum9), oriented9.value.num, thirty9);
+    if (!num9.ok) return { kind: "error", reason: num9.reason };
+    const den9 = fxFace9(inDen9, outDen9, emptyRecipe9(inDen9), oriented9.value.den, thirty9);
+    if (!den9.ok) return { kind: "error", reason: den9.reason };
+    const reframed9 = contribOf9(num9.value, den9.value);
+    if (!reframed9.ok) return { kind: "error", reason: reframed9.reason };
+    const reduced9 = contribReduce9(reframed9.value);
+    if (reduced9.kind === "error") return { kind: "error", reason: reduced9.reason };
+    const cleanOutResult9 = replaceFractionResidueComponents9(outShadow9.value, { provider: null });
+    if (!cleanOutResult9.ok) return { kind: "error", reason: cleanOutResult9.reason };
+    providerOut9 = cleanOutResult9.fraction;
+    if (reduced9.kind === "zero-provider-free" || reduced9.providerFree) return { kind: "error", reason: "undecidable" };
+    const bound9 = attachBound9(providerOut9, reframed9.value);
+    if (!bound9.ok) return { kind: "error", reason: bound9.reason };
+    providerOut9 = bound9.fraction;
+  }
+  const authorityOut9 = carryCaptureAuthority9(
+    inspected9.fraction,
+    providerOut9,
+    inspected9.residue.authority,
+    orientation9,
+    effect9
+  );
+  return authorityOut9.ok ? {
+    kind: "ok",
+    rt: capturedOut9.replace(authorityOut9.fraction),
+    ...inspected9.residue.kind === "bound" ? { ownedCausalEffect9: "bound" } : {}
+  } : transformError9(authorityOut9);
+};
+var calendarProviderTransform9 = (call9, thirty9, inspected9) => {
+  if (call9.frame.kind !== "quantity-compose" || call9.meta.kind !== "calendar" || call9.frame.capture.kind !== "ok" || inspected9.kind !== "shadow" || inspected9.residue.kind !== "bound") return null;
+  const opCapture9 = call9.frame.capture;
+  const qIsLeft9 = opCapture9.left === call9.capture;
+  const qIsRight9 = opCapture9.right === call9.capture;
+  if (qIsLeft9 === qIsRight9) return { kind: "error", reason: "capture-unavailable" };
+  const spanCaptured9 = qIsLeft9 ? opCapture9.right : opCapture9.left;
+  const spanOperand9 = captureComposeOperand9(spanCaptured9);
+  if (spanOperand9.kind !== "clean") return {
+    kind: "error",
+    reason: spanOperand9.kind === "error" ? spanOperand9.reason : "input-binding-failed"
+  };
+  const causalAnnihilation9 = call9.meta.effect === "annihilate" && inspected9.residue.authority !== null;
+  const spanLift9 = liftCapturedCleanB1Operand9(spanOperand9.seed, thirty9, spanOperand9.sourceRT, causalAnnihilation9);
+  if (!spanLift9.ok) return { kind: "error", reason: spanLift9.reason };
+  const cleanQ9 = replaceFractionResidueComponents9(inspected9.fraction, {
+    provider: null,
+    ...causalAnnihilation9 ? {} : { authority: null }
+  });
+  if (!cleanQ9.ok) return { kind: "error", reason: cleanQ9.reason };
+  if (causalAnnihilation9) {
+    const qDecoded9 = captureBoundResidue9(cleanQ9.fraction);
+    if (!qDecoded9.ok || qDecoded9.authority === null) return {
+      kind: "error",
+      reason: qDecoded9.ok ? "missing-operation-authority" : qDecoded9.reason
+    };
+    const capturedResult9 = captureAbsorbAuthoritativeZero9(
+      qDecoded9.authority,
+      spanLift9.fraction,
+      call9.frame.op === "/" ? "zero-over-bound" : "product"
+    );
+    if (capturedResult9.kind === "error") return { kind: "error", reason: captureTransformReason9(capturedResult9.reason) };
+    if (capturedResult9.kind !== "purged") return { kind: "error", reason: "incongruent-output" };
+    return {
+      kind: "ok",
+      rt: applyB1Compose9({ kind: "ok", fraction: capturedResult9.fraction }, call9.frame.frame).rt,
+      ownedCausalEffect9: "purged"
+    };
+  }
+  let raw9;
+  if (call9.frame.op === "*" && qIsLeft9) raw9 = cleanQ9.fraction.mul(spanLift9.fraction);
+  else if (call9.frame.op === "*" && qIsRight9) raw9 = spanLift9.fraction.mul(cleanQ9.fraction);
+  else if (call9.frame.op === "/" && qIsLeft9) raw9 = cleanQ9.fraction.div(spanLift9.fraction);
+  else {
+    const [qNum9, qDen9] = fractionFaces9(cleanQ9.fraction);
+    const inverse9 = ShadowFraction.fromLegacy([...qDen9], [...qNum9], thirty9);
+    if (inverse9.kind !== "ok") return { kind: "error", reason: `shadow:${inverse9.kind}` };
+    raw9 = spanLift9.fraction.mul(inverse9.value);
+  }
+  if (raw9.kind !== "ok") return { kind: "error", reason: `shadow:${raw9.kind}` };
+  const shell9 = applyB1Compose9({ kind: "ok", fraction: raw9.value }, call9.frame.frame).rt;
+  return calendarTransform9(shell9, thirty9, inspected9, call9.meta.orientation, call9.meta.effect);
+};
+var causalUnaryTransform9 = (call9, candidateShell9, thirty9, inspected9, exposeEffect9, causalInput9) => {
+  const finish9 = (result9, effect9) => exposeEffect9 ? Object.freeze({ ...result9, causalEffect: effect9, causalInput: causalInput9 }) : result9;
+  if (inspected9.kind === "error") return finish9(inspected9, "refused");
+  let inputFraction9;
+  if (inspected9.kind === "shadow") {
+    inputFraction9 = inspected9.fraction;
+  } else {
+    const sourceState9 = authStateOf9(inspected9.authority.authority, false);
+    if (inspected9.sourceRT === null && sourceState9 === "auth") return finish9({ kind: "ok", rt: candidateShell9 }, "none");
+    if (call9.capture.kind !== "ok" || call9.capture.exactRead === null) {
+      return finish9({ kind: "error", reason: "capture-unavailable" }, "refused");
+    }
+    const envelope9 = call9.capture.envelope;
+    if (envelope9?.admission !== void 0 && envelope9.admission !== "ok") {
+      return finish9({ kind: "error", reason: envelope9.admission }, "refused");
+    }
+    const lifted9 = liftCapturedCleanB1Operand9(Object.freeze({
+      exactRead: call9.capture.exactRead,
+      authority: inspected9.authority,
+      numComps: envelope9?.numComps ?? Object.freeze([]),
+      denComps: envelope9?.denComps ?? null,
+      affine: false
+    }), thirty9, inspected9.sourceRT, true);
+    if (!lifted9.ok) return finish9({ kind: "error", reason: lifted9.reason }, "refused");
+    inputFraction9 = lifted9.fraction;
+  }
+  if (call9.meta.op === "pow" && call9.meta.exponent === null) {
+    return finish9({ kind: "error", reason: "non-integer-exponent" }, "refused");
+  }
+  const causalOp9 = call9.meta.op === "negate" ? { kind: "negate" } : { kind: "pow", exponent: call9.meta.exponent };
+  const transformed9 = transformWithShadowCausal9(causalOp9, inputFraction9);
+  if (transformed9.causalEffect === "unexpected-loss") return finish9({ kind: "error", reason: "missing-operation-authority" }, "unexpected-loss");
+  if (transformed9.result.kind === "shadow-refused") return finish9({ kind: "error", reason: `shadow:${transformed9.result.shadow.kind}` }, "refused");
+  if (transformed9.result.kind === "error") return finish9({
+    kind: "error",
+    reason: transformed9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : transformed9.result.reason
+  }, "refused");
+  if (candidateShell9.t === "e") return finish9({ kind: "ok", rt: candidateShell9 }, "refused");
+  let publicShell9 = stripShadowFromRT9(candidateShell9);
+  if (call9.meta.op === "pow" && publicShell9.t !== "q" && transformed9.result.fraction.provResidue9() !== null && transformed9.result.fraction.hasApproxFactor() && transformed9.result.fraction.reduceScalar().kind === "irreducible") {
+    if (call9.capture.kind !== "ok" || call9.capture.exactRead === null || call9.meta.exponent === null || call9.meta.exponent.d !== 1n) {
+      return finish9({ kind: "error", reason: "capture-unavailable" }, "refused");
+    }
+    const exact9 = rPowInt(call9.capture.exactRead, Number(call9.meta.exponent.n));
+    const value9 = ratToDec(exact9);
+    const back9 = decToRat(value9);
+    const norm9 = rnorm(exact9);
+    const carrier9 = {
+      t: "q",
+      v: value9,
+      ...back9.n === norm9.n && back9.d === norm9.d ? {} : { vx: norm9 },
+      dim: {},
+      symbol: "",
+      comps: [],
+      ...publicShell9.capped === true && { capped: true }
+    };
+    const capF9 = publicShell9.capF;
+    if (capF9 !== void 0) carrier9.capF = capF9;
+    publicShell9 = carrier9;
+  }
+  return finish9({ kind: "ok", rt: replaceShadowFromFraction9(publicShell9, transformed9.result.fraction) }, transformed9.causalEffect);
+};
+var transformInputHasCaptureAuthority9 = (input9) => input9.kind === "shadow" ? input9.residue.kind !== "error" && input9.residue.authority !== null : input9.kind === "no-shadow" && input9.causalAuthority && input9.sourceRT !== null;
+var transformInputHasCausalAxis9 = (input9) => input9.kind === "shadow" ? input9.residue.kind !== "error" && (input9.residue.authority !== null || input9.residue.kind === "bound") : transformInputHasCaptureAuthority9(input9);
+var attestTransformCausalEffect9 = (input9, result9, thirty9) => {
+  if (result9.kind === "error" || result9.kind === "ok" && result9.rt.t === "e") return "refused";
+  if (!transformInputHasCaptureAuthority9(input9)) return "none";
+  const out9 = shadowFromRT(result9.rt, thirty9);
+  if (out9.kind !== "ok") return "unexpected-loss";
+  const decoded9 = captureBoundResidue9(out9.value);
+  return decoded9.ok && decoded9.authority !== null ? "bound" : "unexpected-loss";
+};
+var validateOwnedTransformEffect9 = (declared9, causalInput9, result9, thirty9) => {
+  if (!causalInput9) return declared9 === "none" ? "none" : "unexpected-loss";
+  if (result9.kind === "error" || result9.rt.t === "e") return declared9 === "refused" ? "refused" : "unexpected-loss";
+  const shadow9 = shadowFromRT(result9.rt, thirty9);
+  const hasCausalResidue9 = shadow9.kind === "ok" && (() => {
+    const decoded9 = captureBoundResidue9(shadow9.value);
+    return decoded9.ok && (decoded9.authority !== null || decoded9.provider !== null);
+  })();
+  const bounded9 = captureBoundedReserve9(result9.rt);
+  const hasBoundedReserve9 = bounded9.ok && bounded9.value !== null;
+  if (declared9 === "bound") return hasCausalResidue9 || hasBoundedReserve9 ? "bound" : "unexpected-loss";
+  if (declared9 === "purged") return hasCausalResidue9 || hasBoundedReserve9 ? "unexpected-loss" : "purged";
+  return declared9 === "refused" ? "unexpected-loss" : declared9;
+};
+var boundedTransformCause9 = (captured9, inspected9) => {
+  if (captured9.kind !== "ok") return null;
+  if (captured9.boundedCause !== void 0) {
+    const read9 = captureBoundedReserve9(captured9.rt);
+    return read9.ok && read9.value?.cause === captured9.boundedCause ? captured9.boundedCause : null;
+  }
+  if (inspected9.kind === "shadow" && inspected9.residue.kind !== "error" && inspected9.residue.authority !== null && inspected9.residue.kind !== "bound") {
+    try {
+      return captureBoundedCauseFromShadow9(inspected9.residue.authority);
+    } catch {
+      return null;
+    }
+  }
+  if (captured9.sourceAtom !== null) {
+    try {
+      return captureBoundedCauseFromAtom9(captured9.sourceAtom);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+var boundedNumericTransform9 = (call9, candidateShell9, inspected9, exponentInput9) => {
+  if (call9.meta.kind !== "bounded-numeric" || call9.capture.kind !== "ok") {
+    return { kind: "error", reason: "invalid-authority-state" };
+  }
+  if (candidateShell9.t === "e") return { kind: "ok", rt: candidateShell9, ownedCausalEffect9: "refused" };
+  const causes9 = [];
+  const cause9 = boundedTransformCause9(call9.capture, inspected9);
+  if (cause9 !== null) causes9.push(cause9);
+  let step9;
+  if (call9.meta.op === "sqrt") {
+    if (cause9 === null) return { kind: "error", reason: "missing-operation-authority" };
+    step9 = { kind: "sqrt", spelling: call9.meta.spelling };
+  } else {
+    if (call9.meta.exponentCapture.kind !== "ok") return { kind: "error", reason: "capture-unavailable" };
+    const exponentEligibility9 = causalEligibilityOfOperand9(call9.meta.exponentCapture);
+    if (exponentEligibility9.kind === "indeterminate") return { kind: "error", reason: "invalid-authority-state" };
+    if (exponentEligibility9.kind === "causal") {
+      if (exponentInput9 === null || exponentInput9.kind === "error") {
+        return { kind: "error", reason: "power-exponent-authority-unrepresentable" };
+      }
+      const exponentCause9 = boundedTransformCause9(call9.meta.exponentCapture, exponentInput9);
+      if (exponentCause9 === null) return { kind: "error", reason: "power-exponent-authority-unrepresentable" };
+      causes9.push(exponentCause9);
+    }
+    if (causes9.length === 0) return { kind: "error", reason: "missing-operation-authority" };
+    if (call9.meta.exponent.d === 1n) {
+      step9 = { kind: "pow-integer", exponent: call9.meta.exponent.n };
+    } else {
+      if (call9.capture.exactRead === null) return { kind: "error", reason: "capture-unavailable" };
+      step9 = {
+        kind: "pow-rational",
+        baseExact: call9.capture.exactRead,
+        exponent: call9.meta.exponent
+      };
+    }
+  }
+  const bound9 = bindCaptureBoundedReserve9(causes9, candidateShell9, step9);
+  return bound9.ok ? { kind: "ok", rt: candidateShell9, ownedCausalEffect9: "bound" } : { kind: "error", reason: bound9.reason };
+};
+var affineAttachTransform9 = (call9, candidateShell9, thirty9, inspected9) => {
+  if (call9.meta.kind !== "affine-attach") return { kind: "error", reason: "invalid-authority-state" };
+  if (inspected9.kind === "error") return inspected9;
+  let input9;
+  if (inspected9.kind === "shadow") input9 = inspected9.fraction;
+  else {
+    if (call9.capture.kind !== "ok" || call9.capture.exactRead === null) return { kind: "error", reason: "capture-unavailable" };
+    const lifted9 = liftKnownCleanB1Operand9(
+      call9.capture.rt,
+      call9.capture.exactRead,
+      thirty9,
+      inspected9.authority,
+      inspected9.unitMechanism,
+      inspected9.sourceRT,
+      true
+    );
+    if (!lifted9.ok) return { kind: "error", reason: lifted9.reason };
+    input9 = lifted9.fraction;
+  }
+  const scaled9 = transformWithShadowCausal9({ kind: "scale", factor: call9.meta.scale }, input9);
+  if (scaled9.result.kind === "shadow-refused") return { kind: "error", reason: `shadow:${scaled9.result.shadow.kind}` };
+  if (scaled9.result.kind === "error") return {
+    kind: "error",
+    reason: scaled9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : scaled9.result.reason
+  };
+  const offset9 = ShadowFraction.scalar(call9.meta.offset, false, thirty9);
+  const composed9 = composeWithShadowCausal9("+", scaled9.result.fraction, offset9);
+  if (composed9.result.kind === "shadow-refused") return { kind: "error", reason: `shadow:${composed9.result.shadow.kind}` };
+  if (composed9.result.kind === "error") return {
+    kind: "error",
+    reason: composed9.result.reason === "causal-authority-loss" ? "missing-operation-authority" : composed9.result.reason
+  };
+  if (candidateShell9.t === "e") return { kind: "ok", rt: candidateShell9, ownedCausalEffect9: "refused" };
+  const shell9 = shadowFromRT(candidateShell9, thirty9);
+  const composedParts9 = existingBoundResidue9(composed9.result.fraction);
+  if (shell9.kind === "ok" && composedParts9.kind !== "error" && composedParts9.kind !== "bound") {
+    const carried9 = carryCaptureAuthority9(
+      composed9.result.fraction,
+      shell9.value,
+      composedParts9.authority,
+      "preserve",
+      "carry"
+    );
+    if (!carried9.ok) return { kind: "error", reason: carried9.reason };
+    return {
+      kind: "ok",
+      rt: replaceShadowFromFraction9(stripShadowFromRT9(candidateShell9), carried9.fraction),
+      ownedCausalEffect9: composed9.causalEffect
+    };
+  }
+  return {
+    kind: "ok",
+    rt: replaceShadowFromFraction9(stripShadowFromRT9(candidateShell9), composed9.result.fraction),
+    ownedCausalEffect9: composed9.causalEffect
+  };
+};
+var identityReframeTransform9 = (candidateShell9, thirty9, inspected9, captured9) => {
+  if (inspected9.kind === "error") return inspected9;
+  if (inspected9.kind === "no-shadow") {
+    if (!inspected9.causalAuthority || inspected9.sourceRT === null) return { kind: "ok", rt: candidateShell9 };
+    if (captured9.kind !== "ok" || captured9.exactRead === null) return { kind: "error", reason: "capture-unavailable" };
+    const envelope9 = captured9.envelope;
+    if (envelope9?.admission !== void 0 && envelope9.admission !== "ok") return { kind: "error", reason: envelope9.admission };
+    const lifted9 = liftCapturedCleanB1Operand9(Object.freeze({
+      exactRead: captured9.exactRead,
+      authority: inspected9.authority,
+      numComps: envelope9?.numComps ?? Object.freeze([]),
+      denComps: envelope9?.denComps ?? null,
+      affine: false
+    }), thirty9, inspected9.sourceRT, true);
+    if (!lifted9.ok) return { kind: "error", reason: lifted9.reason };
+    return {
+      kind: "ok",
+      rt: replaceShadowFromFraction9(stripShadowFromRT9(candidateShell9), lifted9.fraction),
+      ownedCausalEffect9: "bound"
+    };
+  }
+  const capturedOut9 = snapshotShadowRT9(candidateShell9, thirty9);
+  if (capturedOut9.kind === "invalid-authority-state") return { kind: "error", reason: "invalid-authority-state" };
+  const outResidue9 = existingOutputResidueFromShadow9(capturedOut9.shadow);
+  if (outResidue9.kind === "error") return outResidue9;
+  const providerKey9 = (residue9) => residue9.kind === "bound" ? contribCanonKey9(residue9.contribution) : null;
+  const authorityKey9 = (residue9) => residue9.kind === "error" || residue9.authority === null ? null : captureBoundCanonKey9(residue9.authority);
+  const outHasResidue9 = providerKey9(outResidue9) !== null || authorityKey9(outResidue9) !== null;
+  if (outHasResidue9) {
+    if (inspected9.residue.kind === "error" || providerKey9(outResidue9) !== providerKey9(inspected9.residue) || authorityKey9(outResidue9) !== authorityKey9(inspected9.residue)) {
+      return { kind: "error", reason: "already-bound" };
+    }
+    return {
+      kind: "ok",
+      rt: capturedOut9.rt,
+      ownedCausalEffect9: "bound"
+    };
+  }
+  return {
+    kind: "ok",
+    rt: replaceShadowFromFraction9(stripShadowFromRT9(capturedOut9.rt), inspected9.fraction),
+    ownedCausalEffect9: inspected9.residue.kind !== "error" && (inspected9.residue.authority !== null || inspected9.residue.kind === "bound") ? "bound" : "none"
+  };
+};
+var applyOwnedB1Transform9 = (call9, thirty9, options9 = {}) => {
+  const exposeEffect9 = options9.causalAuthority === true;
+  if (call9.frame.kind === "quantity-compose") {
+    const inspected92 = inspectCapturedTransformInput9(call9.capture, thirty9, exposeEffect9);
+    if (exposeEffect9 && call9.site === "attachUnit" && call9.meta.kind === "reframe" && call9.capture.kind === "ok" && call9.capture.boundedCause !== void 0 && call9.frame.capture.kind === "ok" && call9.frame.frame.kind === "numeric") {
+      const source9 = captureBoundedReserve9(call9.capture.rt);
+      const unitEligibility9 = causalEligibilityOfOperand9(call9.frame.capture.right);
+      if (!source9.ok || source9.value === null || source9.value.cause !== call9.capture.boundedCause || unitEligibility9.kind !== "mechanism") {
+        return Object.freeze({
+          kind: "error",
+          reason: "missing-operation-authority",
+          causalEffect: "refused",
+          causalInput: true
+        });
+      }
+      const output9 = materializeCleanFrame9(call9.frame.frame, void 0).rt;
+      const bound9 = bindCaptureBoundedReserve9([source9.value.cause], output9, { kind: "attach-unit" });
+      if (!bound9.ok) return Object.freeze({
+        kind: "error",
+        reason: bound9.reason,
+        causalEffect: "refused",
+        causalInput: true
+      });
+      return Object.freeze({
+        kind: "ok",
+        rt: output9,
+        ownedCausalEffect9: "bound",
+        causalEffect: "bound",
+        causalInput: true
+      });
+    }
+    const causalCalendar9 = exposeEffect9 && transformInputHasCausalAxis9(inspected92) && (call9.meta.kind !== "calendar" || call9.meta.effect !== "annihilate");
+    const providerCalendar9 = causalCalendar9 ? null : calendarProviderTransform9(call9, thirty9, inspected92);
+    if (providerCalendar9 !== null) {
+      if (!exposeEffect9) return providerCalendar9;
+      const causalInput93 = transformInputHasCausalAxis9(inspected92);
+      const causalEffect92 = providerCalendar9.kind === "ok" && providerCalendar9.ownedCausalEffect9 !== void 0 ? validateOwnedTransformEffect9(providerCalendar9.ownedCausalEffect9, causalInput93, providerCalendar9, thirty9) : attestTransformCausalEffect9(inspected92, providerCalendar9, thirty9);
+      return Object.freeze({ ...providerCalendar9, causalEffect: causalEffect92, causalInput: causalInput93 });
+    }
+    if (!exposeEffect9) {
+      const composed92 = candidateB1Compose9(call9.frame.op, call9.frame.capture, call9.frame.frame, thirty9);
+      return { kind: "ok", rt: composed92.rt };
+    }
+    const leftInput9 = call9.frame.capture.kind === "ok" ? inspectCapturedTransformInput9(call9.frame.capture.left, thirty9, true) : { kind: "error", reason: "capture-unavailable" };
+    const rightInput9 = call9.frame.capture.kind === "ok" ? inspectCapturedTransformInput9(call9.frame.capture.right, thirty9, true) : { kind: "error", reason: "capture-unavailable" };
+    const causalInput92 = transformInputHasCausalAxis9(leftInput9) || transformInputHasCausalAxis9(rightInput9);
+    const composed9 = candidateCausalB1Compose9(call9.frame.op, call9.frame.capture, call9.frame.frame, thirty9);
+    return Object.freeze({ kind: "ok", rt: composed9.rt, causalEffect: composed9.causalEffect, causalInput: causalInput92 });
+  }
+  const inspectedPreview9 = inspectCapturedTransformInput9(call9.capture, thirty9, false);
+  const providerOnlyLegacyAux9 = inspectedPreview9.kind === "shadow" && inspectedPreview9.residue.kind === "bound" && inspectedPreview9.residue.authority === null;
+  const captureAxisPresent9 = call9.capture.kind === "ok" && (call9.capture.sourceAtom !== null || call9.capture.boundedCause !== void 0) || inspectedPreview9.kind === "shadow" && (!providerOnlyLegacyAux9 && fractionHasAux9(inspectedPreview9.fraction) || inspectedPreview9.residue.kind !== "error" && inspectedPreview9.residue.authority !== null);
+  const inspected9 = exposeEffect9 && captureAxisPresent9 ? inspectCapturedTransformInput9(call9.capture, thirty9, true) : inspectedPreview9;
+  const factorInput9 = call9.meta.kind === "scale" && call9.meta.authority.kind === "join" && call9.meta.authority.factorCapture !== void 0 ? inspectCapturedTransformInput9(call9.meta.authority.factorCapture, thirty9, exposeEffect9) : null;
+  const exponentInput9 = (call9.meta.kind === "causal-unary" || call9.meta.kind === "bounded-numeric") && call9.meta.op === "pow" ? inspectCapturedTransformInput9(call9.meta.exponentCapture, thirty9, exposeEffect9) : null;
+  const providerEdgeInput9 = call9.meta.kind === "fx" && [...call9.meta.num, ...call9.meta.den].some((atoms9) => atoms9.length > 0);
+  const boundedInput9 = call9.capture.kind === "ok" && call9.capture.boundedCause !== void 0;
+  const causalInput9 = exposeEffect9 && (boundedInput9 || transformInputHasCausalAxis9(inspected9) || factorInput9 !== null && transformInputHasCausalAxis9(factorInput9) || exponentInput9 !== null && transformInputHasCausalAxis9(exponentInput9) || providerEdgeInput9);
+  const candidateShell9 = call9.frame.kind === "captured-output" ? call9.frame.shell : null;
+  if (candidateShell9 === null) {
+    const refused9 = { kind: "error", reason: "invalid-authority-state" };
+    return exposeEffect9 ? Object.freeze({ ...refused9, causalEffect: "refused", causalInput: causalInput9 }) : refused9;
+  }
+  if (call9.meta.kind === "bounded-numeric") {
+    const core92 = boundedNumericTransform9(call9, candidateShell9, inspected9, exponentInput9);
+    if (!exposeEffect9) return core92;
+    const causalEffect92 = core92.kind === "ok" && core92.ownedCausalEffect9 !== void 0 ? validateOwnedTransformEffect9(core92.ownedCausalEffect9, causalInput9, core92, thirty9) : core92.kind === "error" || core92.rt.t === "e" ? "refused" : "unexpected-loss";
+    return causalEffect92 === "unexpected-loss" ? Object.freeze({ kind: "error", reason: "missing-operation-authority", causalEffect: causalEffect92, causalInput: causalInput9 }) : Object.freeze({ ...core92, causalEffect: causalEffect92, causalInput: causalInput9 });
+  }
+  if (call9.site === "unaryNeg" || call9.site === "power") {
+    if (call9.site === "power" && exponentInput9 !== null) {
+      if (exponentInput9.kind === "error") return exposeEffect9 ? Object.freeze({ ...exponentInput9, causalEffect: "refused", causalInput: causalInput9 }) : exponentInput9;
+      if (transformInputHasCausalAxis9(exponentInput9)) {
+        const refused9 = { kind: "error", reason: "power-exponent-authority-unrepresentable" };
+        return exposeEffect9 ? Object.freeze({ ...refused9, causalEffect: "refused", causalInput: causalInput9 }) : refused9;
+      }
+    }
+    return causalUnaryTransform9(call9, candidateShell9, thirty9, inspected9, exposeEffect9, causalInput9);
+  }
+  if (exposeEffect9 && call9.site === "calendarQuantity" && call9.meta.kind === "calendar" && call9.meta.effect === "carry" && call9.frame.kind === "captured-output" && call9.frame.ownerDecision?.kind === "calendar-refuse" && call9.frame.ownerDecision.reason === "irrational-factor" && inspected9.kind === "shadow" && inspected9.residue.kind !== "error" && inspected9.residue.authority !== null) {
+    const reduced9 = captureBoundReduce9(inspected9.residue.authority);
+    if (reduced9.kind === "reduced" && !reduced9.captureFree) {
+      return Object.freeze({
+        kind: "ok",
+        // The independent owner already built the exact historical error
+        // envelope.  The opaque algebra above owns the refusal decision; the
+        // shell owns its public code/detail.  Reuse that candidate input,
+        // never the differential legacy oracle, so provenance cannot rewrite
+        // otherwise identical user-facing diagnostics.
+        rt: candidateShell9,
+        ownedCausalEffect9: "refused",
+        causalEffect: "refused",
+        causalInput: causalInput9
+      });
+    }
+  }
+  const core9 = inspected9.kind === "error" ? inspected9 : candidateShell9.t === "e" ? { kind: "ok", rt: candidateShell9 } : call9.meta.kind === "fx" ? attachFxTransform9(call9.capture, candidateShell9, call9.meta, thirty9, inspected9) : call9.meta.kind === "affine-attach" && call9.site === "attachUnit" ? affineAttachTransform9(call9, candidateShell9, thirty9, inspected9) : call9.meta.kind === "reframe" && call9.meta.structuralIdentity === true ? identityReframeTransform9(candidateShell9, thirty9, inspected9, call9.capture) : call9.meta.kind === "scale" ? carryTransform9(call9.capture, candidateShell9, call9.meta.factor, thirty9, inspected9, "preserve", call9.meta.effect, call9.meta.authority) : call9.meta.kind === "calendar" ? calendarTransform9(candidateShell9, thirty9, inspected9, call9.meta.orientation, call9.meta.effect) : carryTransform9(call9.capture, candidateShell9, null, thirty9, inspected9);
+  if (!exposeEffect9) return core9;
+  const causalEffect9 = core9.kind === "ok" && core9.ownedCausalEffect9 !== void 0 ? validateOwnedTransformEffect9(core9.ownedCausalEffect9, causalInput9, core9, thirty9) : attestTransformCausalEffect9(inspected9, core9, thirty9);
+  if (causalEffect9 !== "unexpected-loss") return Object.freeze({ ...core9, causalEffect: causalEffect9, causalInput: causalInput9 });
+  return Object.freeze({ kind: "error", reason: "missing-operation-authority", causalEffect: causalEffect9, causalInput: causalInput9 });
+};
+var ownDirectTransformRoute9 = (route9, thirty9) => {
+  const directRoute9 = route9;
+  const capture9 = route9.capture ?? (directRoute9.input === void 0 ? { kind: "unavailable", stage: "outer" } : b1CaptureOperand9(directRoute9.input, thirty9));
+  const frame9 = route9.candidateFrame ?? {
+    kind: "unavailable",
+    reason: "invalid-authority-state"
+  };
+  const legacyOut9 = route9.out;
+  const { out: _oracle9, input: _input9, capture: _capture9, frameOp: _frameOp9, candidateFrame: _frame9, ...candidateRoute9 } = route9;
+  return {
+    ...candidateRoute9,
+    boundary: { run: "direct-unit-matrix", attempt: 0, line: 0, ordinal: 0 },
+    capture: capture9,
+    legacyOut: legacyOut9,
+    frame: frame9
+  };
+};
+function applyB1Transform9(call9, thirty9, options9 = {}) {
+  return applyOwnedB1Transform9("frame" in call9 ? call9 : ownDirectTransformRoute9(call9, thirty9), thirty9, options9);
+}
+function materializeB1Transform9(res9) {
+  if (res9.kind === "ok") return { rt: res9.rt };
+  if (res9.reason === "invalid-unit-envelope" || res9.reason === "power-exponent-authority-unrepresentable") {
+    return { rt: { t: "e", code: "b1-transform-refused", detail: `transform:${res9.reason}` } };
+  }
+  return { rt: { t: "e", code: "b1-compose-refused", detail: `transform:${res9.reason}` } };
+}
+var captureOnlyCalendarRateShell9 = (fraction9, frame9) => {
+  if (frame9.projectedZeroInverse !== true || !fraction9.thirty9()) return null;
+  const decoded9 = captureBoundResidue9(fraction9);
+  if (!decoded9.ok || decoded9.provider !== null || decoded9.authority === null) return null;
+  const [num9, den9] = fractionFaces9(fraction9);
+  if (num9.length === 0 || den9.length !== 1) return null;
+  const denCoeff9 = rnorm(den9[0].x);
+  if (denCoeff9.n !== 1n || denCoeff9.d !== 1n || den9[0].comps.length !== 0) return null;
+  const candidates9 = num9[0].comps.filter((comp9) => {
+    const axes9 = Object.keys(comp9.def.dim);
+    return axes9.length > 0 && axes9.every((axis9) => axis9 === "calmonths" || axis9 === "caldays");
+  });
+  const common9 = candidates9.filter((candidate9) => num9.every((term9) => term9.comps.some((comp9) => comp9.def.id === candidate9.def.id && comp9.exp === candidate9.exp)));
+  if (common9.length === 0) return null;
+  let months9 = 0;
+  let days9 = 0;
+  for (const comp9 of common9) {
+    months9 += (comp9.def.dim["calmonths"] ?? 0) * comp9.exp;
+    days9 += (comp9.def.dim["caldays"] ?? 0) * comp9.exp;
+  }
+  if (months9 === 0 || days9 === 0 || months9 + days9 !== 0) return null;
+  const residualScalar9 = num9.filter((term9) => {
+    const remaining9 = term9.comps.filter((comp9) => !common9.some((factor9) => factor9.def.id === comp9.def.id && factor9.exp === comp9.exp));
+    return remaining9.length === 0;
+  });
+  if (residualScalar9.length !== 1) return null;
+  const exact9 = rnorm(residualScalar9[0].x);
+  return Object.freeze({ shell: materializeB1MonomialShell9({
+    x: exact9,
+    comps: common9.map((comp9) => ({ ...comp9 })),
+    aux: false
+  }), exact: exact9 });
+};
+function applyB1Compose9(res, frame) {
+  if (res.kind !== "ok") {
+    const reason9 = res.kind === "shadow-refused" ? `shadow:${res.shadow.kind}` : `error:${res.reason}`;
+    return { rt: { t: "e", code: "b1-compose-refused", detail: reason9 } };
+  }
+  if (frame.kind === "unavailable") {
+    return { rt: { t: "e", code: "b1-compose-refused", detail: `frame:${frame.reason}` } };
+  }
+  if (frame.kind === "calendar") {
+    if (res.fraction.provResidue9() !== null) {
+      return { rt: { t: "e", code: "b1-compose-refused", detail: "calendar:provider-residue-unrepresentable" } };
+    }
+    const p9 = res.fraction.projectExact();
+    if (p9 === null || p9.den.n === 0n) {
+      return { rt: { t: "e", code: "b1-compose-refused", detail: "calendar:projection-undecidable" } };
+    }
+    const x9 = rnorm({ n: p9.num.n * p9.den.d, d: p9.num.d * p9.den.n });
+    return { rt: materializeCalendarProjection9(x9, frame.axis, frame.zeroUnit, frame.thirty) };
+  }
+  let fraction9 = res.fraction;
+  let survivingMonomial9 = null;
+  if (fraction9.provResidue9() === null && frame.currencyAliasQuotient !== "right-to-left") {
+    const quotient9 = fraction9.reduceMonomial();
+    if (quotient9 !== null && quotient9.comps.length > 0) {
+      survivingMonomial9 = quotient9;
+      const normalized9 = ShadowFraction.fromLegacy([quotient9], void 0, fraction9.thirty9());
+      if (normalized9.kind === "ok") fraction9 = normalized9.value;
+    }
+  }
+  const zeroAuthority9 = captureFractionZeroAuthority9(fraction9);
+  if (zeroAuthority9.kind === "error") {
+    return { rt: { t: "e", code: "b1-compose-refused", detail: `authority:${zeroAuthority9.reason}` } };
+  }
+  const calendarRate9 = captureOnlyCalendarRateShell9(fraction9, frame);
+  const exact9 = zeroAuthority9.kind === "authoritative-zero" ? { n: 0n, d: 1n } : calendarRate9 !== null ? calendarRate9.exact : survivingMonomial9 !== null && frame.shell.t !== "q" ? rnorm(survivingMonomial9.x) : rnorm(frame.exactRead);
+  const approx9 = fraction9.hasApproxFactor();
+  const exactDecFull9 = ratToDec(exact9);
+  const v9 = approx9 ? exactDecFull9.toSignificantDigits(40) : exactDecFull9;
+  const back9 = decToRat(v9);
+  const exactDec9 = back9.n === exact9.n && back9.d === exact9.d;
+  const publicShell9 = calendarRate9?.shell ?? (survivingMonomial9 !== null && frame.shell.t !== "q" ? materializeB1MonomialShell9(survivingMonomial9) : frame.shell);
+  const rawShell9 = stripShadowFromRT9(publicShell9);
+  const shadowless9 = rawShell9;
+  const { foldA9: _consumedAuthority9, ...bare9 } = shadowless9;
+  const seed9 = bare9.t === "f" ? bare9 : { ...bare9, v: v9 };
+  if (seed9.t !== "f") {
+    if (!exactDec9) seed9.vx = exact9;
+  }
+  return { rt: replaceShadowFromFraction9(seed9, fraction9) };
+}
+var captureComposeOperand9 = (captured9) => {
+  if (captured9.kind === "unavailable") return { kind: "error", reason: captured9.reason ?? "capture-unavailable" };
+  if (captured9.envelope?.admission !== void 0 && captured9.envelope.admission !== "ok") {
+    return { kind: "error", reason: captured9.envelope.admission };
+  }
+  const authority9 = { authority: captured9.authority };
+  const boundedCause9 = captured9.boundedCause ?? null;
+  let sourceRT9 = null;
+  if (captured9.sourceAtom !== null) {
+    try {
+      captureAtomKey9(captured9.sourceAtom);
+      sourceRT9 = captured9.rt;
+    } catch {
+      return { kind: "error", reason: "invalid-source-atom" };
+    }
+  }
+  if (captured9.shadow.kind === "invalid-authority-state") return { kind: "error", reason: "invalid-authority-state" };
+  if (captured9.shadow.kind === "invalid-denominator" || captured9.shadow.kind === "undecidable-denominator") {
+    return { kind: "error", reason: `shadow:${captured9.shadow.kind}` };
+  }
+  if (captured9.shadow.kind === "ok") return {
+    kind: "shadow",
+    fraction: captured9.shadow.value,
+    authority: authority9,
+    sourceRT: sourceRT9,
+    boundedCause: boundedCause9,
+    ...captured9.causalScale !== void 0 && { causalScale: captured9.causalScale }
+  };
+  if (captured9.exactRead === null) return { kind: "error", reason: "non-numeric" };
+  const envelope9 = captured9.envelope;
+  const capturedCapF9 = captured9.rt.capF;
+  const boundedApproximation9 = captured9.rt.capped === true && capturedCapF9 !== void 0 && capturedCapF9.length > 0;
+  return { kind: "clean", sourceRT: sourceRT9, boundedApproximation: boundedApproximation9, boundedCause: boundedCause9, ...captured9.causalScale !== void 0 && { causalScale: captured9.causalScale }, seed: Object.freeze({
+    exactRead: captured9.exactRead,
+    authority: authority9,
+    numComps: envelope9?.numComps ?? Object.freeze([]),
+    denComps: envelope9?.denComps ?? null,
+    affine: false
+  }) };
+};
+var causalEligibilityOfOperand9 = (captured9) => {
+  if (captured9.kind === "unavailable") {
+    return Object.freeze({
+      kind: "indeterminate",
+      reason: captured9.reason ?? `capture-${captured9.stage}`
+    });
+  }
+  const witnesses9 = [];
+  let invalidReason9 = null;
+  if (captured9.sourceAtom !== null) {
+    try {
+      captureAtomKey9(captured9.sourceAtom);
+      witnesses9.push("source-atom");
+    } catch {
+      invalidReason9 = "capture-source-atom:forged";
+    }
+  }
+  if (captured9.boundedCause !== void 0) {
+    try {
+      const bound9 = captureBoundedReserve9(captured9.rt);
+      if (!bound9.ok || bound9.value === null || bound9.value.cause !== captured9.boundedCause) {
+        invalidReason9 = "capture-bounded-reserve:forged";
+      } else witnesses9.push("capture-bound");
+    } catch {
+      invalidReason9 = "capture-bounded-reserve:forged";
+    }
+  }
+  if (captured9.shadow.kind === "ok") {
+    const decoded9 = captureBoundResidue9(captured9.shadow.value);
+    if (!decoded9.ok) invalidReason9 = `capture-residue:${decoded9.reason}`;
+    else {
+      if (decoded9.authority !== null) witnesses9.push("capture-bound");
+      if (decoded9.provider !== null) {
+        const binding9 = bindResidue9(captured9.shadow.value, decoded9.provider);
+        if (binding9.ok) witnesses9.push("provider-bound");
+        else invalidReason9 = `capture-residue:${binding9.reason}`;
+      }
+    }
+  } else if (captured9.shadow.kind !== "no-shadow") {
+    invalidReason9 = captured9.shadow.kind === "invalid-authority-state" ? "invalid-authority-state" : `shadow:${captured9.shadow.kind}`;
+  }
+  if (witnesses9.length > 0) {
+    return Object.freeze({ kind: "causal", witnesses: Object.freeze([...new Set(witnesses9)]) });
+  }
+  if (invalidReason9 !== null) return Object.freeze({ kind: "indeterminate", reason: invalidReason9 });
+  return Object.freeze({ kind: "mechanism" });
+};
+var aggregateCausalEligibility9 = (parts9) => {
+  const witnesses9 = parts9.flatMap((part9) => part9.kind === "causal" ? part9.witnesses : []);
+  if (witnesses9.length > 0) {
+    return Object.freeze({ kind: "causal", witnesses: Object.freeze([...new Set(witnesses9)]) });
+  }
+  const invalid9 = parts9.find((part9) => part9.kind === "indeterminate");
+  return invalid9 === void 0 ? Object.freeze({ kind: "mechanism" }) : Object.freeze({ kind: "indeterminate", reason: invalid9.reason });
+};
+var causalEligibilityOfFxMeta9 = (meta9) => {
+  const recipes9 = [...meta9.num, ...meta9.den];
+  if (!recipes9.some((atoms9) => atoms9.length > 0)) {
+    return Object.freeze({ kind: "mechanism" });
+  }
+  for (const atoms9 of recipes9) {
+    const monomial9 = monoFromFx9(atoms9);
+    if (!("key" in monomial9)) {
+      return Object.freeze({ kind: "indeterminate", reason: `provider:${monomial9.reason}` });
+    }
+  }
+  return Object.freeze({ kind: "causal", witnesses: Object.freeze(["provider-edge"]) });
+};
+function causalB1OperationEligibility9(capture9) {
+  if (capture9.kind === "unavailable") {
+    return Object.freeze({
+      kind: "indeterminate",
+      reason: capture9.reason ?? `capture-${capture9.side}-${capture9.stage}`
+    });
+  }
+  const eligibility9 = aggregateCausalEligibility9([
+    causalEligibilityOfOperand9(capture9.left),
+    causalEligibilityOfOperand9(capture9.right)
+  ]);
+  if (eligibility9.kind === "causal" && eligibility9.witnesses.includes("provider-edge")) {
+    return Object.freeze({ kind: "indeterminate", reason: "provider-edge-outside-transform" });
+  }
+  return eligibility9;
+}
+function causalB1TransformEligibility9(call9) {
+  const inputs9 = [call9.capture];
+  if ((call9.meta.kind === "causal-unary" || call9.meta.kind === "bounded-numeric") && call9.meta.op === "pow") {
+    inputs9.push(call9.meta.exponentCapture);
+  }
+  if (call9.frame.kind === "quantity-compose") {
+    const quantityCapture9 = call9.frame.capture;
+    if (quantityCapture9.kind === "ok") {
+      inputs9.push(quantityCapture9.left, quantityCapture9.right);
+    } else {
+      return aggregateCausalEligibility9([
+        causalEligibilityOfOperand9(call9.capture),
+        Object.freeze({ kind: "indeterminate", reason: `capture-${quantityCapture9.side}-${quantityCapture9.stage}` })
+      ]);
+    }
+  }
+  if (call9.meta.kind === "scale" && call9.meta.authority.kind === "join" && call9.meta.authority.factorCapture !== void 0) {
+    inputs9.push(call9.meta.authority.factorCapture);
+  }
+  return aggregateCausalEligibility9([
+    ...inputs9.map(causalEligibilityOfOperand9),
+    ...call9.meta.kind === "fx" ? [causalEligibilityOfFxMeta9(call9.meta)] : []
+  ]);
+}
+var stampJoinedAuthority9 = (rt9, joined9) => {
+  if (rt9.t === "e") return rt9;
+  return joined9 === void 0 ? rt9 : stampAuth9(rt9, joined9);
+};
+var materializeCleanFrame9 = (frame9, joined9) => {
+  if (frame9.kind === "unavailable") {
+    return { rt: { t: "e", code: "b1-compose-refused", detail: `frame:${frame9.reason}` } };
+  }
+  if (frame9.kind === "calendar") {
+    return { rt: stampJoinedAuthority9(
+      materializeCalendarProjection9(frame9.exactProjection, frame9.axis, frame9.zeroUnit, frame9.thirty),
+      joined9
+    ) };
+  }
+  if (!frame9.currencyLabelsValid) {
+    return { rt: { t: "e", code: "b1-compose-refused", detail: "frame:dirty-currency" } };
+  }
+  const exact9 = rnorm(frame9.exactRead);
+  if (frame9.shell.t === "f") {
+    const out9 = exact9.d === 1n ? { t: "d", v: ratToDec(exact9) } : { t: "f", n: exact9.n, d: exact9.d, origin: frame9.shell.origin };
+    return { rt: stampJoinedAuthority9(out9, joined9) };
+  }
+  const reading9 = ratToDec(exact9);
+  const back9 = decToRat(reading9);
+  const bare9 = stripShadowFromRT9(frame9.shell);
+  const seed9 = { ...bare9, v: reading9 };
+  if (frame9.undefinedSlots?.includes("vx")) seed9.vx = void 0;
+  else if (Object.prototype.hasOwnProperty.call(bare9, "vx")) seed9.vx = exact9;
+  else if (back9.n === exact9.n && back9.d === exact9.d) delete seed9.vx;
+  else seed9.vx = exact9;
+  const explicitUndefinedShadow9 = (frame9.undefinedSlots ?? []).filter(
+    (slot9) => slot9 === "terms" || slot9 === "termsDen"
+  );
+  return { rt: stampJoinedAuthority9(restoreUndefinedShadowSlots9(seed9, explicitUndefinedShadow9), joined9) };
+};
+var boundedCauseOfOperand9 = (captured9, operand9) => {
+  if (operand9.boundedCause !== null) return operand9.boundedCause;
+  if (operand9.kind !== "shadow") return null;
+  const decoded9 = captureBoundResidue9(operand9.fraction);
+  if (!decoded9.ok || decoded9.authority === null || decoded9.provider !== null) return null;
+  try {
+    return captureBoundedCauseFromShadow9(decoded9.authority);
+  } catch {
+    return null;
+  }
+};
+var atomCause9 = (captured9) => {
+  if (captured9.sourceAtom === null) return null;
+  try {
+    return captureBoundedCauseFromAtom9(captured9.sourceAtom);
+  } catch {
+    return null;
+  }
+};
+var composeBoundedReserve9 = (op9, capture9, left9, right9, frame9) => {
+  if (op9 === "/" || frame9.kind !== "numeric" || frame9.shell.t !== "d") return { kind: "not-applicable" };
+  if (left9.boundedCause === null && right9.boundedCause === null) return { kind: "not-applicable" };
+  const leftCause9 = boundedCauseOfOperand9(capture9.left, left9);
+  const rightCause9 = boundedCauseOfOperand9(capture9.right, right9);
+  if (leftCause9 === null === (rightCause9 === null)) return { kind: "not-applicable" };
+  const other9 = leftCause9 === null ? left9 : right9;
+  const otherCapture9 = leftCause9 === null ? capture9.left : capture9.right;
+  if (other9.kind !== "clean" || otherCapture9.exactRead === null || other9.boundedCause !== null) {
+    return { kind: "refused", reason: "bounded-reserve-sibling-unrepresentable" };
+  }
+  const causes9 = [leftCause9 ?? rightCause9];
+  const siblingAtom9 = atomCause9(otherCapture9);
+  if (siblingAtom9 !== null) causes9.push(siblingAtom9);
+  const output9 = materializeCleanFrame9(frame9, void 0).rt;
+  const step9 = {
+    kind: "binary",
+    op: op9,
+    leftExact: capture9.left.exactRead,
+    rightExact: capture9.right.exactRead
+  };
+  const bound9 = bindCaptureBoundedReserve9(causes9, output9, step9);
+  return bound9.ok ? { kind: "bound", rt: output9 } : { kind: "refused", reason: bound9.reason };
+};
+var candidateB1ComposeInner9 = (op9, capture9, frame9, thirty9, causalAuthority9, onEntry9, canonicalPurgedZero9) => {
+  onEntry9();
+  let causalInput9 = false;
+  const finish9 = (result92, effect9) => causalAuthority9 ? Object.freeze({
+    ...result92,
+    causalEffect: effect9 ?? (result92.kind === "refused" ? "refused" : "none"),
+    causalInput: causalInput9
+  }) : result92;
+  if (capture9.kind === "unavailable") {
+    const reason9 = capture9.reason === "invalid-unit-envelope" ? `capture-${capture9.side}-invalid-unit-envelope` : `capture-${capture9.side}-${capture9.stage}`;
+    return finish9({ kind: "refused", reason: reason9, rt: { t: "e", code: "b1-compose-refused", detail: `admission:${reason9}` } }, "refused");
+  }
+  if (frame9.kind === "unavailable" && frame9.reason === "invalid-unit-envelope") {
+    return finish9({
+      kind: "refused",
+      reason: "frame-invalid-unit-envelope",
+      rt: { t: "e", code: "b1-compose-refused", detail: "frame:invalid-unit-envelope" }
+    }, "refused");
+  }
+  if (frame9.kind === "numeric" && frame9.admission !== "ok") {
+    return finish9({ kind: "refused", reason: frame9.admission, rt: { t: "e", code: "b1-compose-refused", detail: `frame:${frame9.admission}` } }, "refused");
+  }
+  const left9 = captureComposeOperand9(capture9.left);
+  const right9 = captureComposeOperand9(capture9.right);
+  const operandHasCausalAxis9 = (operand9) => {
+    if (operand9.kind === "clean") return operand9.sourceRT !== null;
+    const decoded9 = captureBoundResidue9(operand9.fraction);
+    return decoded9.ok && (decoded9.authority !== null || decoded9.provider !== null);
+  };
+  causalInput9 = causalAuthority9 && (left9.kind !== "error" && operandHasCausalAxis9(left9) || right9.kind !== "error" && operandHasCausalAxis9(right9));
+  if (left9.kind === "error" || right9.kind === "error") {
+    const reason9 = left9.kind === "error" ? left9.reason : right9.reason;
+    return finish9({ kind: "refused", reason: reason9, rt: { t: "e", code: "b1-compose-refused", detail: `admission:${reason9}` } }, "refused");
+  }
+  if (causalAuthority9 && frame9.kind === "numeric" && frame9.preSiteRefusal !== void 0) {
+    return finish9({ kind: "refused", reason: "pre-site-refusal", rt: frame9.preSiteRefusal }, "refused");
+  }
+  if (causalAuthority9) {
+    const bounded9 = composeBoundedReserve9(op9, capture9, left9, right9, frame9);
+    if (bounded9.kind === "bound") {
+      causalInput9 = true;
+      return finish9({ kind: "clean-authority", rt: bounded9.rt, authority: Object.freeze({
+        left: capture9.left.authority,
+        right: capture9.right.authority,
+        joined: authJoin9(capture9.left.authority, capture9.right.authority)
+      }) }, "bound");
+    }
+    if (bounded9.kind === "refused") {
+      causalInput9 = true;
+      return finish9({
+        kind: "refused",
+        reason: bounded9.reason,
+        rt: { t: "e", code: "b1-compose-refused", detail: `bounded:${bounded9.reason}` }
+      }, "refused");
+    }
+  }
+  const cleanState9 = (operand9) => authStateOf9(operand9.seed.authority.authority, false);
+  let projectedZeroQuantityRefusal9 = null;
+  if (frame9.kind === "numeric" && frame9.projectedZeroInverse === true && op9 === "/") {
+    const percentageShadow9 = capture9.right.kind === "ok" && capture9.right.rt.t === "p" && capture9.right.shadow.kind === "ok" && capture9.right.causalScale !== void 0;
+    const inverted9 = right9.kind === "shadow" ? right9.fraction.invert() : null;
+    if (inverted9?.kind === "division-by-zero") {
+      return finish9({ kind: "refused", reason: "division-by-zero", rt: { t: "e", code: "division-by-zero" } }, "refused");
+    }
+    if (right9.kind !== "shadow") {
+      return finish9({
+        kind: "refused",
+        reason: "projection-zero-without-shadow",
+        rt: { t: "e", code: "inexact", detail: "division by a value that only projects to zero is not computable at the engine\u2019s precision" }
+      }, "refused");
+    }
+    if (inverted9 === null) throw new Error("projected-zero shadow inversion invariant");
+    const fullScalarQuotient9 = frame9.shell.t !== "q";
+    const representableQuantity9 = capture9.right.envelope?.requiresShadow === true || percentageShadow9;
+    if (!fullScalarQuotient9 && !representableQuantity9 || !fullScalarQuotient9 && inverted9.kind !== "ok") {
+      const reason9 = !representableQuantity9 ? "projection-zero-nonprojectable" : `projection-zero-${inverted9.kind}`;
+      if (causalAuthority9 && thirty9) projectedZeroQuantityRefusal9 = reason9;
+      else return finish9({
+        kind: "refused",
+        reason: reason9,
+        rt: { t: "e", code: "inexact", detail: "division by a value that only projects to zero is not computable at the engine\u2019s precision" }
+      }, "refused");
+    }
+  }
+  const cleanWithoutCausalAxis9 = causalAuthority9 && !causalInput9 && left9.kind === "clean" && right9.kind === "clean" && cleanState9(left9) !== "aux" && cleanState9(right9) !== "aux";
+  if (left9.kind === "clean" && right9.kind === "clean" && (frame9.kind !== "numeric" || !frame9.requiresShadow) && (!causalAuthority9 || cleanWithoutCausalAxis9)) {
+    const authority9 = Object.freeze({
+      left: left9.seed.authority.authority,
+      right: right9.seed.authority.authority,
+      joined: authJoin9(left9.seed.authority.authority, right9.seed.authority.authority)
+    });
+    return finish9({
+      kind: "clean-authority",
+      rt: materializeCleanFrame9(frame9, authority9.joined).rt,
+      authority: authority9
+    }, "none");
+  }
+  const leftAuthZero9 = left9.kind === "shadow" && captureFractionZeroAuthority9(left9.fraction).kind === "authoritative-zero";
+  const rightAuthZero9 = right9.kind === "shadow" && captureFractionZeroAuthority9(right9.fraction).kind === "authoritative-zero";
+  const leftPureMultiplier9 = causalAuthority9 && op9 === "*" && rightAuthZero9 && left9.kind === "clean" && left9.sourceRT === null;
+  const rightPureMultiplier9 = causalAuthority9 && op9 === "*" && leftAuthZero9 && right9.kind === "clean" && right9.sourceRT === null;
+  const scalarEnvelope9 = (captured9) => captured9.envelope !== null && captured9.envelope.numComps.length === 0 && captured9.envelope.denComps === null;
+  const scalarQuantityBound9 = frame9.kind === "numeric" && frame9.shell.t === "q" && frame9.certifiedBoundedScalarAdd === true && Object.values(frame9.shell.dim).every((value9) => value9 === 0) && scalarEnvelope9(capture9.left) && scalarEnvelope9(capture9.right) && (left9.kind === "shadow" || right9.kind === "shadow");
+  const frameCarriesCertifiedBound9 = causalAuthority9 && (op9 === "+" || op9 === "-") && frame9.kind === "numeric" && (frame9.shell.t === "d" || frame9.shell.t === "f" || scalarQuantityBound9) && frame9.shell.capped === true && (frame9.shell.capF?.length ?? 0) > 0;
+  const leftBoundedCenter9 = left9.kind === "clean" && left9.boundedApproximation && frameCarriesCertifiedBound9;
+  const rightBoundedCenter9 = right9.kind === "clean" && right9.boundedApproximation && frameCarriesCertifiedBound9;
+  const missingLeft9 = causalAuthority9 && left9.kind === "clean" && cleanState9(left9) !== "auth" && left9.sourceRT === null && !leftBoundedCenter9 && !leftPureMultiplier9;
+  const missingRight9 = causalAuthority9 && right9.kind === "clean" && cleanState9(right9) !== "auth" && right9.sourceRT === null && !rightBoundedCenter9 && !rightPureMultiplier9;
+  if (missingLeft9 || missingRight9) {
+    const missingCapture9 = capture9.kind === "ok" ? missingLeft9 ? capture9.left : capture9.right : null;
+    const missingSymbol9 = missingCapture9?.kind === "ok" && missingCapture9.rt.t === "q" && missingCapture9.rt.symbol.length > 0 ? missingCapture9.rt.symbol : null;
+    const refusal9 = missingSymbol9 === null ? { t: "e", code: "b1-compose-refused", detail: "admission:missing-operation-authority" } : {
+      t: "e",
+      code: "undecidable-authority",
+      detail: `cannot synthesize a shadow term from the uncertified value \u201C${missingSymbol9}\u201D \u2014 provenance is never inferred from the value`
+    };
+    return finish9({
+      kind: "refused",
+      reason: "missing-operation-authority",
+      rt: refusal9
+    }, "refused");
+  }
+  const lift9 = (operand9) => {
+    const pureMultiplier9 = operand9 === left9 ? leftPureMultiplier9 : operand9 === right9 ? rightPureMultiplier9 : false;
+    const boundedCenter9 = operand9 === left9 ? leftBoundedCenter9 : operand9 === right9 ? rightBoundedCenter9 : false;
+    const base9 = operand9.kind === "shadow" ? causalAuthority9 ? prepareCausalShadow9(operand9.fraction, operand9.sourceRT) : { ok: true, fraction: operand9.fraction } : liftCapturedCleanB1Operand9(
+      pureMultiplier9 ? { ...operand9.seed, authority: { authority: AUTH9 } } : operand9.seed,
+      thirty9,
+      pureMultiplier9 ? null : operand9.sourceRT,
+      causalAuthority9,
+      boundedCenter9
+    );
+    if (!base9.ok || operand9.causalScale === void 0) return base9;
+    if (causalAuthority9) {
+      const scaled92 = transformWithShadowCausal9({ kind: "scale", factor: operand9.causalScale }, base9.fraction);
+      if (scaled92.causalEffect === "unexpected-loss") return { ok: false, reason: "missing-operation-authority" };
+      if (scaled92.result.kind === "ok") return { ok: true, fraction: scaled92.result.fraction };
+      return {
+        ok: false,
+        reason: scaled92.result.kind === "shadow-refused" ? `shadow:${scaled92.result.shadow.kind}` : scaled92.result.reason === "causal-authority-loss" ? "missing-operation-authority" : scaled92.result.reason
+      };
+    }
+    const scaled9 = transformWithShadow9({ kind: "scale", factor: operand9.causalScale }, base9.fraction);
+    if (scaled9.kind === "ok") return { ok: true, fraction: scaled9.fraction };
+    return { ok: false, reason: scaled9.kind === "shadow-refused" ? `shadow:${scaled9.shadow.kind}` : scaled9.reason };
+  };
+  const liftedLeft9 = lift9(left9);
+  const liftedRight9 = lift9(right9);
+  if (!liftedLeft9.ok || !liftedRight9.ok) {
+    const reason9 = !liftedLeft9.ok ? liftedLeft9.reason : liftedRight9.reason;
+    return finish9({ kind: "refused", reason: reason9, rt: { t: "e", code: "b1-compose-refused", detail: `lift:${reason9}` } }, "refused");
+  }
+  let leftFraction9 = liftedLeft9.fraction;
+  let rightFraction9 = liftedRight9.fraction;
+  if (frame9.kind === "numeric" && frame9.currencyAliasQuotient !== void 0) {
+    if (op9 !== "/" || frame9.currencyAliasQuotient !== "right-to-left") {
+      return finish9({
+        kind: "refused",
+        reason: "incongruent-output",
+        rt: { t: "e", code: "b1-compose-refused", detail: "frame:invalid-currency-alias-quotient" }
+      }, "refused");
+    }
+    const reframed9 = prepareCurrencyAliasQuotient9(leftFraction9, rightFraction9);
+    if (!reframed9.ok) return finish9({
+      kind: "refused",
+      reason: reframed9.reason,
+      rt: { t: "e", code: "b1-compose-refused", detail: `currency-alias:${reframed9.reason}` }
+    }, "refused");
+    leftFraction9 = reframed9.left;
+    rightFraction9 = reframed9.right;
+  }
+  if (causalAuthority9) {
+    const detailed9 = composeWithShadowCausal9(op9, leftFraction9, rightFraction9, {
+      ...frame9.kind === "numeric" && frame9.currencyAliasQuotient === "right-to-left" ? { allowProviderProportionalQuotient: true } : {}
+    });
+    if (projectedZeroQuantityRefusal9 !== null) {
+      if (detailed9.result.kind !== "ok") return finish9({
+        kind: "refused",
+        reason: projectedZeroQuantityRefusal9,
+        rt: { t: "e", code: "inexact", detail: "division by a value that only projects to zero is not computable at the engine\u2019s precision" }
+      }, "refused");
+    }
+    if (detailed9.causalEffect === "unexpected-loss") return finish9({
+      kind: "refused",
+      reason: "causal-authority-loss",
+      rt: { t: "e", code: "b1-compose-refused", detail: "causal:unexpected-loss" }
+    }, "unexpected-loss");
+    if (frame9.kind === "calendar" && detailed9.causalEffect === "bound") {
+      if (detailed9.result.kind !== "ok") return finish9({
+        kind: "refused",
+        reason: "causal-authority-loss",
+        rt: { t: "e", code: "b1-compose-refused", detail: "causal:unexpected-loss" }
+      }, "unexpected-loss");
+      const decoded9 = captureBoundResidue9(detailed9.result.fraction);
+      if (!decoded9.ok || decoded9.authority === null) return finish9({
+        kind: "refused",
+        reason: "causal-authority-loss",
+        rt: { t: "e", code: "b1-compose-refused", detail: "causal:unexpected-loss" }
+      }, "unexpected-loss");
+      return finish9({
+        kind: "refused",
+        reason: "calendar-causal-residue-unrepresentable",
+        rt: {
+          t: "e",
+          code: "inexact",
+          detail: "a timespan count carrying an irreducible shadow is not exact"
+        }
+      }, "refused");
+    }
+    const purgedAuthoritativeZero9 = canonicalPurgedZero9 && detailed9.causalEffect === "purged" && detailed9.result.kind === "ok" && detailed9.result.fraction.provResidue9() === null && detailed9.result.fraction.zeroState() === "authoritative-zero";
+    const materializeFrame9 = purgedAuthoritativeZero9 && frame9.kind === "numeric" ? { ...frame9, exactRead: { n: 0n, d: 1n } } : frame9;
+    let materialized9 = applyB1Compose9(detailed9.result, materializeFrame9).rt;
+    if (purgedAuthoritativeZero9 && materialized9.t !== "e") {
+      materialized9 = stampAuth9(
+        stripShadowFromRT9(materialized9),
+        AUTH9
+      );
+    }
+    const finalEffect9 = causalEffectOfMaterializedRT9(detailed9.causalEffect, materialized9, thirty9);
+    if (finalEffect9 === "unexpected-loss") return finish9({
+      kind: "refused",
+      reason: "causal-authority-loss",
+      rt: { t: "e", code: "b1-compose-refused", detail: "causal:unexpected-loss" }
+    }, finalEffect9);
+    return finish9({ kind: "shadow", result: detailed9.result, rt: materialized9 }, finalEffect9);
+  }
+  const result9 = composeWithShadow9(op9, leftFraction9, rightFraction9);
+  return finish9({ kind: "shadow", result: result9, rt: applyB1Compose9(result9, frame9).rt });
+};
+function candidateB1Compose9(op9, capture9, frame9, thirty9) {
+  return candidateB1ComposeInner9(op9, capture9, frame9, thirty9, false, () => void 0, false);
+}
+function candidateCausalB1Compose9(op9, capture9, frame9, thirty9, onEntry9, options9) {
+  return candidateB1ComposeInner9(
+    op9,
+    capture9,
+    frame9,
+    thirty9,
+    true,
+    onEntry9 ?? (() => void 0),
+    options9?.canonicalPurgedZero === true
+  );
+}
+function classifyCausalEffect9(verdict9, outputBound9) {
+  if (verdict9 === "refused") return "refused";
+  if (verdict9 === "none") return outputBound9 ? "unexpected-loss" : "none";
+  if (verdict9 === "bound") return outputBound9 ? "bound" : "unexpected-loss";
+  return outputBound9 ? "unexpected-loss" : "purged";
+}
+function causalEffectOfMaterialized9(verdict9, result9) {
+  if (result9.kind !== "ok") return "refused";
+  const decoded9 = captureBoundResidue9(result9.fraction);
+  if (!decoded9.ok) return "unexpected-loss";
+  return classifyCausalEffect9(verdict9, decoded9.authority !== null || decoded9.provider !== null);
+}
+function causalEffectOfMaterializedRT9(effect9, rt9, thirty9) {
+  if (effect9 === "unexpected-loss" || effect9 === "refused") return effect9;
+  const shadow9 = shadowFromRT(rt9, thirty9);
+  if (shadow9.kind !== "ok") return classifyCausalEffect9(effect9, false);
+  const decoded9 = captureBoundResidue9(shadow9.value);
+  if (!decoded9.ok) return "unexpected-loss";
+  return classifyCausalEffect9(effect9, decoded9.authority !== null || decoded9.provider !== null);
+}
+var boundComposite9 = (fraction9) => {
+  const decoded9 = captureBoundResidue9(fraction9);
+  if (!decoded9.ok) return {
+    kind: "error",
+    reason: decoded9.reason === "face-mismatch" ? "input-binding-failed" : decoded9.reason
+  };
+  if (decoded9.provider !== null) {
+    const providerBound9 = bindResidue9(fraction9, decoded9.provider);
+    if (!providerBound9.ok) return {
+      kind: "error",
+      reason: providerBound9.reason === "calendar-mismatch" ? "calendar-mismatch" : "input-binding-failed"
+    };
+  }
+  return decoded9;
+};
+var captureLiftForCompose9 = (fraction9, component9) => {
+  if (component9 !== null) return { ok: true, value: component9 };
+  if (fractionHasAux9(fraction9)) return { ok: false, reason: "missing-operation-authority" };
+  return { ok: true, value: captureAuthoritativeBound9(fraction9) };
+};
+var captureCombineForCompose9 = (op9, a9, b9) => op9 === "+" ? captureAdd9(a9, b9) : op9 === "-" ? captureSub9(a9, b9) : op9 === "*" ? captureMul9(a9, b9) : captureDiv9(a9, b9);
+var liftProviderAxis9 = (fraction9) => {
+  const thirty9 = fraction9.thirty9();
+  const [num9, den9] = fractionFaces9(fraction9);
+  const polyOf9 = (terms9) => {
+    let out9 = { ok: true, value: polyZero9(thirty9) };
+    for (const term9 of terms9) {
+      const entry9 = polyEntry9(termShapeOfIrr9(term9, thirty9), MONO_UNIT9);
+      if (!entry9.ok) return entry9;
+      out9 = polyAdd9(out9.value, entry9.value);
+      if (!out9.ok) return out9;
+    }
+    return out9;
+  };
+  const numPoly9 = polyOf9(num9);
+  if (!numPoly9.ok) return numPoly9;
+  const denPoly9 = polyOf9(den9);
+  if (!denPoly9.ok) return denPoly9;
+  const contribution9 = contribOf9(numPoly9.value, denPoly9.value);
+  return contribution9.ok ? contribution9 : { ok: false, reason: contribution9.reason === "non-integer-exponent" ? "undecidable" : contribution9.reason };
+};
+var providerAxisInput9 = (fraction9, existing9) => existing9 === null ? liftProviderAxis9(fraction9) : { ok: true, value: existing9 };
+var normalizeProviderAxisToOutput9 = (contribution9, output9, allowProportionalPolynomial9 = false) => {
+  if (bindResidue9(output9, contribution9).ok) return { ok: true, value: contribution9 };
+  const thirty9 = output9.thirty9();
+  if (allowProportionalPolynomial9) {
+    const scalar9 = output9.reduceScalar();
+    const uniformMono9 = (poly9) => {
+      const first9 = poly9.entries[0]?.mono;
+      return first9 !== void 0 && poly9.entries.every((entry9) => entry9.mono.key === first9.key) ? first9 : null;
+    };
+    const numMono9 = uniformMono9(contribution9.num);
+    const denMono9 = uniformMono9(contribution9.den);
+    if (scalar9.kind === "reduced" && numMono9 !== null && denMono9 !== null) {
+      const numFree9 = projFree9(contribution9.num);
+      const denFree9 = projFree9(contribution9.den);
+      const keys9 = /* @__PURE__ */ new Set([...numFree9.keys(), ...denFree9.keys()]);
+      const proportional9 = [...keys9].every((key9) => {
+        const num92 = rnorm(numFree9.get(key9) ?? { n: 0n, d: 1n });
+        const den92 = rnorm(denFree9.get(key9) ?? { n: 0n, d: 1n });
+        const expected9 = rnorm(rMul(scalar9.x, den92));
+        return num92.n === expected9.n && num92.d === expected9.d;
+      });
+      if (proportional9) {
+        const ratioMono9 = monoMul9(numMono9, monoInv9(denMono9));
+        if (!ratioMono9.ok) return ratioMono9;
+        const num92 = polyEntry9(
+          termShapeOfIrr9({ x: scalar9.x, comps: [], aux: false }, thirty9),
+          ratioMono9.value
+        );
+        if (!num92.ok) return num92;
+        const collapsed9 = contribOf9(num92.value, polyUnit9(thirty9));
+        if (!collapsed9.ok) return {
+          ok: false,
+          reason: collapsed9.reason === "non-integer-exponent" ? "incongruent-output" : collapsed9.reason
+        };
+        if (bindResidue9(output9, collapsed9.value).ok) return { ok: true, value: collapsed9.value };
+      }
+    }
+  }
+  const projected9 = (poly9) => mergeTerms(
+    poly9.entries.map((entry9) => ({
+      x: entry9.coeff,
+      comps: entry9.shape.comps.map((comp9) => ({ def: comp9.def, exp: comp9.exp })),
+      aux: false
+    })),
+    [],
+    1n,
+    thirty9,
+    true
+  );
+  const denFace9 = projected9(contribution9.den);
+  if (denFace9.length !== 1) return { ok: false, reason: "incongruent-output" };
+  const inverseDen9 = distributeTerms(ONE_TERMS(), [denFace9[0]], thirty9, -1, true);
+  if (inverseDen9 === null || inverseDen9.length !== 1) return { ok: false, reason: "budget-exceeded" };
+  const normalizePoly9 = (poly9) => {
+    let out9 = { ok: true, value: polyZero9(thirty9) };
+    for (const entry9 of poly9.entries) {
+      const term9 = {
+        x: entry9.coeff,
+        comps: entry9.shape.comps.map((comp9) => ({ def: comp9.def, exp: comp9.exp })),
+        aux: false
+      };
+      const product9 = distributeTerms([term9], inverseDen9, thirty9, 1, true);
+      if (product9 === null || product9.length !== 1) return { ok: false, reason: "budget-exceeded" };
+      const next9 = polyEntry9(termShapeOfIrr9(product9[0], thirty9), entry9.mono);
+      if (!next9.ok) return next9;
+      out9 = polyAdd9(out9.value, next9.value);
+      if (!out9.ok) return out9;
+    }
+    return out9;
+  };
+  const num9 = normalizePoly9(contribution9.num);
+  if (!num9.ok) return num9;
+  const den9 = normalizePoly9(contribution9.den);
+  if (!den9.ok) return den9;
+  const normalized9 = contribOf9(num9.value, den9.value);
+  if (!normalized9.ok) return {
+    ok: false,
+    reason: normalized9.reason === "non-integer-exponent" ? "incongruent-output" : normalized9.reason
+  };
+  return bindResidue9(output9, normalized9.value).ok ? { ok: true, value: normalized9.value } : { ok: false, reason: "incongruent-output" };
+};
+var materializeCompositeAxesRaw9 = (captureResult9, providerResult9, allowProportionalPolynomial9 = false) => {
+  if (captureResult9.kind === "error") return captureTransformError9(captureResult9);
+  const captureOut9 = captureResult9.kind === "bound" ? captureBoundFraction9(captureResult9.value) : captureResult9.fraction;
+  const providerComponentOut9 = providerComponent9(providerResult9);
+  if (!providerComponentOut9.ok) return { kind: "error", reason: providerComponentOut9.reason };
+  if (providerComponentOut9.value === null) return { kind: "ok", fraction: captureOut9 };
+  const normalizedProvider9 = normalizeProviderAxisToOutput9(
+    providerComponentOut9.value,
+    captureOut9,
+    allowProportionalPolynomial9
+  );
+  if (!normalizedProvider9.ok) return { kind: "error", reason: normalizedProvider9.reason };
+  if (captureResult9.kind === "bound") {
+    try {
+      return { kind: "ok", fraction: captureBoundFraction9(captureAttachProvider9(captureResult9.value, normalizedProvider9.value)) };
+    } catch {
+      return { kind: "error", reason: "incongruent-output" };
+    }
+  }
+  const providerAttached9 = attachBound9(captureOut9, normalizedProvider9.value);
+  return providerAttached9.ok ? { kind: "ok", fraction: providerAttached9.fraction } : { kind: "error", reason: providerAttached9.reason === "calendar-mismatch" ? "calendar-mismatch" : providerAttached9.reason === "forged-payload" || providerAttached9.reason === "key-mismatch" ? providerAttached9.reason : "incongruent-output" };
+};
+var materializeCompositeAxes9 = (captureResult9, providerResult9, allowProportionalPolynomial9 = false) => {
+  const providerComponentOut9 = providerComponent9(providerResult9);
+  const verdict9 = captureResult9.kind === "error" || !providerComponentOut9.ok ? "refused" : captureResult9.kind === "bound" || providerComponentOut9.value !== null ? "bound" : "purged";
+  const result9 = materializeCompositeAxesRaw9(
+    captureResult9,
+    providerResult9,
+    allowProportionalPolynomial9
+  );
+  const causalEffect9 = causalEffectOfMaterialized9(verdict9, result9);
+  return causalEffect9 === "unexpected-loss" ? { result: { kind: "error", reason: "causal-authority-loss" }, causalEffect: causalEffect9 } : { result: result9, causalEffect: causalEffect9 };
+};
+var captureTransformError9 = (captureResult9) => ({
+  kind: "error",
+  reason: captureResult9.reason === "face-mismatch" || captureResult9.reason === "forged-bound" || captureResult9.reason === "shadow-refused" ? "incongruent-output" : captureResult9.reason
+});
+var composeWithCaptureAuthority9 = (op9, a9, b9, ca9, cb9, allowProportionalPolynomial9 = false) => {
+  const refused9 = (reason9) => ({
+    result: { kind: "error", reason: reason9 },
+    causalEffect: "refused"
+  });
+  const la9 = captureLiftForCompose9(a9, ca9.authority);
+  if (!la9.ok) return refused9(la9.reason);
+  const lb9 = captureLiftForCompose9(b9, cb9.authority);
+  if (!lb9.ok) return refused9(lb9.reason);
+  const combined9 = captureCombineForCompose9(op9, la9.value, lb9.value);
+  const providerA9 = providerAxisInput9(a9, ca9.provider);
+  if (!providerA9.ok) return refused9(providerA9.reason);
+  const providerB9 = providerAxisInput9(b9, cb9.provider);
+  if (!providerB9.ok) return refused9(providerB9.reason);
+  const providerRaw9 = op9 === "+" ? contribAdd9(providerA9.value, providerB9.value) : op9 === "-" ? contribSub9(providerA9.value, providerB9.value) : op9 === "*" ? contribMul9(providerA9.value, providerB9.value) : contribDiv9(providerA9.value, providerB9.value);
+  return materializeCompositeAxes9(combined9, providerRaw9, allowProportionalPolynomial9);
+};
+var rawUnaryShadow9 = (op9, input9) => {
+  if (op9.kind === "negate") return { kind: "ok", fraction: input9.negate() };
+  if (op9.kind === "scale") return { kind: "ok", fraction: input9.scale(op9.factor) };
+  if (op9.kind === "invert") {
+    const inverted9 = input9.invert();
+    return inverted9.kind === "ok" ? { kind: "ok", fraction: inverted9.value } : { kind: "shadow-refused", shadow: inverted9 };
+  }
+  const exponent9 = rnorm(op9.exponent);
+  if (exponent9.d !== 1n) return { kind: "error", reason: "non-integer-exponent" };
+  const magnitude9 = exponent9.n < 0n ? -exponent9.n : exponent9.n;
+  if (magnitude9 > 32n) return { kind: "error", reason: "budget-exceeded" };
+  let base9 = input9;
+  if (exponent9.n < 0n) {
+    const inverted9 = input9.invert();
+    if (inverted9.kind !== "ok") return { kind: "shadow-refused", shadow: inverted9 };
+    base9 = inverted9.value;
+  }
+  let out9 = ShadowFraction.scalar({ n: 1n, d: 1n }, false, input9.thirty9());
+  let power9 = base9;
+  let n9 = magnitude9;
+  while (n9 > 0n) {
+    if ((n9 & 1n) === 1n) {
+      const product9 = out9.mul(power9);
+      if (product9.kind !== "ok") return { kind: "shadow-refused", shadow: product9 };
+      out9 = product9.value;
+    }
+    n9 >>= 1n;
+    if (n9 > 0n) {
+      const square9 = power9.mul(power9);
+      if (square9.kind !== "ok") return { kind: "shadow-refused", shadow: square9 };
+      power9 = square9.value;
+    }
+  }
+  return { kind: "ok", fraction: out9 };
+};
+var transformWithoutCaptureAuthority9 = (op9, input9, provider9) => {
+  const raw9 = rawUnaryShadow9(op9, input9);
+  if (raw9.kind !== "ok") return { result: raw9, causalEffect: "refused" };
+  if (provider9 === null) return { result: raw9, causalEffect: "none" };
+  const providerResult9 = op9.kind === "negate" ? contribScale9(provider9, { n: -1n, d: 1n }) : op9.kind === "invert" ? contribInv9(provider9) : op9.kind === "scale" ? contribScale9(provider9, op9.factor) : contribPow9(provider9, op9.exponent);
+  const component9 = providerComponent9(providerResult9);
+  if (!component9.ok) return { result: { kind: "error", reason: component9.reason }, causalEffect: "refused" };
+  if (component9.value === null) return { result: raw9, causalEffect: "purged" };
+  const normalized9 = normalizeProviderAxisToOutput9(component9.value, raw9.fraction);
+  if (!normalized9.ok) return { result: { kind: "error", reason: normalized9.reason }, causalEffect: "refused" };
+  const attached9 = attachBound9(raw9.fraction, normalized9.value);
+  if (!attached9.ok) return {
+    result: { kind: "error", reason: attached9.reason === "calendar-mismatch" ? "calendar-mismatch" : attached9.reason === "forged-payload" || attached9.reason === "key-mismatch" ? attached9.reason : "incongruent-output" },
+    causalEffect: "refused"
+  };
+  return { result: { kind: "ok", fraction: attached9.fraction }, causalEffect: "bound" };
+};
+var transformWithShadowCausal9 = (op9, input9) => {
+  const refused9 = (result9) => ({ result: result9, causalEffect: "refused" });
+  const decoded9 = boundComposite9(input9);
+  if ("kind" in decoded9) return refused9(decoded9);
+  if (decoded9.authority === null) return transformWithoutCaptureAuthority9(op9, input9, decoded9.provider);
+  const capture9 = captureLiftForCompose9(input9, decoded9.authority);
+  if (!capture9.ok) return refused9({ kind: "error", reason: capture9.reason });
+  const captureResult9 = op9.kind === "negate" ? captureNegate9(capture9.value) : op9.kind === "invert" ? captureInvert9(capture9.value) : op9.kind === "scale" ? captureScale9(capture9.value, op9.factor) : capturePow9(capture9.value, op9.exponent);
+  const providerInput9 = providerAxisInput9(input9, decoded9.provider);
+  if (captureResult9.kind === "error") return refused9(captureTransformError9(captureResult9));
+  if (!providerInput9.ok) return refused9({ kind: "error", reason: providerInput9.reason });
+  const providerResult9 = op9.kind === "negate" ? contribScale9(providerInput9.value, { n: -1n, d: 1n }) : op9.kind === "invert" ? contribInv9(providerInput9.value) : op9.kind === "scale" ? contribScale9(providerInput9.value, op9.factor) : contribPow9(providerInput9.value, op9.exponent);
+  return materializeCompositeAxes9(captureResult9, providerResult9);
+};
+function transformWithShadow9(op9, input9) {
+  return transformWithShadowCausal9(op9, input9).result;
+}
+var composeWithShadowDetailed9 = (op, a2, b2, options9 = {}) => {
+  const none9 = (result9) => ({ result: result9, causalEffect: "none" });
+  const bound9 = (result9) => ({ result: result9, causalEffect: "bound" });
+  const purged9 = (result9) => ({ result: result9, causalEffect: "purged" });
+  const refused9 = (result9) => ({ result: result9, causalEffect: "refused" });
+  const thirty9 = a2.thirty9();
+  if (thirty9 !== b2.thirty9()) return refused9({ kind: "error", reason: "calendar-mismatch" });
+  const aRes9 = a2.provResidue9();
+  const bRes9 = b2.provResidue9();
+  const compositeA9 = boundComposite9(a2);
+  if ("kind" in compositeA9) return refused9(compositeA9);
+  const compositeB9 = boundComposite9(b2);
+  if ("kind" in compositeB9) return refused9(compositeB9);
+  if (compositeA9.authority !== null || compositeB9.authority !== null) {
+    return composeWithCaptureAuthority9(
+      op,
+      a2,
+      b2,
+      compositeA9,
+      compositeB9,
+      op === "/" && options9.allowProviderProportionalQuotient === true
+    );
+  }
+  const shadowOp9 = (allowProviderMonomialQuotient9 = false) => {
+    if (op === "+") return a2.add(b2);
+    if (op === "-") return a2.sub(b2);
+    if (op === "*") return a2.mul(b2);
+    const ordinary92 = a2.div(b2);
+    if (ordinary92.kind !== "unsupported") return ordinary92;
+    return allowProviderMonomialQuotient9 ? a2.divByAuthoritativeMonomial9(b2) ?? ordinary92 : ordinary92;
+  };
+  if (aRes9 === null && bRes9 === null) {
+    const sr92 = shadowOp9();
+    if (sr92.kind !== "ok") return refused9({ kind: "shadow-refused", shadow: sr92 });
+    return none9({ kind: "ok", fraction: sr92.value });
+  }
+  const checkIn9 = (sf9, r9) => {
+    if (r9 === null) return { dec: null };
+    const dec92 = contributionOfResidue9(r9);
+    if (!dec92.ok) return { kind: "error", reason: dec92.reason };
+    const b9 = bindResidue9(sf9, dec92.value);
+    if (!b9.ok) {
+      return { kind: "error", reason: b9.reason === "calendar-mismatch" ? "calendar-mismatch" : "input-binding-failed" };
+    }
+    return { dec: dec92.value };
+  };
+  const inA9 = checkIn9(a2, aRes9);
+  if (!("dec" in inA9)) return refused9(inA9);
+  const inB9 = checkIn9(b2, bRes9);
+  if (!("dec" in inB9)) return refused9(inB9);
+  const zeroProviderFree9 = (sf9, dec92) => {
+    if (sf9.zeroState() !== "authoritative-zero") return false;
+    if (dec92 === null) return true;
+    return contribReduce9(dec92).kind === "zero-provider-free";
+  };
+  if (op === "*" && (zeroProviderFree9(a2, inA9.dec) || zeroProviderFree9(b2, inB9.dec))) {
+    const sr92 = shadowOp9();
+    if (sr92.kind !== "ok") return refused9({ kind: "shadow-refused", shadow: sr92 });
+    return purged9({ kind: "ok", fraction: sr92.value });
+  }
+  const liftIn9 = (sf9, r9) => {
+    if (r9 !== null) return r9;
+    const lift9 = liftFractionResidue9(sf9);
+    if (!("key" in lift9)) return { kind: "error", reason: lift9.reason };
+    return lift9;
+  };
+  const A9 = liftIn9(a2, aRes9);
+  if (!("key" in A9)) return refused9(A9);
+  const B9 = liftIn9(b2, bRes9);
+  if (!("key" in B9)) return refused9(B9);
+  const aReduced9 = inA9.dec === null ? null : contribReduce9(inA9.dec);
+  if (op === "/" && aRes9 !== null && bRes9 !== null && inA9.dec !== null && inB9.dec !== null && contribCanonKey9(inA9.dec) === contribCanonKey9(inB9.dec) && aReduced9?.kind === "reduced" && !aReduced9.providerFree) {
+    const unit9 = a2.correlatedUnitQuotient9(b2);
+    if (unit9 !== null) {
+      const rr92 = resCombine9("/", A9, B9, thirty9);
+      if (rr92.kind === "error") return refused9({ kind: "error", reason: rr92.reason });
+      if (rr92.kind === "purged") return purged9({ kind: "ok", fraction: unit9 });
+    }
+  }
+  const oneProviderAxis9 = inA9.dec !== null !== (inB9.dec !== null);
+  const providerOwnedProportionalQuotient9 = () => {
+    if (op !== "/" || options9.allowProviderProportionalQuotient !== true || inA9.dec === null || inB9.dec !== null || aRes9 === null || bRes9 !== null) return null;
+    const aSlots9 = a2.writeLegacy();
+    const bSlots9 = b2.writeLegacy();
+    const num9 = distributeTerms(aSlots9.terms, bSlots9.termsDen ?? ONE_TERMS(), thirty9, 1, true);
+    const den9 = distributeTerms(aSlots9.termsDen ?? ONE_TERMS(), bSlots9.terms, thirty9, 1, true);
+    if (num9 === null || den9 === null) return null;
+    const quotient9 = ShadowFraction.fromLegacy(num9, den9, thirty9);
+    if (quotient9.kind !== "ok") return null;
+    const scalar9 = quotient9.value.reduceScalar();
+    return scalar9.kind === "reduced" ? { kind: "ok", value: ShadowFraction.scalar(scalar9.x, false, thirty9) } : null;
+  };
+  const ordinary9 = shadowOp9(op === "/" && oneProviderAxis9);
+  const sr9 = ordinary9.kind === "unsupported" ? providerOwnedProportionalQuotient9() ?? ordinary9 : ordinary9;
+  if (sr9.kind !== "ok") return refused9({ kind: "shadow-refused", shadow: sr9 });
+  const rr9 = resCombine9(op, A9, B9, thirty9);
+  if (rr9.kind === "error") return refused9({ kind: "error", reason: rr9.reason });
+  if (rr9.kind === "purged") return purged9({ kind: "ok", fraction: sr9.value });
+  const dec9 = contributionOfResidue9(rr9.residue);
+  if (!dec9.ok) return refused9({ kind: "error", reason: dec9.reason });
+  if (op === "/" && options9.allowProviderProportionalQuotient === true && inA9.dec !== null && inB9.dec === null) {
+    const normalizedProvider9 = normalizeProviderAxisToOutput9(dec9.value, sr9.value, true);
+    if (!normalizedProvider9.ok) return refused9({ kind: "error", reason: normalizedProvider9.reason });
+    const attached9 = attachBound9(sr9.value, normalizedProvider9.value);
+    if (!attached9.ok) return refused9({ kind: "error", reason: attached9.reason === "calendar-mismatch" ? "calendar-mismatch" : attached9.reason === "forged-payload" || attached9.reason === "key-mismatch" ? attached9.reason : "incongruent-output" });
+    return bound9({ kind: "ok", fraction: attached9.fraction });
+  }
+  if (!bindResidue9(sr9.value, dec9.value).ok) return refused9({ kind: "error", reason: "incongruent-output" });
+  return bound9({ kind: "ok", fraction: sr9.value.withProvResidue9(rr9.residue) });
+};
+function composeWithShadow9(op, a2, b2) {
+  return composeWithShadowDetailed9(op, a2, b2).result;
+}
+var composeWithShadowCausal9 = (op9, a9, b9, options9 = {}) => {
+  return composeWithShadowDetailed9(op9, a9, b9, options9);
+};
+
+// ../textual-calculator/core/packages/engine/src/capture-causal-runtime.ts
+var composeCandidateKind9 = (result9) => result9.kind === "shadow" ? `shadow:${result9.result.kind}` : result9.kind === "refused" ? `refused:${result9.reason}` : "clean-authority";
+var transformCandidateKind9 = (result9) => result9.kind === "ok" ? "ok" : `error:${result9.reason}`;
+var admission9 = (kind9, classification9) => {
+  const output9 = classification9.kind === "mechanism" ? B1_MECHANISM_ROUTE9 : {
+    t: "e",
+    code: kind9 === "compose" ? "b1-compose-refused" : "b1-transform-refused",
+    detail: `eligibility:${classification9.reason}`
+  };
+  return Object.freeze({
+    output: output9,
+    classification: classification9,
+    result: null,
+    eligibility: classification9.kind,
+    effect: classification9.kind === "mechanism" ? "none" : "refused",
+    candidateKind: classification9.kind,
+    causalInput: false,
+    candidateCount: 0,
+    materializeCount: 0
+  });
+};
+function causalComposeDecision9(call9, thirty9) {
+  const classification9 = causalB1OperationEligibility9(call9.capture);
+  if (classification9.kind !== "causal") return admission9("compose", classification9);
+  let candidateCount9 = 0;
+  const result9 = candidateCausalB1Compose9(
+    call9.op,
+    call9.capture,
+    call9.frame,
+    thirty9,
+    () => {
+      candidateCount9++;
+    },
+    { canonicalPurgedZero: true }
+  );
+  if (!result9.causalInput) throw new Error(`CAPTURE_P1_ELIGIBILITY_DISAGREEMENT ${call9.site}`);
+  return Object.freeze({
+    output: result9.rt,
+    classification: classification9,
+    result: result9,
+    eligibility: "causal",
+    effect: result9.causalEffect,
+    candidateKind: composeCandidateKind9(result9),
+    causalInput: result9.causalInput,
+    candidateCount: candidateCount9,
+    materializeCount: 1
+  });
+}
+function causalTransformDecision9(call9, thirty9) {
+  const classification9 = causalB1TransformEligibility9(call9);
+  if (classification9.kind !== "causal") return admission9("transform", classification9);
+  const result9 = applyB1Transform9(call9, thirty9, { causalAuthority: true });
+  if (!result9.causalInput) throw new Error(`CAPTURE_P1_ELIGIBILITY_DISAGREEMENT ${call9.site}`);
+  const output9 = materializeB1Transform9(result9).rt;
+  return Object.freeze({
+    output: output9,
+    classification: classification9,
+    result: result9,
+    eligibility: "causal",
+    effect: result9.causalEffect,
+    candidateKind: transformCandidateKind9(result9),
+    causalInput: result9.causalInput,
+    candidateCount: 1,
+    materializeCount: 1
+  });
+}
+function createCausalRuntime9(thirty9) {
+  return Object.freeze({
+    compose: (call9) => causalComposeDecision9(call9, thirty9),
+    scalar: (call9) => causalComposeDecision9(call9, thirty9),
+    transform: (call9) => causalTransformDecision9(call9, thirty9)
+  });
 }
 
 // ../textual-calculator/core/packages/engine/src/sheet.ts
@@ -40611,6 +49336,9 @@ var asCarrierQ = (p9) => ({
 });
 function legacyExactSame9(a2, b2, thirty) {
   if (legacyExactSemantic9(a2, thirty) === legacyExactSemantic9(b2, thirty)) return true;
+  return legacyAlgebraicSame9(a2, b2, thirty);
+}
+function legacyAlgebraicSame9(a2, b2, thirty) {
   if (a2 === null || b2 === null || a2.t !== b2.t) return false;
   if (a2.t !== "q" && a2.t !== "p" && a2.t !== "d") return false;
   const a9 = a2.t === "q" ? a2 : asCarrierQ(a2);
@@ -40694,14 +49422,76 @@ function candidateSemantic9(rt2, thirty) {
   const outer = JSON.stringify(toPublicValue(rt2)) + capWOf9(rt2);
   return JSON.stringify(["cand1", outer, k2]);
 }
-function exactSemantic(rt2, thirty) {
+function preAuthorityExactSemantic9(rt2, thirty) {
   return candidateSemantic9(rt2, thirty) ?? legacyExactSemantic9(rt2, thirty);
 }
-function exactSame(a2, b2, thirty) {
+function authoritySemantic9(rt2, thirty) {
+  if (rt2 === null) return null;
+  const a9 = rt2.foldA9;
+  const bounded9 = captureBoundedReserve9(rt2);
+  if (!bounded9.ok) throw new Error(`invalid-bounded-reserve: ${bounded9.reason}`);
+  if (a9 === void 0 && bounded9.value === null) return null;
+  if (hasShadowFromRT(rt2)) throw new Error("invalid-authority-state: certificate+shadow can never form a world key");
+  const captureKey9 = captureAtomKeyOfValue9(rt2);
+  const preAuthority9 = preAuthorityExactSemantic9(rt2, thirty);
+  if (bounded9.value !== null) {
+    return JSON.stringify(["auth4", preAuthority9, a9?.kind ?? null, captureKey9, bounded9.value.key]);
+  }
+  if (a9 === void 0) throw new Error("invalid-authority-state: missing authority certificate");
+  return captureKey9 === null ? JSON.stringify(["auth2", preAuthority9, a9.kind]) : JSON.stringify(["auth3", preAuthority9, a9.kind, captureKey9]);
+}
+function futureSame9(a2, b2, thirty) {
+  const aa = authoritySemantic9(a2, thirty);
+  const ab = authoritySemantic9(b2, thirty);
+  if (aa !== null || ab !== null) return aa !== null && ab !== null && aa === ab;
+  return preAuthorityExactSame9(a2, b2, thirty);
+}
+function futureSemantic9(rt2, thirty) {
+  return authoritySemantic9(rt2, thirty) ?? preAuthorityExactSemantic9(rt2, thirty);
+}
+function preAuthorityExactSame9(a2, b2, thirty) {
   const ca = candidateSemantic9(a2, thirty);
   const cb = candidateSemantic9(b2, thirty);
   if (ca !== null && ca === cb) return true;
   return legacyExactSame9(a2, b2, thirty);
+}
+var IDENTITY_SITE_POLICY9 = {
+  ambiguitySemantic: "public",
+  ambiguitySame: "public",
+  referenceChosenSemantic: "auth2",
+  referenceMovedSame: "auth2",
+  referenceProbeSemantic: "auth2",
+  referenceProbeSame: "auth2"
+};
+function exactSemanticR9(rt2, thirty, ctx, site) {
+  if (ctx?.__identityCalls9 !== void 0) ctx.__identityCalls9.sem += 1;
+  const useFuture = ctx?.__identityPolicy9 === true ? IDENTITY_SITE_POLICY9[site] === "auth2" : ctx?.__identityFuture9 === true;
+  const used = useFuture ? futureSemantic9(rt2, thirty) : preAuthorityExactSemantic9(rt2, thirty);
+  if (ctx?.__identityObserver9 !== void 0) {
+    ctx.__identityObserver9(
+      site,
+      [rt2],
+      useFuture ? preAuthorityExactSemantic9(rt2, thirty) : used,
+      useFuture ? used : futureSemantic9(rt2, thirty),
+      used
+    );
+  }
+  return used;
+}
+function exactSameR9(a2, b2, thirty, ctx, site) {
+  if (ctx?.__identityCalls9 !== void 0) ctx.__identityCalls9.same += 1;
+  const useFuture = ctx?.__identityPolicy9 === true ? IDENTITY_SITE_POLICY9[site] === "auth2" : ctx?.__identityFuture9 === true;
+  const used = useFuture ? futureSame9(a2, b2, thirty) : preAuthorityExactSame9(a2, b2, thirty);
+  if (ctx?.__identityObserver9 !== void 0) {
+    ctx.__identityObserver9(
+      site,
+      [a2, b2],
+      useFuture ? preAuthorityExactSame9(a2, b2, thirty) : used,
+      useFuture ? used : futureSame9(a2, b2, thirty),
+      used
+    );
+  }
+  return used;
 }
 function diagnosticsFor(rt2, line) {
   if (rt2.t !== "e") return [];
@@ -40721,20 +49511,28 @@ var isEnvSensitiveWord = (t2, lexicon) => {
 };
 var serialize = (rt2) => {
   if (rt2 === null || rt2 === void 0) return "\u2205";
-  const cap = rt2.capped === true ? ":C" + capFDigest9(rt2.capF) : "";
+  const capture9 = captureAtomKeyOfValue9(rt2);
+  const captureTag9 = capture9 === null ? "" : `:K${JSON.stringify(capture9)}`;
+  const bounded9 = captureBoundedReserve9(rt2);
+  if (!bounded9.ok) throw new Error(`invalid-bounded-reserve: ${bounded9.reason}`);
+  const boundedTag9 = bounded9.value === null ? "" : `:R${JSON.stringify(bounded9.value.key)}`;
+  const cap = captureTag9 + boundedTag9 + (rt2.capped === true ? ":C" + capFDigest9(rt2.capF) : "");
   switch (rt2.t) {
     case "d": {
-      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${cap}`;
+      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
-    case "f":
-      return `f:${rt2.n}/${rt2.d}:${rt2.origin}${cap}`;
+    case "f": {
+      const shadow9 = fingerprintFromRT(rt2);
+      const shadowTag9 = shadow9 === legacyFingerprint(void 0, void 0) ? "" : `:${shadow9}`;
+      return `f:${rt2.n}/${rt2.d}:${rt2.origin}${shadowTag9}${serializeAuth9(rt2.foldA9)}${cap}`;
+    }
     case "p": {
-      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${cap}`;
+      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
     case "ds":
       return `ds:${rt2.pd.toString()}:${rt2.precision}${cap}`;
     case "ts":
-      return `ts:${JSON.stringify(rt2.c)}${cap}`;
+      return `ts:${JSON.stringify(rt2.c)}${serializeAuth9(rt2.foldA9)}${cap}`;
     case "wd":
       return `wd:${rt2.n}${cap}`;
     case "ct":
@@ -40742,7 +49540,7 @@ var serialize = (rt2) => {
     case "q": {
       const comps = (rt2.comps ?? []).map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7");
       const rate = rt2.rate ? `${rt2.rate.num.id}/${rt2.rate.den.id}` : "";
-      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${cap}`;
+      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
     case "e":
       return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}${cap}`;
@@ -40808,7 +49606,7 @@ function readsFingerprint(entry, env, rts, sectionStart, aggDerived, context, cf
   }
   return `${core}\u2016${provBuilt}`;
 }
-function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy, counterfactual = false) {
+function evaluateLine(line, sourceLineIndex9, captureLineageObserver9, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, misplacedPolicy, ambiguityPolicy, counterfactual = false) {
   const deps = { variables: /* @__PURE__ */ new Set(), lineRefs: /* @__PURE__ */ new Set(), usesTotal: false };
   const rawAssume = [];
   const ignoredTokens = [];
@@ -40960,29 +49758,55 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     const capNotes = [];
     const ctx = { ...baseCtx, lines: rts, sectionStart, aggDerived, deps, fxTrace, fxReads, holidayReads, assume: rawAssume, capNotes };
     let ast = parseExpression(exprTokens, rawAssume);
+    if (captureLineageObserver9 !== null) {
+      captureLineageObserver9.pass(sourceLineIndex9, line);
+      annotateCaptureAtoms9(ast, sourceLineIndex9, line, (atom9) => captureLineageObserver9.atom(atom9.key));
+    }
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
+    const preFinalizeCurrencies9 = rt2;
     rt2 = finalizeCurrencies(rt2, ctx);
-    rt2 = reemitFromShadow9(rt2, ctx.monthToDays === "30", "lineFinal", ctx.reemitObserver);
+    if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+      ctx.__b1ValueTransport9(
+        { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
+        "finalizeCurrencies",
+        preFinalizeCurrencies9,
+        rt2
+      );
+    }
+    rt2 = reemitFromShadow9(rt2, ctx.monthToDays === "30", "lineFinal", ctx.reemitObserver, ctx.__candidateReemitObserver9);
     if (ast.k === "finance" && ast.fn === "interest" && rt2.t !== "e" && !/(compound(ed|ing)?|compos[ée]e?s?|capitalis[ée]e?s?)/iu.test(line)) {
       rawAssume.push({ code: "interest-convention", level: 2, impact: "money", data: {} });
     }
+    const publishRangeError9 = () => {
+      const source9 = rt2;
+      const output9 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
+      rt2 = output9;
+      if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+        ctx.__b1ValueTransport9(
+          { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
+          "rangeOutput",
+          source9,
+          output9
+        );
+      }
+    };
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && !rt2.v.isZero() && Math.abs(rt2.v.e) > 9999) {
-      rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
+      publishRangeError9();
     }
     if ((rt2.t === "d" || rt2.t === "p" || rt2.t === "q") && rt2.capped !== true) {
       const vx9 = rt2.vx;
       if (vx9 !== void 0) {
         const ds9 = vx9.d.toString();
         if (ds9.length > 1e4 && /^10*$/.test(ds9)) {
-          rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
+          publishRangeError9();
         }
       }
     }
     if (rt2.t === "f") {
       const digits9 = (x9) => (x9 < 0n ? -x9 : x9).toString().length;
       if (digits9(rt2.n) > 1e4 || digits9(rt2.d) > 1e4) {
-        rt2 = { t: "e", code: "inexact", detail: "result exceeds the representable range (10^\xB19999)" };
+        publishRangeError9();
       }
     }
     const rtCapped9 = rt2.capped === true;
@@ -40993,7 +49817,21 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         impact: "value",
         data: capNotes.includes("function") ? { src: "function" } : {}
       });
-      rt2 = { ...rt2, capped: true };
+      const disclosureSource9 = rt2;
+      const disclosureOut9 = { ...rt2, capped: true };
+      const boundedDisclosure9 = copyCaptureBoundedReserve9(disclosureSource9, disclosureOut9);
+      if (!boundedDisclosure9.ok) {
+        throw new Error(`invalid-bounded-reserve: ${boundedDisclosure9.reason}`);
+      }
+      rt2 = disclosureOut9;
+      if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
+        ctx.__b1ValueTransport9(
+          { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
+          "disclosureOutput",
+          disclosureSource9,
+          disclosureOut9
+        );
+      }
     }
     if (isAssignment) defines = tokens.slice(0, eqIdx).map((t2) => t2.text).join(" ");
   } catch (cause) {
@@ -41008,6 +49846,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
   const unverifiedGrave = [];
   const altRts = [];
   const altTexts = [];
+  let latent9 = false;
   const altCands = [];
   const altWorlds = [];
   const candIdx = (a2) => {
@@ -41021,7 +49860,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     if (counterfactual) return void 0;
     const all = [...tokenAssumptions(tokens, dateOrder, formatting?.language ?? "fr"), ...rawAssume];
     if (all.length === 0) return void 0;
-    const semantic = (x2) => exactSemantic(x2, baseCtx.monthToDays === "30");
+    const semantic = (x2) => exactSemanticR9(x2, baseCtx.monthToDays === "30", baseCtx, "ambiguitySemantic");
     const displayOf = (x2) => formatRT(x2, formatting) ?? (x2.t === "e" ? "\u26A0" : JSON.stringify(toPublicValue(x2)));
     const kept = [];
     const pendingRewrites = [];
@@ -41034,7 +49873,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       deps.usesTotal = deps.usesTotal || sub2.deps.usesTotal;
     };
     const semanticChosen = semantic(rt2);
-    const same9 = (x9) => exactSame(x9, rt2, baseCtx.monthToDays === "30");
+    const same9 = (x9) => exactSameR9(x9, rt2, baseCtx.monthToDays === "30", baseCtx, "ambiguitySame");
     const dissolved = [];
     const upgradeImpact = (a2, altRt) => {
       if (a2.impact !== "value") return;
@@ -41063,6 +49902,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         const rwLine = line.slice(0, a2.range.start) + a2.rewrite + line.slice(a2.range.end);
         const rw = evaluateLine(
           rwLine,
+          sourceLineIndex9,
+          captureLineageObserver9,
           env,
           rts,
           sectionStart,
@@ -41093,6 +49934,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       const altLine = line.slice(0, a2.range.start) + a2.altRewrite + line.slice(a2.range.end);
       const alt = evaluateLine(
         altLine,
+        sourceLineIndex9,
+        captureLineageObserver9,
         env,
         rts,
         sectionStart,
@@ -41119,6 +49962,7 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         dissolved.push(a2);
         altTexts.push(altLine);
         candIdx(a2);
+        if (baseCtx.__identityPolicy9 === true && !futureSame9(alt.rt, rt2, baseCtx.monthToDays === "30")) latent9 = true;
         continue;
       }
       a2.data["altResult"] = displayOf(alt.rt);
@@ -41159,6 +50003,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
         }
         const joint = evaluateLine(
           jointLine,
+          sourceLineIndex9,
+          captureLineageObserver9,
           env,
           rts,
           sectionStart,
@@ -41233,6 +50079,44 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
       rt2 = { t: "e", code: "ambiguous", detail: assumptionMessage(unverifiedGrave[0], lang9) };
     }
   }
+  if (!counterfactual && baseCtx.__b1ValueTransport9 !== void 0 && baseCtx.__b1Attempt9 !== void 0) {
+    const a9 = baseCtx.__b1Attempt9;
+    const boundary9 = { run: a9.run, attempt: a9.attempt, line: a9.line, ordinal: 0 };
+    const dependencySources9 = /* @__PURE__ */ new Set();
+    for (const name9 of deps.variables) {
+      const source9 = env.get(name9);
+      if (source9 !== void 0) dependencySources9.add(source9);
+    }
+    for (const index9 of deps.lineRefs) {
+      const source9 = rts[index9 - 1];
+      if (source9 !== null && source9 !== void 0) dependencySources9.add(source9);
+    }
+    if (deps.usesTotal) {
+      for (let index9 = sectionStart; index9 < rts.length; index9++) {
+        if (aggDerived[index9]) continue;
+        const source9 = rts[index9];
+        if (source9 !== null && source9 !== void 0) dependencySources9.add(source9);
+      }
+    }
+    for (const source9 of dependencySources9) {
+      baseCtx.__b1ValueTransport9(
+        { run: a9.run, attempt: a9.attempt },
+        "dependencyOutput",
+        source9,
+        rt2,
+        boundary9
+      );
+    }
+    for (const source9 of /* @__PURE__ */ new Set([preStrictRt ?? rt2, ...altRts, rt2])) {
+      baseCtx.__b1ValueTransport9(
+        { run: a9.run, attempt: a9.attempt },
+        "lineOutput",
+        source9,
+        rt2,
+        boundary9
+      );
+    }
+  }
   return {
     result: {
       tokens: tokens.map(toPublicToken),
@@ -41261,6 +50145,8 @@ function evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon
     rt: rt2,
     deps,
     fxReads,
+    fxTrace,
+    latentAlt9: latent9,
     holidayReads,
     defines,
     sectionStart,
@@ -41369,6 +50255,15 @@ function copyQuote(q2) {
   return null;
 }
 function runSheet(text, context, cache2, initialCfg, probe) {
+  const causalProduction9 = probe?.causalRuntime9 === "production";
+  const captureLineageObserver9 = causalProduction9 || probe?.captureLineage9 === true ? {
+    pass: (lineIndex09, parsedLine9) => {
+      probe?.captureLineObserver9?.(lineIndex09, parsedLine9);
+    },
+    atom: (key9) => {
+      probe?.captureAtomObserver9?.(key9);
+    }
+  } : null;
   const safeGet = (read, fallback) => {
     try {
       return read();
@@ -41377,7 +50272,12 @@ function runSheet(text, context, cache2, initialCfg, probe) {
     }
   };
   const cfgKeyOf = (c9) => JSON.stringify(c9);
+  let attemptOrdinal9 = 0;
+  const b1Run9 = probe?.b1RunId9 ?? "sheet-run";
   const attempt = (seeds) => {
+    const b1Attempt9 = { run: b1Run9, attempt: attemptOrdinal9++ };
+    probe?.b1AttemptStart9?.(b1Attempt9);
+    const fxSideband9 = { reads: [], traces: [], observations: [], reemits: [] };
     const cfgCap = seeds !== void 0 ? seeds.cfg : initialCfg !== void 0 && initialCfg.cap !== null ? (() => {
       const c9 = initialCfg.cap;
       initialCfg.cap = null;
@@ -41430,10 +50330,14 @@ function runSheet(text, context, cache2, initialCfg, probe) {
         }
         const v2 = holCache.get(key);
         if (v2 === null) throw new Error("holiday provider failed");
+        if (v2 === void 0) throw new Error("holiday provider returned no snapshot");
         return v2;
       }
     };
-    const probeContext = { rates: cachedRates, holidays: cachedHolidays };
+    const probeContext = {
+      ...cachedRates !== void 0 && { rates: cachedRates },
+      ...cachedHolidays !== void 0 && { holidays: cachedHolidays }
+    };
     const baseCtx = {
       now: nowSnap,
       ...tzSnap !== void 0 && { timezone: tzSnap },
@@ -41444,13 +50348,69 @@ function runSheet(text, context, cache2, initialCfg, probe) {
       ...cfgSnap.policies?.preferFutureForAmbiguousDates !== void 0 && {
         preferFutureForAmbiguousDates: cfgSnap.policies.preferFutureForAmbiguousDates
       },
-      ...probe?.reemitObserver !== void 0 && { reemitObserver: probe.reemitObserver },
+      ...probe?.reemitObserver !== void 0 && {
+        reemitObserver: (...args9) => {
+          fxSideband9.reemits.push(args9);
+        }
+      },
+      ...probe?.b1ReemitCausal9 !== void 0 && {
+        // Candidate-only synchronous channel: it runs before pre-commit but is
+        // NOT a ReemitObserver, so its presence can never force the frozen
+        // legacy oracle. Differential replay remains winner-only below.
+        __candidateReemitObserver9: (...args9) => {
+          probe.b1ReemitCausal9(b1Attempt9, ...args9);
+        }
+      },
       ...probe?.orderObserver !== void 0 && { orderObserver: probe.orderObserver },
       ...probe?.orderCounts !== void 0 && { __orderCounts9: probe.orderCounts },
+      ...probe?.identityFutureWorld9 === true && { __identityFuture9: true },
+      ...probe?.identityCalls9 !== void 0 && { __identityCalls9: probe.identityCalls9 },
+      ...probe?.fxObserver9 !== void 0 && { __fxObserver9: (o9) => {
+        fxSideband9.observations.push(o9);
+      } },
+      ...probe?.identityObserver9 !== void 0 && { __identityObserver9: probe.identityObserver9 },
+      ...probe?.fxCandidateWorld9 === true && { __fxCandidateWorld9: true },
+      ...probe?.identityPolicyWorld9 === true && { __identityPolicy9: true },
+      ...probe?.fxJoin9 === true && { __fxJoin9: true },
+      ...probe?.convAuthWorld9 === true && { __convAuth9: true },
+      ...probe?.siteTrace9 !== void 0 && { __siteTrace9: probe.siteTrace9 },
+      ...probe?.b1Compose9 !== void 0 && { __b1Compose9: probe.b1Compose9 },
+      ...probe?.b1PreCompose9 !== void 0 && { __b1PreCompose9: probe.b1PreCompose9 },
+      ...probe?.b1PreComposeObserved9 !== void 0 && { __b1PreComposeObserved9: probe.b1PreComposeObserved9 },
+      ...probe?.b1ScalarCompose9 !== void 0 && { __b1ScalarCompose9: probe.b1ScalarCompose9 },
+      ...probe?.b1ScalarObserved9 !== void 0 && { __b1ScalarObserved9: probe.b1ScalarObserved9 },
+      ...probe?.b1Capture9 !== void 0 && { __b1Capture9: probe.b1Capture9 },
+      ...probe?.b1OperationEligibility9 !== void 0 && { __b1OperationEligibility9: probe.b1OperationEligibility9 },
+      ...probe?.b1Router9 !== void 0 && { __b1Router9: probe.b1Router9 },
+      ...probe?.b1Transform9 !== void 0 && { __b1Transform9: probe.b1Transform9 },
+      ...probe?.b1RoutePublication9 !== void 0 && { __b1RoutePublication9: probe.b1RoutePublication9 },
+      ...probe?.b1ValueTransport9 !== void 0 && { __b1ValueTransport9: probe.b1ValueTransport9 },
+      ...probe?.b1EligibilityPartition9 === true && { __b1EligibilityPartition9: true },
+      ...probe?.b1CausalUnary9 === true && { __b1CausalUnary9: true },
+      ...(probe?.b1Compose9 !== void 0 || probe?.b1PreCompose9 !== void 0 || probe?.b1ScalarCompose9 !== void 0 || probe?.b1Transform9 !== void 0) && {
+        __b1Attempt9: { ...b1Attempt9, line: -1, ordinal: 0 }
+      },
+      ...probe?.quotientObserver9 !== void 0 && { __quotientObserver9: probe.quotientObserver9 },
       ...probe?.scaleObserver !== void 0 && { scaleObserver: probe.scaleObserver },
       ...probe?.scaleCounts !== void 0 && { __scaleCounts9: probe.scaleCounts },
-      ...probe?.candScale9Entry !== void 0 && { __candScale9Entry: probe.candScale9Entry }
+      ...probe?.candScale9Entry !== void 0 && { __candScale9Entry: probe.candScale9Entry },
+      ...probe?.foldObserver !== void 0 && { __foldObserver9: probe.foldObserver },
+      ...probe?.foldCounts !== void 0 && { __foldCounts9: probe.foldCounts },
+      ...probe?.foldCandidateWorld === true && { __foldCandidateWorld9: true },
+      ...probe?.foldEffectLog !== void 0 && { __foldEffectLog9: probe.foldEffectLog }
     };
+    if (causalProduction9) {
+      baseCtx.__b1ProductionCausal9 = createCausalRuntime9(cfgSnap.policies?.monthToDays === "30");
+      baseCtx.__b1OperationEligibility9 = causalB1OperationEligibility9;
+      baseCtx.__b1EligibilityPartition9 = true;
+      baseCtx.__b1CausalUnary9 = true;
+      baseCtx.__identityPolicy9 = true;
+      baseCtx.__b1Attempt9 = { ...b1Attempt9, line: -1, ordinal: 0 };
+      if (probe?.causalObserver9 !== void 0) baseCtx.__b1ProductionObserver9 = probe.causalObserver9;
+    }
+    if (causalProduction9 || probe?.b1Compose9 !== void 0 || probe?.b1PreCompose9 !== void 0) {
+      baseCtx.__b1LogicalSeq9 = { value: 0 };
+    }
     const lexicon = loadLexicon(cfgSnap.languages ?? DEFAULT_LANGUAGES);
     const financialCurrency = resolveFinancialCurrency(cfgSnap.financial);
     const sepDefaults = {
@@ -41495,18 +50455,33 @@ function runSheet(text, context, cache2, initialCfg, probe) {
     const graph = [];
     const cacheOut = [];
     const recomputed = [];
+    const latentLines9 = [];
+    const latentVars9 = /* @__PURE__ */ new Set();
     let sectionStart = 0;
     const aggDerived = [];
     const aggDerivedVars = /* @__PURE__ */ new Set();
+    probe?.injectIdentityPair9?.((site9, a9, b9) => exactSameR9(a9, b9, cfgSnap.policies?.monthToDays === "30", baseCtx, site9));
     lines.forEach((line, i2) => {
+      if (probe?.lineObserverIndex9 !== void 0) probe.lineObserverIndex9.value = i2;
+      if (baseCtx.__b1Attempt9 !== void 0) baseCtx.__b1Attempt9.line = i2;
       lineSectionStarts.push(sectionStart);
       let entry;
       const cached2 = cache2?.[i2];
       if (cached2 && cached2.text === line && cached2.sectionStart === sectionStart && cached2.fingerprint === readsFingerprint(cached2, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, true, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt, cached2.fingerprint)) {
         entry = cached2;
       } else {
-        entry = evaluateLine(line, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, cfgSnap.policies?.misplacedGroupSeparator ?? "error", cfgSnap.policies?.ambiguity ?? "annotate");
+        entry = evaluateLine(line, i2, captureLineageObserver9, env, rts, sectionStart, aggDerived, baseCtx, lexicon, grammar, dateOrder, formatting, financialCurrency, cfgSnap.policies?.misplacedGroupSeparator ?? "error", cfgSnap.policies?.ambiguity ?? "annotate");
         recomputed.push(i2);
+        fxSideband9.reads.push(...entry.fxReads ?? []);
+        fxSideband9.traces.push(...entry.fxTrace ?? []);
+      }
+      if (probe?.b1Commit9 !== void 0 && entry !== cached2) {
+        const commitsPreStrict9 = entry.rt?.t === "e" && entry.rt.code === "ambiguous" && entry.preStrictRt !== null;
+        const commitRt9 = commitsPreStrict9 ? entry.preStrictRt : entry.rt;
+        const nrt9 = probe.b1Commit9(i2, commitRt9, b1Attempt9);
+        if (nrt9 !== null && nrt9 !== commitRt9) {
+          entry = commitsPreStrict9 ? { ...entry, preStrictRt: nrt9 } : { ...entry, rt: nrt9 };
+        }
       }
       const fingerprint = readsFingerprint(entry, env, rts, sectionStart, aggDerived, probeContext, cfgStamp, false, { now: nowSnap, tz: tzSnap }, doubtSigs, varDoubt);
       const derived = entry.deps.usesTotal || [...entry.deps.lineRefs].some((r3) => aggDerived[r3 - 1] === true) || [...entry.deps.variables].some((n2) => aggDerivedVars.has(n2));
@@ -41530,6 +50505,9 @@ function runSheet(text, context, cache2, initialCfg, probe) {
           srcLabels.push(`line(${idx})`);
           srcLineIdxs.push(idx);
           srcLevel = Math.max(srcLevel, sigLevel(s2));
+        } else if (baseCtx.__identityPolicy9 === true && latentLines9[idx - 1] === true) {
+          srcLabels.push(`line(${idx})`);
+          srcLineIdxs.push(idx);
         }
       }
       for (const name of [...entry.deps.variables].sort()) {
@@ -41538,11 +50516,19 @@ function runSheet(text, context, cache2, initialCfg, probe) {
           srcLabels.push(`\u201C${name}\u201D`);
           srcVars.push(name);
           srcLevel = Math.max(srcLevel, sigLevel(s2));
+        } else if (baseCtx.__identityPolicy9 === true && latentVars9.has(name)) {
+          srcLabels.push(`\u201C${name}\u201D`);
+          srcVars.push(name);
         }
       }
       if (entry.deps.usesTotal) {
         for (let j9 = sectionStart; j9 < doubtSigs.length; j9++) {
           if (aggDerived[j9]) continue;
+          if (baseCtx.__identityPolicy9 === true && latentLines9[j9] === true && !(doubtSigs[j9] ?? "")) {
+            srcLabels.push(`line(${j9 + 1})`);
+            srcLineIdxs.push(j9 + 1);
+            continue;
+          }
           if (!doubtSigs[j9]) {
             if (lineErrAlt[j9] && isSummable(rts[j9] ?? null)) {
               srcLabels.push(`line(${j9 + 1})`);
@@ -41574,6 +50560,7 @@ function runSheet(text, context, cache2, initialCfg, probe) {
       }
       let publicResult = structuredClone(entry.result);
       let rtOut = entry.rt;
+      let ambiguityPublished9 = false;
       const runParts = /* @__PURE__ */ new Set();
       entry.altCands.forEach((_9, c9) => runParts.add(`${i2 + 1}:c${c9}`));
       let errAltDerived = entry.hasErrAltWorld;
@@ -41581,9 +50568,11 @@ function runSheet(text, context, cache2, initialCfg, probe) {
         if (src9 < 1) return;
         const flagged9 = lineErrAlt[src9 - 1] === true;
         const doubted9 = (doubtSigs[src9 - 1] ?? "") !== "";
-        if (!flagged9 && !doubted9) return;
+        const latentSrc9 = baseCtx.__identityPolicy9 === true && latentLines9[src9 - 1] === true;
+        if (!flagged9 && !doubted9 && !latentSrc9) return;
         if (flagged9) errAltDerived = true;
         for (const part9 of lineRootParts[src9 - 1] ?? []) runParts.add(part9);
+        if (latentSrc9) (lineCands[src9 - 1] ?? []).forEach((_9, k9) => runParts.add(`${src9}:c${k9}`));
       };
       for (const r9 of entry.deps.lineRefs) inheritErrParts(r9);
       for (const n9 of entry.deps.variables) inheritErrParts(varDefLine.get(n9) ?? -1);
@@ -41613,7 +50602,10 @@ function runSheet(text, context, cache2, initialCfg, probe) {
           if (!cand9) return;
           atomMap.set(part9, { id: part9, line: ln9, splice: cand9 });
         };
-        for (const [line9] of srcByLine) for (const part9 of lineRootParts[line9 - 1] ?? []) addPart(part9);
+        for (const [line9] of srcByLine) {
+          for (const part9 of lineRootParts[line9 - 1] ?? []) addPart(part9);
+          if (baseCtx.__identityPolicy9 === true && latentLines9[line9 - 1] === true) (lineCands[line9 - 1] ?? []).forEach((_9, k9) => addPart(`${line9}:c${k9}`));
+        }
         entry.altCands.forEach((_9, k9) => addPart(`${i2 + 1}:c${k9}`));
         const atoms = [...atomMap.values()];
         for (const a9 of atoms) runParts.add(a9.id);
@@ -41632,21 +50624,33 @@ function runSheet(text, context, cache2, initialCfg, probe) {
         };
         const probeCap = (cfgSnap.policies?.ambiguity ?? "annotate") === "strict" ? 64 : 16;
         const t309 = cfgSnap.policies?.monthToDays === "30";
-        const chosenKey9 = exactSemantic(entry.rt, t309);
+        const chosenKey9 = exactSemanticR9(entry.rt, t309, baseCtx, "referenceChosenSemantic");
         const chosenRt9 = entry.rt;
         const probedSigs = /* @__PURE__ */ new Set();
         let sensitive = false;
         let probes = 0;
         let exhausted = false;
+        const quotient9 = baseCtx.__identityPolicy9 === true;
+        const evalCap9 = probeCap * 4;
+        let evals9 = 0;
+        const inert9 = /* @__PURE__ */ new Set();
+        const worldPub9 = /* @__PURE__ */ new Map();
         const probeWorld = (list9) => {
           const sig92 = list9.map((a9) => a9.id).sort().join("+");
           if (probedSigs.has(sig92)) return;
-          if (probes >= probeCap) {
-            exhausted = true;
-            return;
+          const mayFast9 = quotient9 && !authorityConsumable9(baseCtx) && list9.length === 1 && list9[0].line !== i2 + 1;
+          if (!quotient9 || !mayFast9) {
+            if (probes >= probeCap || quotient9 && evals9 >= evalCap9) {
+              exhausted = true;
+              return;
+            }
           }
-          probedSigs.add(sig92);
-          probes++;
+          if (!quotient9) {
+            probedSigs.add(sig92);
+            probes++;
+          }
+          const pubMovedL9 = /* @__PURE__ */ new Set();
+          const pubMovedV9 = /* @__PURE__ */ new Set();
           const splicesBy9 = /* @__PURE__ */ new Map();
           for (const a9 of list9) {
             const arr9 = splicesBy9.get(a9.line) ?? [];
@@ -41674,11 +50678,14 @@ function runSheet(text, context, cache2, initialCfg, probe) {
               if (dn9 !== null && dn9 !== void 0) {
                 if (orig9 !== null) envP.set(dn9, orig9);
                 changedV9.delete(dn9);
+                pubMovedV9.delete(dn9);
               }
               continue;
             }
             const re9 = evaluateLine(
               applySplices9(lineTexts[k9], sp9),
+              k9,
+              captureLineageObserver9,
               envP,
               rtsP,
               lineSectionStarts[k9],
@@ -41694,16 +50701,39 @@ function runSheet(text, context, cache2, initialCfg, probe) {
               true
             );
             rtsP.push(re9.rt);
-            const moved9 = !exactSame(re9.rt, rts[k9] ?? null, t309);
+            const moved9 = !exactSameR9(re9.rt, rts[k9] ?? null, t309, baseCtx, "referenceMovedSame");
             if (moved9) changedL9.add(k9 + 1);
+            const movedPub9 = quotient9 && !preAuthorityExactSame9(re9.rt, rts[k9] ?? null, t309);
+            if (movedPub9) pubMovedL9.add(k9 + 1);
             if (dn9 !== null && dn9 !== void 0) {
               if (re9.rt !== null) envP.set(dn9, re9.rt);
               if (moved9) changedV9.add(dn9);
               else changedV9.delete(dn9);
+              if (movedPub9) pubMovedV9.add(dn9);
+              else pubMovedV9.delete(dn9);
             }
+          }
+          if (mayFast9 && pubMovedL9.size === 0 && pubMovedV9.size === 0) {
+            probedSigs.add(sig92);
+            inert9.add(list9[0].id);
+            worldPub9.set(sig92, { lines: /* @__PURE__ */ new Set([list9[0].line]), movedL: pubMovedL9, movedV: pubMovedV9 });
+            baseCtx.__quotientObserver9?.("prefix-inert");
+            return;
+          }
+          if (mayFast9) {
+            if (probes >= probeCap || evals9 >= evalCap9) {
+              exhausted = true;
+              return;
+            }
+          }
+          if (quotient9) {
+            probedSigs.add(sig92);
+            evals9++;
           }
           const probe9 = evaluateLine(
             applySplices9(line, splicesBy9.get(i2 + 1)),
+            i2,
+            captureLineageObserver9,
             envP,
             rtsP,
             sectionStart,
@@ -41719,33 +50749,98 @@ function runSheet(text, context, cache2, initialCfg, probe) {
             true
           );
           const unCap9 = (s9) => s9.replace(/\|C(F[0-9a-z]+)?/gu, "");
-          const div9 = probe9.rt === null || unCap9(exactSemantic(probe9.rt, t309)) !== unCap9(chosenKey9) && !exactSame(probe9.rt, chosenRt9, t309);
-          if (div9) {
+          const div9 = probe9.rt === null || unCap9(exactSemanticR9(probe9.rt, t309, baseCtx, "referenceProbeSemantic")) !== unCap9(chosenKey9) && !exactSameR9(probe9.rt, chosenRt9, t309, baseCtx, "referenceProbeSame");
+          const observable9 = baseCtx.__identityPolicy9 !== true || !preAuthorityExactSame9(probe9.rt, chosenRt9, t309);
+          if (div9 && observable9) {
             sensitive = true;
             for (const a9 of list9) {
               if (a9.line === i2 + 1) sensLocal9.add(a9.id);
             }
           }
-        };
-        if (atoms.length > 20) exhausted = true;
-        else {
-          const pop9 = (m9) => {
-            let c9 = 0;
-            for (let x9 = m9; x9 > 0; x9 >>= 1) c9 += x9 & 1;
-            return c9;
-          };
-          const masks = [];
-          for (let m9 = 1; m9 < 1 << atoms.length; m9++) masks.push(m9);
-          masks.sort((a9, b9) => pop9(a9) - pop9(b9));
-          for (const mask of masks) {
-            const list9 = atoms.filter((_2, k9) => mask >> k9 & 1);
-            if (!compatible(list9)) continue;
-            if (probes >= probeCap) {
-              exhausted = true;
-              break;
-            }
-            probeWorld(list9);
+          if (quotient9) {
+            const equivalent9 = probe9.rt !== null && !observable9;
+            const licence9 = !authorityConsumable9(baseCtx);
+            const pubInert9 = licence9 && pubMovedL9.size === 0 && pubMovedV9.size === 0 && equivalent9;
+            if (!equivalent9) probes++;
+            if (pubInert9 && list9.length === 1) inert9.add(list9[0].id);
+            worldPub9.set(sig92, { lines: new Set(list9.map((a9) => a9.line)), movedL: pubMovedL9, movedV: pubMovedV9 });
+            baseCtx.__quotientObserver9?.(pubInert9 ? "prefix-inert" : equivalent9 ? "observed-equivalent" : "divergent");
           }
+        };
+        const pop9 = (m9) => {
+          let c9 = 0;
+          for (let x9 = m9; x9 > 0; x9 >>= 1) c9 += x9 & 1;
+          return c9;
+        };
+        if (!quotient9) {
+          if (atoms.length > 20) exhausted = true;
+          else {
+            const masks = [];
+            for (let m9 = 1; m9 < 1 << atoms.length; m9++) masks.push(m9);
+            masks.sort((a9, b9) => pop9(a9) - pop9(b9));
+            for (const mask of masks) {
+              const list9 = atoms.filter((_2, k9) => mask >> k9 & 1);
+              if (!compatible(list9)) continue;
+              if (probes >= probeCap) {
+                exhausted = true;
+                break;
+              }
+              probeWorld(list9);
+            }
+          }
+        } else {
+          for (const a9 of atoms) {
+            if (exhausted) break;
+            probeWorld([a9]);
+          }
+          const lineN9 = /* @__PURE__ */ new Map();
+          for (const a9 of atoms) lineN9.set(a9.line, (lineN9.get(a9.line) ?? 0) + 1);
+          const soloInert9 = (a9) => inert9.has(a9.id) && lineN9.get(a9.line) === 1;
+          const lattice9 = atoms.filter((a9) => !soloInert9(a9));
+          if (!exhausted) {
+            if (lattice9.length > 20) exhausted = true;
+            else if (lattice9.length >= 2) {
+              const masks = [];
+              for (let m9 = 3; m9 < 1 << lattice9.length; m9++) if (pop9(m9) >= 2) masks.push(m9);
+              masks.sort((a9, b9) => pop9(a9) - pop9(b9));
+              for (const mask of masks) {
+                const list9 = lattice9.filter((_2, k9) => mask >> k9 & 1);
+                if (!compatible(list9)) continue;
+                if (probes >= probeCap) {
+                  exhausted = true;
+                  break;
+                }
+                probeWorld(list9);
+              }
+            }
+          }
+          if (!exhausted) {
+            const pending9 = [...worldPub9.entries()];
+            while (pending9.length > 0 && !exhausted) {
+              const [sigP9, w9] = pending9.shift();
+              if (w9.movedL.size === 0 && w9.movedV.size === 0) continue;
+              for (const q9 of atoms) {
+                if (exhausted) break;
+                if (!soloInert9(q9) || w9.lines.has(q9.line)) continue;
+                const deps9 = q9.line === i2 + 1 ? entry.deps : graph[q9.line - 1];
+                const touch9 = deps9 === void 0 || deps9.usesTotal && w9.movedL.size > 0 || [...deps9.lineRefs].some((r9) => w9.movedL.has(r9)) || [...deps9.variables].some((v9) => w9.movedV.has(v9));
+                if (!touch9) continue;
+                const ids9 = new Set(sigP9.split("+"));
+                ids9.add(q9.id);
+                const list9 = atoms.filter((a9) => ids9.has(a9.id));
+                if (!compatible(list9)) continue;
+                const joinSig9 = list9.map((a9) => a9.id).sort().join("+");
+                if (probedSigs.has(joinSig9)) continue;
+                probeWorld(list9);
+                const rec9 = worldPub9.get(joinSig9);
+                if (rec9 !== void 0) pending9.push([joinSig9, rec9]);
+              }
+            }
+          }
+        }
+        if (quotient9) {
+          if (exhausted) baseCtx.__quotientObserver9?.("unverified-residual");
+          else if (inert9.size > 0) baseCtx.__quotientObserver9?.("compositional-proof");
         }
         if (exhausted) comboUnverified = true;
         if (!sensitive) srcLabels.length = 0;
@@ -41774,6 +50869,7 @@ function runSheet(text, context, cache2, initialCfg, probe) {
             { code: "ambiguous-reference", level: srcLevel, impact: "reference", message: msg }
           ];
         }
+        ambiguityPublished9 = true;
       }
       if (comboUnverified && openToWorlds && rtOut !== null && publicResult.value !== null && !(publicResult.assumptions ?? []).some((a9) => a9.code === "combination-unverified")) {
         const lang9 = formatting.language ?? "fr";
@@ -41789,11 +50885,44 @@ function runSheet(text, context, cache2, initialCfg, probe) {
             { code: "combination-unverified", level: 2, impact: "reference", message: msg9 }
           ];
         }
+        ambiguityPublished9 = true;
+      }
+      if (ambiguityPublished9 && rtOut !== null && baseCtx.__b1ValueTransport9 !== void 0 && baseCtx.__b1Attempt9 !== void 0) {
+        const a9 = baseCtx.__b1Attempt9;
+        const boundary9 = { run: a9.run, attempt: a9.attempt, line: i2, ordinal: 0 };
+        const sources9 = /* @__PURE__ */ new Set();
+        if (entry.rt !== null) sources9.add(entry.rt);
+        if (entry.preStrictRt !== null) sources9.add(entry.preStrictRt);
+        for (const alt9 of entry.altRts) sources9.add(alt9);
+        for (const idx9 of srcLineIdxs) {
+          const source9 = rts[idx9 - 1];
+          if (source9 !== null && source9 !== void 0) sources9.add(source9);
+        }
+        for (const name9 of srcVars) {
+          const source9 = env.get(name9);
+          if (source9 !== void 0) sources9.add(source9);
+        }
+        for (const source9 of sources9) {
+          baseCtx.__b1ValueTransport9(
+            { run: a9.run, attempt: a9.attempt },
+            "ambiguityOutput",
+            source9,
+            rtOut,
+            boundary9
+          );
+        }
       }
       const asms9 = (publicResult.assumptions ?? []).filter((a9) => a9.code !== "exactness-capped");
       const ownLevel = asms9.length === 0 ? 0 : Math.max(...asms9.map((a9) => a9.level));
       const sig9 = rtOut !== null && rtOut.t === "e" && rtOut.code === "ambiguous" ? `${Math.max(srcLevel, ownLevel, 1)}:ambiguous` : asms9.length === 0 ? "" : `${ownLevel}:${asms9.map((a9) => a9.code).join(",")}`;
       doubtSigs.push(sig9);
+      const latentInherited9 = baseCtx.__identityPolicy9 === true && ([...entry.deps.variables].some((v9) => latentVars9.has(v9)) || [...entry.deps.lineRefs].some((r9) => latentLines9[r9 - 1] === true) || entry.deps.usesTotal && latentLines9.some((l9, k9) => l9 && k9 >= sectionStart && aggDerived[k9] !== true));
+      const latentOut9 = entry.latentAlt9 === true || latentInherited9;
+      latentLines9.push(latentOut9);
+      if (entry.defines) {
+        if (latentOut9) latentVars9.add(entry.defines);
+        else latentVars9.delete(entry.defines);
+      }
       if (entry.defines) {
         if (sig9) {
           varDoubt.set(entry.defines, sig9);
@@ -41823,7 +50952,7 @@ function runSheet(text, context, cache2, initialCfg, probe) {
       cacheOut.push({ ...entry, text: line, fingerprint });
       if (HEADING.test(line)) sectionStart = i2 + 1;
     });
-    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache, usedNow, nowSnap, cfgCap, rts };
+    return { result: { lines: results, graph }, cacheOut, recomputed, fxCache, holCache, usedNow, nowSnap, cfgCap, rts, b1Attempt: b1Attempt9, fxSideband: fxSideband9 };
   };
   let out = attempt();
   const cfgVerify = captureConfig(context);
@@ -41903,16 +51032,23 @@ function runSheet(text, context, cache2, initialCfg, probe) {
     }
     out = attempt({ fx: fxSeed, hol: holSeed, now: nowSeed, cfg: cfgSeed, refs: { rates: ratesSweep, holidays: holidaysSweep } });
   }
-  return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed, rts: out.rts, thirty: out.cfgCap.cfg.policies?.monthToDays === "30" };
+  probe?.b1AttemptCommit9?.(out.b1Attempt);
+  if (probe?.fxJournal9 !== void 0) {
+    probe.fxJournal9.reads.push(...out.fxSideband.reads);
+    probe.fxJournal9.traces.push(...out.fxSideband.traces);
+  }
+  if (probe?.fxObserver9 !== void 0) for (const o9 of out.fxSideband.observations) probe.fxObserver9(o9);
+  if (probe?.reemitObserver !== void 0) for (const args9 of out.fxSideband.reemits) probe.reemitObserver(...args9);
+  return { result: out.result, cacheOut: out.cacheOut, recomputed: out.recomputed, rts: out.rts, thirty: out.cfgCap.cfg.policies?.monthToDays === "30", b1Attempt: out.b1Attempt };
 }
 function evaluateSheet(text, context, initialCfg) {
-  return runSheet(text, context, null, initialCfg).result;
+  return runSheet(text, context, null, initialCfg, { causalRuntime9: "production" }).result;
 }
 function createSheetSession(context, initialCfg) {
   let cache2 = null;
   return {
     update(text) {
-      const { result, cacheOut, recomputed } = runSheet(text, context, cache2, initialCfg);
+      const { result, cacheOut, recomputed } = runSheet(text, context, cache2, initialCfg, { causalRuntime9: "production" });
       cache2 = cacheOut;
       return { ...result, recomputedLines: recomputed };
     }
