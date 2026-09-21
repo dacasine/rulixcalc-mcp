@@ -1,6 +1,38 @@
 # Livraison CaptureAtom causal — 2026-09-15
 
-## Livraison corrective courante — fractions et TypeScript strict
+## Livraison courante — stockage opaque obligatoire (2026-09-22)
+
+Core runtime validé : `d23842718d56bfab86bcba1a0c9772fa665762a0`.
+CI du core : [35663971841](https://github.com/dacasine/rulixcalc/actions/runs/35663971841), succès.
+Le checkout de construction est `33330f5891aa5296bbd5f50a7315269947371b15` :
+seuls la documentation et le budget d'un test de conformité y diffèrent.
+Les arbres Git de `packages/engine`, `packages/rates` et
+`packages/holidays-ch` sont strictement identiques au core vert d238427.
+La CI de ce suivi test-only est encore en cours lors de la livraison ;
+elle n'est pas présentée comme déjà verte.
+
+SHA-256 de `dist/server.js` :
+`ff8cfb66ecbd0daacde16b7f0616ce03d3b24201bfbff483f4305c2b6efce1ba`.
+
+Le stockage RT/Env/cache possède désormais sa capsule opaque obligatoire.
+Le cutover causal accepté reste l'autorité de production ; AJ1 est conservé.
+Π n'est pas embarqué et le compteur reste à 0/3.
+
+Validation du jalon : un deep complet, tous les catalogues FULL verts
+(E0 : 2821 feuilles, 16650 occurrences, 4903 écarts classés), 3903 tests
+verts et trois dépassements de budget. Reprises ciblées seulement : fuzz
+pathologique et API/observateur verts sans changement ; 20000 chaînes
+financières vertes en 40,3 s avec le budget deep de 120 s du harnais, sans
+réduire le volume ni les assertions. Trois typechecks à zéro, baseline vide.
+
+Bundle reconstruit après la CI verte du runtime, puis 15 appels JSON-RPC
+réels comparés au core frais : réponse publique complète (valeur, affichage,
+diagnostics, références), avec assertions de valeurs et erreurs ciblées.
+Taux réseau désactivés. Résultat : 15/15 verts. Les cas couvrent notamment
+les fractions, la réserve financière, l'annulation corrélée, les alias et
+références, abs(-bb), AJ2, les unités, pourcentages, fonctions et refus FX.
+
+## Livraison corrective précédente — fractions et TypeScript strict
 
 Core embarqué : `4a35b377c8335a4d2c4936d148ddfee67ecb29b9`.
 CI du core : [34969195642](https://github.com/dacasine/rulixcalc/actions/runs/34969195642), succès.

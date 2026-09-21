@@ -23293,6 +23293,1419 @@ function canonDec(d2) {
   return s2 === "-0" ? "0" : s2;
 }
 
+// ../textual-calculator/core/packages/engine/src/rat.ts
+var bgcd = (a2, b2) => {
+  a2 = a2 < 0n ? -a2 : a2;
+  b2 = b2 < 0n ? -b2 : b2;
+  while (b2) {
+    const t2 = a2 % b2;
+    a2 = b2;
+    b2 = t2;
+  }
+  return a2 || 1n;
+};
+var rnorm = (x2) => {
+  if (x2.d === 0n) throw new RangeError("exact arithmetic: zero denominator");
+  const g2 = bgcd(x2.n, x2.d);
+  const s2 = x2.d < 0n ? -1n : 1n;
+  return { n: s2 * x2.n / g2, d: s2 * x2.d / g2 };
+};
+var rMul = (a2, b2) => rnorm({ n: a2.n * b2.n, d: a2.d * b2.d });
+var rDiv = (a2, b2) => rnorm({ n: a2.n * b2.d, d: a2.d * b2.n });
+var rAdd = (a2, b2) => rnorm({ n: a2.n * b2.d + b2.n * a2.d, d: a2.d * b2.d });
+var rSub = (a2, b2) => rnorm({ n: a2.n * b2.d - b2.n * a2.d, d: a2.d * b2.d });
+var rPowInt = (a2, e) => {
+  if (e >= 0) return { n: a2.n ** BigInt(e), d: a2.d ** BigInt(e) };
+  const n9 = a2.d ** BigInt(-e);
+  const d9 = a2.n ** BigInt(-e);
+  if (d9 === 0n) throw new RangeError("exact arithmetic: zero denominator");
+  return d9 < 0n ? { n: -n9, d: -d9 } : { n: n9, d: d9 };
+};
+function decToRat(v2) {
+  const s2 = v2.toFixed();
+  const neg = s2.startsWith("-");
+  const body = neg ? s2.slice(1) : s2;
+  const [int2, frac = ""] = body.split(".");
+  const n2 = BigInt(int2 + frac);
+  return rnorm({ n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) });
+}
+var ratToDec = (x2) => new DecC(x2.n.toString()).div(x2.d.toString());
+var ratOfFactor = (f2) => ({ n: f2.n, d: f2.d });
+var gcd = (a2, b2) => {
+  a2 = a2 < 0n ? -a2 : a2;
+  b2 = b2 < 0n ? -b2 : b2;
+  while (b2) [a2, b2] = [b2, a2 % b2];
+  return a2;
+};
+var rCmp = (a2, b2) => {
+  const lhs = a2.n * b2.d;
+  const rhs = b2.n * a2.d;
+  return lhs < rhs ? -1 : lhs > rhs ? 1 : 0;
+};
+var rFloor = (x2) => {
+  const q2 = x2.n / x2.d;
+  return x2.n < 0n && q2 * x2.d !== x2.n ? q2 - 1n : q2;
+};
+
+// ../textual-calculator/core/packages/engine/src/terms.ts
+var canonComps = (list) => {
+  const out = [];
+  for (const c2 of list) {
+    const same = out.find((o2) => o2.def.id === c2.def.id);
+    if (same) same.exp += c2.exp;
+    else out.push({ ...c2 });
+  }
+  return out.filter((o2) => o2.exp !== 0);
+};
+var mkTerm = (x2, comps, aux) => ({ x: x2, comps, aux });
+var termCanon = (t2, thirty) => {
+  const dims = /* @__PURE__ */ new Map();
+  const sym = [];
+  let fold = { n: 1n, d: 1n };
+  for (const c2 of t2.comps) {
+    const d2 = c2.def;
+    if (d2.currency !== void 0) {
+      sym.push(`C:${d2.currency}^${c2.exp}`);
+      continue;
+    }
+    if (d2.constSym !== void 0) {
+      sym.push(`P:${d2.constSym}^${c2.exp}`);
+      continue;
+    }
+    if (d2.factorDec !== void 0) {
+      sym.push(`D:${d2.factorDec}^${c2.exp}`);
+      continue;
+    }
+    if (d2.affine !== void 0) {
+      sym.push(`A:${d2.id}^${c2.exp}`);
+      continue;
+    }
+    fold = rMul(fold, rPowInt(ratOfFactor(d2.factor ?? { n: 1n, d: 1n }), c2.exp));
+    for (const [k2, v2] of Object.entries(d2.dim)) {
+      let kk = k2 === "tempdelta" ? "temperature" : k2;
+      if (thirty === true && kk === "calmonths") {
+        kk = "caldays";
+        fold = rMul(fold, rPowInt({ n: 30n, d: 1n }, v2 * c2.exp));
+      }
+      dims.set(kk, (dims.get(kk) ?? 0) + v2 * c2.exp);
+    }
+  }
+  const dimKey = [...dims].filter(([, v2]) => v2 !== 0).sort((a2, b2) => a2[0] < b2[0] ? -1 : 1).map(([k2, v2]) => `${k2}^${v2}`).join("\xB7");
+  return { key: `${dimKey}|${sym.sort().join("\xB7")}`, canonX: rMul(t2.x, fold), fold };
+};
+var mergeTerms = (a2, b2, sign2, thirty, keepAuxZero = false) => {
+  const out = /* @__PURE__ */ new Map();
+  const addAll = (list, s2) => {
+    for (const t2 of list) {
+      const { key, canonX, fold } = termCanon(t2, thirty);
+      const xs = s2 === 1n ? canonX : { n: -canonX.n, d: canonX.d };
+      const prev = out.get(key);
+      if (prev) {
+        prev.canonX = rAdd(prev.canonX, xs);
+        if (t2.aux) prev.aux = true;
+      } else out.set(key, { canonX: xs, comps: t2.comps, fold, aux: t2.aux });
+    }
+  };
+  addAll(a2, 1n);
+  addAll(b2, sign2);
+  return [...out.values()].flatMap((e) => {
+    const zero = rnorm(e.canonX).n === 0n;
+    if (zero) return keepAuxZero && e.aux ? [{ x: { n: 0n, d: 1n }, comps: e.comps, aux: true }] : [];
+    return [{ x: rDiv(e.canonX, e.fold), comps: e.comps, aux: e.aux }];
+  });
+};
+var distributeTerms = (a2, b2, thirty, sign2 = 1, keepAuxZero = false) => {
+  if (a2.length * b2.length > 65536) return null;
+  const out = [];
+  for (const ta of a2) {
+    for (const tb of b2) {
+      out.push({
+        x: sign2 === 1 ? rMul(ta.x, tb.x) : rDiv(ta.x, tb.x),
+        comps: canonComps([
+          ...ta.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+          ...tb.comps.map((c2) => ({ def: c2.def, exp: c2.exp * sign2 }))
+        ]),
+        // a product/quotient touching a captured decimal stays auxiliary (1n)
+        aux: ta.aux || tb.aux
+      });
+    }
+  }
+  const merged = mergeTerms(out, [], 1n, thirty, keepAuxZero);
+  return merged.length > 4096 ? null : merged;
+};
+var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [], aux: false }];
+var tvCache = /* @__PURE__ */ new WeakMap();
+var termVecInner = (t2, thirty) => {
+  const v2 = /* @__PURE__ */ new Map();
+  const bump = (k2, e) => {
+    v2.set(k2, (v2.get(k2) ?? 0) + e);
+  };
+  for (const c2 of t2.comps) {
+    const d2 = c2.def;
+    if (d2.currency !== void 0) {
+      bump(`C:${d2.currency}`, c2.exp);
+      continue;
+    }
+    if (d2.constSym !== void 0) {
+      bump(`P:${d2.constSym}`, c2.exp);
+      continue;
+    }
+    if (d2.factorDec !== void 0) {
+      bump(`D:${d2.factorDec}`, c2.exp);
+      continue;
+    }
+    if (d2.affine !== void 0) {
+      bump(`A:${d2.id}`, c2.exp);
+      continue;
+    }
+    for (const [k2, e] of Object.entries(d2.dim)) {
+      let kk = k2 === "tempdelta" ? "temperature" : k2;
+      if (thirty === true && kk === "calmonths") kk = "caldays";
+      bump(`d:${kk}`, e * c2.exp);
+    }
+  }
+  return v2;
+};
+var termVec = (t2, thirty) => {
+  if (thirty === true) return termVecInner(t2, thirty);
+  const hit9 = tvCache.get(t2);
+  if (hit9 !== void 0) return hit9;
+  const v9 = termVecInner(t2, thirty);
+  tvCache.set(t2, v9);
+  return v9;
+};
+var termVecCmp = (a2, b2, thirty) => {
+  const va = termVec(a2, thirty);
+  const vb = termVec(b2, thirty);
+  const axes = [.../* @__PURE__ */ new Set([...va.keys(), ...vb.keys()])].sort();
+  for (const ax of axes) {
+    const d2 = (va.get(ax) ?? 0) - (vb.get(ax) ?? 0);
+    if (d2 !== 0) return d2 < 0 ? -1 : 1;
+  }
+  return 0;
+};
+var fracQuotient = (N2, D2, thirty) => {
+  if (N2.length !== D2.length || N2.length === 0) return null;
+  let nMin = N2[0];
+  for (const n2 of N2) if (termVecCmp(n2, nMin, thirty) < 0) nMin = n2;
+  let dMin = D2[0];
+  for (const d2 of D2) if (termVecCmp(d2, dMin, thirty) < 0) dMin = d2;
+  if (rnorm(termCanon(dMin, thirty).canonX).n === 0n) return null;
+  const qc = canonComps([
+    ...nMin.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
+    ...dMin.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
+  ]);
+  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc, aux: false }], [dMin], thirty);
+  if (probe === null || probe.length !== 1) return null;
+  const pc = termCanon(probe[0], thirty);
+  const nc = termCanon(nMin, thirty);
+  if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
+  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc, aux: nMin.aux || dMin.aux };
+  const full = distributeTerms(D2, [cand], thirty);
+  return full !== null && mergeTerms(N2, full, -1n, thirty).length === 0 ? cand : null;
+};
+var termsCmp = (a2, b2, thirty) => {
+  const d2 = mergeTerms(a2, b2, -1n, thirty);
+  if (d2.length === 0) return 0;
+  if (d2.length === 1) {
+    const x2 = rnorm(d2[0].x);
+    return x2.n === 0n ? 0 : x2.n > 0n ? 1 : -1;
+  }
+  let sum2 = { n: 0n, d: 1n };
+  let dimKey = null;
+  for (const t2 of d2) {
+    const { key, canonX } = termCanon(t2, thirty);
+    const [dk, sym] = key.split("|");
+    if (sym !== "") return null;
+    if (dimKey === null) dimKey = dk;
+    else if (dimKey !== dk) return null;
+    sum2 = rAdd(sum2, canonX);
+  }
+  const s2 = rnorm(sum2);
+  return s2.n === 0n ? 0 : s2.n > 0n ? 1 : -1;
+};
+var polyDiv = (num9, den9, thirty) => {
+  const lead9 = (list9) => {
+    let best9 = list9[0];
+    for (let k9 = 1; k9 < list9.length; k9++) {
+      if (termVecCmp(list9[k9], best9, thirty) > 0) best9 = list9[k9];
+    }
+    return best9;
+  };
+  const dl9 = lead9(den9);
+  let rest9 = num9;
+  const q9 = [];
+  let prev9 = null;
+  const qCap9 = 4096;
+  let work9 = 0;
+  const digitCap9 = 2 * Math.max(40, ...[...num9, ...den9].map((t9) => Math.max((t9.x.n < 0n ? -t9.x.n : t9.x.n).toString().length, t9.x.d.toString().length))) + 80;
+  for (let it9 = 0; it9 < 8192 && rest9.length > 0; it9++) {
+    if (q9.length > qCap9) return null;
+    work9 += rest9.length + den9.length;
+    if (work9 > 262144) return null;
+    const nl9 = lead9(rest9);
+    if (prev9 !== null && termVecCmp(nl9, prev9, thirty) >= 0) return null;
+    prev9 = nl9;
+    const map9 = /* @__PURE__ */ new Map();
+    for (const c9 of nl9.comps) map9.set(c9.def.id, { def: c9.def, exp: c9.exp });
+    for (const c9 of dl9.comps) {
+      const e9 = map9.get(c9.def.id) ?? { def: c9.def, exp: 0 };
+      e9.exp -= c9.exp;
+      map9.set(c9.def.id, e9);
+    }
+    if (rnorm(dl9.x).n === 0n) return null;
+    const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0), aux: nl9.aux || dl9.aux };
+    if ((m9.x.n < 0n ? -m9.x.n : m9.x.n).toString().length > digitCap9 || m9.x.d.toString().length > digitCap9) return null;
+    q9.push(m9);
+    const sub9 = distributeTerms([m9], den9, thirty);
+    if (sub9 === null) return null;
+    rest9 = mergeTerms(rest9, sub9, -1n, thirty);
+  }
+  return rest9.length === 0 && q9.length > 0 ? mergeTerms(q9, [], 1n, thirty) : null;
+};
+var termsProject = (list9, thirty) => {
+  let acc9 = { n: 0n, d: 1n };
+  for (const t9 of list9) {
+    let x9 = t9.x;
+    for (const c9 of t9.comps) {
+      if (c9.def.currency !== void 0) return null;
+      if (c9.def.factorDec !== void 0) x9 = rMul(x9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
+      else if (c9.def.factor !== void 0) {
+        let f9 = ratOfFactor(c9.def.factor);
+        if (thirty === true && (c9.def.dim["calmonths"] ?? 0) !== 0) {
+          f9 = rMul(f9, rPowInt({ n: 30n, d: 1n }, c9.def.dim["calmonths"]));
+        }
+        x9 = rMul(x9, rPowInt(f9, c9.exp));
+      } else return null;
+    }
+    acc9 = rAdd(acc9, x9);
+  }
+  return acc9;
+};
+
+// ../textual-calculator/core/packages/engine/src/shadow.ts
+var pureCurrencyLabelForReemit9 = (d9) => {
+  if (d9.currency === void 0 || d9.factor !== void 0 || d9.factorDec !== void 0 || d9.constSym !== void 0 || d9.affine !== void 0) return false;
+  const live9 = Object.entries(d9.dim).filter(([, x9]) => x9 !== 0);
+  return live9.length === 0 || live9.length === 1 && live9[0][0] === "currency" && live9[0][1] === 1;
+};
+var projectIval = (list, thirty, prec, currencyAsOne = false) => {
+  const Dlo = DecC.clone({ precision: prec, rounding: 3 });
+  const Dhi = DecC.clone({ precision: prec, rounding: 2 });
+  const dec2 = (D9, n2, d2) => new D9(n2.toString()).div(d2.toString());
+  let lo = new Dlo(0);
+  let hi = new Dhi(0);
+  for (const t2 of list) {
+    let flo = new Dlo(1);
+    let fhi = new Dhi(1);
+    for (const c2 of t2.comps) {
+      let blo;
+      let bhi;
+      if (c2.def.currency !== void 0) {
+        if (currencyAsOne && pureCurrencyLabelForReemit9(c2.def)) continue;
+        return null;
+      }
+      if (c2.def.factorDec !== void 0) {
+        blo = new Dlo(c2.def.factorDec);
+        bhi = new Dhi(c2.def.factorDec);
+      } else if (c2.def.factor !== void 0) {
+        const fr = ratOfFactor(c2.def.factor);
+        blo = dec2(Dlo, fr.n, fr.d);
+        bhi = dec2(Dhi, fr.n, fr.d);
+        if (thirty === true && (c2.def.dim["calmonths"] ?? 0) !== 0) {
+          blo = blo.times(new Dlo(30).pow(c2.def.dim["calmonths"]));
+          bhi = bhi.times(new Dhi(30).pow(c2.def.dim["calmonths"]));
+        }
+      } else return null;
+      if (c2.exp >= 0) {
+        flo = flo.times(blo.pow(c2.exp));
+        fhi = fhi.times(bhi.pow(c2.exp));
+      } else {
+        const e = -c2.exp;
+        flo = flo.div(bhi.pow(e));
+        fhi = fhi.div(blo.pow(e));
+      }
+    }
+    const xlo = dec2(Dlo, t2.x.n, t2.x.d);
+    const xhi = dec2(Dhi, t2.x.n, t2.x.d);
+    if (t2.x.n >= 0n) {
+      lo = lo.plus(xlo.times(flo));
+      hi = hi.plus(xhi.times(fhi));
+    } else {
+      lo = lo.plus(xlo.times(fhi));
+      hi = hi.plus(xhi.times(flo));
+    }
+  }
+  return [lo, hi];
+};
+var copyTerms = (list) => list.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps.map((c2) => ({ ...c2 })), aux: t2.aux }));
+var encExp9 = (e) => Object.is(e, -0) ? "-0" : String(e);
+var SNAP_BRAND9 = /* @__PURE__ */ new WeakSet();
+var DEF_CAP_CACHE9 = /* @__PURE__ */ new WeakMap();
+var DEF_POOL9 = /* @__PURE__ */ new WeakMap();
+var createUnitDefSnapshotPool9 = () => {
+  const pool9 = Object.freeze({});
+  DEF_POOL9.set(pool9, { defs: /* @__PURE__ */ new Map(), comps: /* @__PURE__ */ new WeakMap() });
+  return pool9;
+};
+var defPoolMap9 = (pool9) => {
+  const state9 = DEF_POOL9.get(pool9);
+  if (state9 === void 0) throw new Error("shadow capture: forged UnitDef snapshot pool");
+  return state9.defs;
+};
+var snapDefCap9 = (d9, local9) => {
+  if (SNAP_BRAND9.has(d9)) {
+    const hit9 = DEF_CAP_CACHE9.get(d9);
+    if (hit9 !== void 0) return hit9;
+    const out92 = snapDefCapRaw9(d9);
+    DEF_CAP_CACHE9.set(d9, out92);
+    return out92;
+  }
+  const loc9 = local9.get(d9);
+  if (loc9 !== void 0) return loc9;
+  const out9 = snapDefCapRaw9(d9);
+  local9.set(d9, out9);
+  return out9;
+};
+var snapshotUnitDefInPool9 = (pool9, def9) => snapDefCap9(def9, defPoolMap9(pool9)).snap;
+var snapshotQCompInPool9 = (pool9, comp9) => {
+  const state9 = DEF_POOL9.get(pool9);
+  if (state9 === void 0) throw new Error("shadow capture: forged UnitDef snapshot pool");
+  const hit9 = state9.comps.get(comp9);
+  if (hit9 !== void 0) return hit9;
+  const def9 = comp9.def;
+  const exp9 = requireNumberField9("comp.exp", comp9.exp);
+  const out9 = Object.freeze({ def: snapDefCap9(def9, state9.defs).snap, exp: exp9 });
+  state9.comps.set(comp9, out9);
+  return out9;
+};
+var requireStringField9 = (field9, v9) => {
+  if (typeof v9 !== "string") throw new Error(`shadow capture: ${field9} must be a string when present (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var requireBigintField9 = (field9, v9) => {
+  if (typeof v9 !== "bigint") throw new Error(`shadow capture: ${field9} must be a bigint (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var requireNumberField9 = (field9, v9) => {
+  if (typeof v9 !== "number") throw new Error(`shadow capture: ${field9} must be a number (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var requireBooleanField9 = (field9, v9) => {
+  if (typeof v9 !== "boolean") throw new Error(`shadow capture: ${field9} must be a boolean (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
+  return v9;
+};
+var snapDefCapRaw9 = (d9) => {
+  const id9 = requireStringField9("id", d9.id);
+  const sym9 = requireStringField9("symbol", d9.symbol);
+  const f9 = d9.factor;
+  const fd0 = d9.factorDec;
+  const fd9 = fd0 === void 0 ? void 0 : requireStringField9("factorDec", fd0);
+  const cs0 = d9.constSym;
+  const cs9 = cs0 === void 0 ? void 0 : requireStringField9("constSym", cs0);
+  const aff9 = d9.affine;
+  const cur0 = d9.currency;
+  const cur9 = cur0 === void 0 ? void 0 : requireStringField9("currency", cur0);
+  const dimPairs9 = Object.entries(d9.dim);
+  for (const [k9, v9] of dimPairs9) requireNumberField9(`dim.${k9}`, v9);
+  const dimSem9 = dimPairs9.filter(([, v9]) => v9 !== 0).sort((a9, b9) => a9[0] < b9[0] ? -1 : 1).map(([k9, v9]) => [k9, encExp9(v9)]);
+  const dim9 = {};
+  for (const [k9, v9] of dimPairs9) dim9[k9] = v9;
+  const fSnap9 = f9 === void 0 ? void 0 : Object.freeze({ n: requireBigintField9("factor.n", f9.n), d: requireBigintField9("factor.d", f9.d) });
+  const aSnap9 = aff9 === void 0 ? void 0 : Object.freeze({ a: requireBigintField9("affine.a", aff9.a), b: requireBigintField9("affine.b", aff9.b), c: requireBigintField9("affine.c", aff9.c) });
+  const snap9 = Object.freeze({
+    id: id9,
+    symbol: sym9,
+    dim: Object.freeze(dim9),
+    ...fSnap9 !== void 0 && { factor: fSnap9 },
+    ...fd9 !== void 0 && { factorDec: fd9 },
+    ...cs9 !== void 0 && { constSym: cs9 },
+    ...aSnap9 !== void 0 && { affine: aSnap9 },
+    ...cur9 !== void 0 && { currency: cur9 }
+  });
+  const opt9 = (v9) => v9 === void 0 ? ["u"] : ["s", v9];
+  const sem9 = [
+    id9,
+    sym9,
+    dimSem9,
+    fSnap9 === void 0 ? ["u"] : ["s", fSnap9.n.toString(), fSnap9.d.toString()],
+    opt9(fd9),
+    opt9(cs9),
+    aSnap9 === void 0 ? ["u"] : ["s", aSnap9.a.toString(), aSnap9.b.toString(), aSnap9.c.toString()],
+    opt9(cur9)
+  ];
+  SNAP_BRAND9.add(snap9);
+  return { snap: snap9, sem: deepFreeze9(sem9), id9 };
+};
+var deepFreeze9 = (v9) => {
+  if (v9 !== null && typeof v9 === "object" && !Object.isFrozen(v9)) {
+    Object.freeze(v9);
+    for (const k9 of Object.keys(v9)) deepFreeze9(v9[k9]);
+  }
+  return v9;
+};
+var captureSlotsFull9 = (terms, termsDen, pool9) => {
+  const local9 = pool9 === void 0 ? /* @__PURE__ */ new Map() : defPoolMap9(pool9);
+  const capList9 = (list9) => {
+    if (list9 === void 0) return { sem: null, leg: null, copy: void 0 };
+    const sem9 = [];
+    const leg9 = [];
+    const copy9 = [];
+    for (const t9 of list9) {
+      const x9 = t9.x;
+      const n9 = requireBigintField9("x.n", x9.n);
+      const d9 = requireBigintField9("x.d", x9.d);
+      const aux9 = requireBooleanField9("aux", t9.aux);
+      const semC9 = [];
+      const legC9 = [];
+      const comps9 = [];
+      for (const c9 of t9.comps) {
+        const ownedC9 = pool9 === void 0 ? (() => {
+          const def9 = c9.def;
+          const exp92 = requireNumberField9("comp.exp", c9.exp);
+          return Object.freeze({ def: snapDefCap9(def9, local9).snap, exp: exp92 });
+        })() : snapshotQCompInPool9(pool9, c9);
+        const exp9 = ownedC9.exp;
+        const dd92 = snapDefCap9(ownedC9.def, local9);
+        semC9.push([dd92.sem, encExp9(exp9)]);
+        legC9.push([dd92.id9, encExp9(exp9)]);
+        comps9.push(ownedC9);
+      }
+      sem9.push(Object.freeze([n9.toString(), d9.toString(), aux9 ? 1 : 0, deepFreeze9(semC9)]));
+      leg9.push(Object.freeze([n9.toString(), d9.toString(), aux9 ? 1 : 0, deepFreeze9(legC9)]));
+      copy9.push(Object.freeze({ x: Object.freeze({ n: n9, d: d9 }), comps: Object.freeze(comps9), aux: aux9 }));
+    }
+    OWNED9.add(copy9);
+    return { sem: Object.freeze(sem9), leg: Object.freeze(leg9), copy: Object.freeze(copy9) };
+  };
+  const tt9 = capList9(terms);
+  const dd9 = capList9(termsDen);
+  return Object.freeze({
+    digest: JSON.stringify(["sc1", tt9.sem, dd9.sem]),
+    legacyEnc: Object.freeze([tt9.leg, dd9.leg]),
+    terms: tt9.copy,
+    termsDen: dd9.copy
+  });
+};
+var captureSlots9 = (terms, termsDen) => captureSlotsFull9(terms, termsDen).digest;
+var captureUnitDef9 = (def) => JSON.stringify(["ud1", snapDefCapRaw9(def).sem]);
+var snapshotUnitDefForReemit9 = (def) => snapDefCapRaw9(def).snap;
+var legacyFingerprint = (terms, termsDen) => {
+  const cap9 = captureSlotsFull9(terms, termsDen);
+  const t9 = recoverProv9(terms, termsDen, void 0, cap9.digest);
+  if (t9 !== null) return JSON.stringify(["lf1p", cap9.legacyEnc[0], cap9.legacyEnc[1], t9.residue.key, t9.thirty]);
+  return JSON.stringify(["lf1", cap9.legacyEnc[0], cap9.legacyEnc[1]]);
+};
+var requireCleanResidueKey9 = (v9) => {
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(v9)) throw new Error("ShadowFraction: control characters are not part of a provider-residue key");
+  return v9;
+};
+var LEGACY_PROV9 = /* @__PURE__ */ new WeakMap();
+var recoverProv9 = (terms, termsDen, thirty, capture9) => {
+  if (terms === void 0) return null;
+  const t9 = LEGACY_PROV9.get(terms);
+  if (t9 === void 0) return null;
+  if (t9.termsDenRef !== termsDen) return null;
+  if (thirty !== void 0 && t9.thirty !== thirty) return null;
+  if (capture9 !== t9.rawShapeDigest) return null;
+  return t9;
+};
+var OWNED9 = /* @__PURE__ */ new WeakSet();
+var SF_CTOR9 = /* @__PURE__ */ Symbol("shadow-fraction-ctor");
+var PROV_CARRIER_GUARDS9 = /* @__PURE__ */ new WeakMap();
+function registerProvCarrierGuard9(value9, guard9) {
+  if (PROV_CARRIER_GUARDS9.has(value9)) throw new Error("ShadowFraction: residue carrier guard already registered");
+  const attach9 = guard9.attach;
+  const recover9 = guard9.recover;
+  if (typeof attach9 !== "function" || typeof recover9 !== "function") throw new Error("ShadowFraction: invalid residue carrier guard");
+  PROV_CARRIER_GUARDS9.set(value9, Object.freeze({ attach: attach9, recover: recover9 }));
+}
+var ownTerms9 = (list9) => {
+  if (OWNED9.has(list9)) return list9;
+  const local9 = /* @__PURE__ */ new Map();
+  const out9 = list9.map((t9) => Object.freeze({
+    x: Object.freeze({ n: t9.x.n, d: t9.x.d }),
+    comps: Object.freeze(t9.comps.map((c9) => Object.freeze({ def: SNAP_BRAND9.has(c9.def) ? c9.def : snapDefCap9(c9.def, local9).snap, exp: c9.exp }))),
+    aux: t9.aux
+  }));
+  Object.freeze(out9);
+  OWNED9.add(out9);
+  return out9;
+};
+var ShadowFraction = class _ShadowFraction {
+  #num;
+  #den;
+  #thirty;
+  /** Phase 2-S0 opaque storage slot. S0 LAW: the residue survives AT REST
+   * only (attach → writeLegacy → fromLegacy on the same array) — NO central
+   * operation transports it (every op builds a residue-less instance);
+   * composition laws belong to B1-B. At the OPAQUE CUTOVER this constructor
+   * will REQUIRE the slot (central-ctor contract, persistence decision). */
+  #prov9;
+  constructor(token9, num, den, thirty, prov9 = null) {
+    if (token9 !== SF_CTOR9) throw new Error("ShadowFraction: construction is module-private (token required)");
+    this.#num = ownTerms9(num);
+    this.#den = ownTerms9(den);
+    this.#thirty = thirty;
+    this.#prov9 = prov9;
+    Object.freeze(this);
+  }
+  /** Attach an opaque Phase-2 residue — returns a NEW instance (value
+   * untouched, immutable law). S0-bis: `key` and `value` are read EXACTLY
+   * ONCE from the caller's (possibly getter/Proxy-backed) object; a
+   * non-string key is refused at RUNTIME before the Cc validation; only the
+   * validated SNAPSHOTS are stored — a changing getter can never smuggle a
+   * different key past the validation. */
+  withProvResidue9(r9) {
+    const key9 = r9.key;
+    const value9 = r9.value;
+    if (typeof key9 !== "string") throw new Error("ShadowFraction: a provider-residue key must be a string");
+    requireCleanResidueKey9(key9);
+    const frozen9 = Object.freeze({ key: key9, value: value9 });
+    const next9 = new _ShadowFraction(SF_CTOR9, this.#num, this.#den, this.#thirty, frozen9);
+    if (typeof value9 === "object" && value9 !== null) {
+      const guard9 = PROV_CARRIER_GUARDS9.get(value9);
+      if (guard9 !== void 0 && !guard9.attach(this, next9)) {
+        throw new Error("ShadowFraction: residue carrier transplantation refused");
+      }
+    }
+    return next9;
+  }
+  /** Read the opaque residue (null when absent). */
+  provResidue9() {
+    return this.#prov9;
+  }
+  /** Return the same owned fraction with the opaque provider residue removed.
+   * This is the ONLY supported purge primitive: callers cannot rebuild from
+   * legacy slots (and thereby accidentally recover the S0 side-band ticket).
+   * The value, authority, calendar context and both faces stay byte-for-byte
+   * owned by this immutable instance. */
+  withoutProvResidue9() {
+    if (this.#prov9 === null) return this;
+    return new _ShadowFraction(SF_CTOR9, this.#num, this.#den, this.#thirty, null);
+  }
+  /** Read-only calendar context (B1-B-bis: the fraction↔contribution
+   * binding checks it — never exposed for mutation). */
+  thirty9() {
+    return this.#thirty;
+  }
+  // ─── factories ────────────────────────────────────────────────────────────
+  /** Bridge from the legacy `terms`/`termsDen` storage (Phase 1 adapter),
+   * returning a DISCRIMINATED result (audit interne #78 1o-ter) — `no-shadow`
+   * (a plain number), `invalid-denominator` (empty or proven-zero denominator),
+   * and `ok` are distinct, never conflated in one `null`. The denominator is
+   * MERGED first, so a structurally-zero currency denominator like
+   * « [1 USD, −1 USD] » is caught before any FX-blind projection. */
+  static fromLegacy(terms, termsDen, thirty, pool9) {
+    if (terms === void 0 && termsDen === void 0) return { kind: "no-shadow" };
+    const cap9 = captureSlotsFull9(terms, termsDen, pool9);
+    let den = ONE_TERMS();
+    if (cap9.termsDen !== void 0) {
+      den = mergeTerms(cap9.termsDen, [], 1n, thirty, true);
+      if (den.length === 0) return { kind: "invalid-denominator" };
+      const dz = new _ShadowFraction(SF_CTOR9, den, ONE_TERMS(), thirty).zeroState();
+      if (dz === "authoritative-zero") return { kind: "invalid-denominator" };
+      if (dz === "auxiliary-zero") return { kind: "undecidable-denominator" };
+    }
+    const ticket9 = recoverProv9(terms, termsDen, thirty, cap9.digest);
+    const value9 = new _ShadowFraction(SF_CTOR9, cap9.terms ?? ONE_TERMS(), den, thirty, ticket9 === null ? null : ticket9.residue);
+    if (ticket9 !== null && typeof ticket9.residue.value === "object" && ticket9.residue.value !== null) {
+      PROV_CARRIER_GUARDS9.get(ticket9.residue.value)?.recover(value9);
+    }
+    return { kind: "ok", value: value9 };
+  }
+  /** Cross-context operations are FORBIDDEN (audit interne #78 1o-bis): two
+   * shadows built under different `monthToDays` calendars must never combine
+   * silently on the left context. */
+  #requireCtx(other) {
+    if (this.#thirty !== other.#thirty) {
+      throw new Error("ShadowFraction: operation across incompatible calendar contexts (monthToDays) is forbidden");
+    }
+  }
+  /** EVERY ShadowFraction distribution forces `keepAuxZero=true` (audit interne
+   * #78 1o-quater), so an auxiliary-zero marker is COMPOSITIONAL through × ÷ +:
+   * « z × 2 », « 2 × z », « z ÷ 2 », « z + authZero » all stay auxiliary zero.
+   * The engine's own distributeTerms keeps the historical default (false). */
+  #distribute(a2, b2) {
+    return distributeTerms(a2, b2, this.#thirty, 1, true);
+  }
+  /** Legacy view for storing back into an RT during Phase 1 (never exposes the
+   * private arrays by reference — always a copy). A trivial `1` denominator is
+   * elided to match the historical shape. */
+  writeLegacy() {
+    const denTrivial = this.#den.length === 1 && this.#den[0].comps.length === 0 && rnorm(this.#den[0].x).n === 1n && rnorm(this.#den[0].x).d === 1n;
+    const terms9 = copyTerms(this.#num);
+    const den9 = denTrivial ? void 0 : copyTerms(this.#den);
+    if (this.#prov9 !== null) {
+      LEGACY_PROV9.set(terms9, { residue: this.#prov9, termsDenRef: den9, thirty: this.#thirty, rawShapeDigest: captureSlots9(terms9, den9) });
+    }
+    return { terms: terms9, ...den9 === void 0 ? {} : { termsDen: den9 } };
+  }
+  /** A dimensionless scalar. `aux` is DECLARED by the caller from parse
+   * provenance (captured decimal ⇒ true; exact rational/integer ⇒ false). */
+  static scalar(x2, aux, thirty) {
+    const n9 = requireBigintField9("scalar.n", x2.n);
+    const d9 = requireBigintField9("scalar.d", x2.d);
+    if (d9 === 0n) throw new Error("shadow scalar: zero denominator is not a rational (fail-closed)");
+    return new _ShadowFraction(SF_CTOR9, [mkTerm({ n: n9, d: d9 }, [], requireBooleanField9("scalar.aux", aux))], ONE_TERMS(), thirty);
+  }
+  /** The authoritative exact zero (empty numerator). */
+  static zero(thirty) {
+    return new _ShadowFraction(SF_CTOR9, [], ONE_TERMS(), thirty);
+  }
+  // ─── authority ────────────────────────────────────────────────────────────
+  /** Does the NUMERATOR carry a captured-decimal (auxiliary) term? The reemit's
+   * zero decision reads ONLY this — the denominator never requalifies it. */
+  numeratorAuxiliary() {
+    return this.#num.some((t2) => t2.aux);
+  }
+  /** Classify the value as a zero. `authoritative-zero` overrides a drifted
+   * direct reading; `auxiliary-zero` cedes to it; `nonzero`/`undecidable` are
+   * explicit (never an ambiguous null). Structural emptiness is decided first
+   * (cheap); a factorDec near-zero is confirmed by an interval that excludes,
+   * or an exact projection that reaches, zero. */
+  zeroState() {
+    if (this.#num.length === 0) return "authoritative-zero";
+    const merged = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    if (merged.every((t2) => rnorm(t2.x).n === 0n)) {
+      return merged.some((t2) => t2.aux) ? "auxiliary-zero" : "authoritative-zero";
+    }
+    const iv = projectIval(this.#num, this.#thirty, 80);
+    if (iv === null) return "unsupported";
+    const [lo, hi] = iv;
+    if (lo.gt(0) || hi.lt(0)) return "nonzero";
+    const nx = termsProject(this.#num, this.#thirty);
+    if (nx === null) return "unsupported";
+    if (rnorm(nx).n !== 0n) return "nonzero";
+    return this.numeratorAuxiliary() ? "auxiliary-zero" : "authoritative-zero";
+  }
+  // ─── central operations (authority carried by construction) ─────────────────
+  /** −(num/den) = (−num)/den — authority per term preserved verbatim. */
+  negate() {
+    return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: { n: -t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+  }
+  /** Scale the numerator by an EXACT rational k (audit interne #78 2b) — a captured
+   * decimal stays captured (aux preserved); k itself is a pure multiplier and never a
+   * source of auxiliarity. LAWS: `scale(0)` on any VALID fraction is the AUTHORITATIVE
+   * zero (a finite value times an exact zero is a proven zero — the numerator empties,
+   * the denominator collapses to canonical 1, so zeroState()==='authoritative-zero'
+   * and invert() ⇒ division-by-zero), mirroring `mul`'s authZero law; `scale(1)` is
+   * form-preserving; `scale(-1) ≡ negate()`; `scale(a).scale(b) ≡ scale(a·b)`. The
+   * zero shortcut is legal ONLY here because `scale` acts on an already-constructed
+   * (hence valid) fraction and takes an EXACT rational k — a capped/projected-zero
+   * scalar must be gated OUT by the caller BEFORE it ever reaches `scale(0)`. */
+  scale(k2) {
+    const kn = rnorm(k2);
+    if (kn.n === 0n) return _ShadowFraction.zero(this.#thirty);
+    if (kn.n === 1n && kn.d === 1n) return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+    if (kn.n === -1n && kn.d === 1n) return this.negate();
+    return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: rMul(t2.x, kn), comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
+  }
+  /** num/den ± other = (num·oDen ± oNum·den)/(den·oDen), authority infecting
+   * through the AUTHORITY-AWARE merge (keepAuxZero): a sum touching a captured
+   * decimal stays captured, and « 1/2 (auth) − 0.5 (aux) » cancels to an
+   * AUXILIARY zero, not a clean authoritative one. `budget-exhausted` when a
+   * distribution exceeds the shadow bound. */
+  addSigned(other, sign2) {
+    this.#requireCtx(other);
+    const a2 = this.#distribute(this.#num, other.#den);
+    const b2 = this.#distribute(other.#num, this.#den);
+    const dd = this.#distribute(this.#den, other.#den);
+    if (a2 === null || b2 === null || dd === null) return { kind: "budget-exhausted" };
+    const num = mergeTerms(a2, b2, sign2, this.#thirty, true);
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, dd, this.#thirty) };
+  }
+  add(other) {
+    return this.addSigned(other, 1n);
+  }
+  sub(other) {
+    return this.addSigned(other, -1n);
+  }
+  /** Product with the authZero × finite = authZero LAW: an authoritative
+   * structural zero times any finite shadow is an authoritative zero — the
+   * other operand's captured-decimal terms do not taint a zero they merely
+   * scale. Otherwise the numerators/denominators distribute and authority
+   * infects per term. `budget-exhausted` when a distribution exceeds the bound. */
+  mul(other) {
+    this.#requireCtx(other);
+    if (this.zeroState() === "authoritative-zero" || other.zeroState() === "authoritative-zero") {
+      return { kind: "ok", value: _ShadowFraction.zero(this.#thirty) };
+    }
+    const num = this.#distribute(this.#num, other.#num);
+    const den = this.#distribute(this.#den, other.#den);
+    if (num === null || den === null) return { kind: "budget-exhausted" };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, den, this.#thirty) };
+  }
+  /** num/den ÷ other = (num·oDen)/(den·oNum). Inversion is legal ONLY on a
+   * PROVEN non-zero divisor: a zero → division-by-zero; an undecidable sign →
+   * undecidable; a recipe-less divisor → unsupported (audit interne #78 1o-bis).
+   * An `undecidable` operand is NEVER inverted. */
+  div(other) {
+    this.#requireCtx(other);
+    const oz = other.zeroState();
+    if (oz === "authoritative-zero") return { kind: "division-by-zero" };
+    if (oz === "auxiliary-zero") return { kind: "undecidable" };
+    if (oz === "unsupported") return { kind: "unsupported" };
+    if (oz === "undecidable") return { kind: "undecidable" };
+    const num = this.#distribute(this.#num, other.#den);
+    const den = this.#distribute(this.#den, other.#num);
+    if (num === null || den === null) return { kind: "budget-exhausted" };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, den, this.#thirty) };
+  }
+  /** 1/(num/den) = den/num — legal ONLY when the numerator is PROVEN non-zero;
+   * every other state is explicit (never 1/0 by omission, never invert an
+   * undecidable). */
+  invert() {
+    const z2 = this.zeroState();
+    if (z2 === "authoritative-zero") return { kind: "division-by-zero" };
+    if (z2 === "auxiliary-zero") return { kind: "undecidable" };
+    if (z2 === "unsupported") return { kind: "unsupported" };
+    if (z2 === "undecidable") return { kind: "undecidable" };
+    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, copyTerms(this.#den), copyTerms(this.#num), this.#thirty) };
+  }
+  /** Reduce num/den to a single monomial term when it divides exactly (z²/z = z),
+   * carrying authority; null when no monomial quotient exists — OR when the
+   * reduction is not authority-complete. `fracQuotient` pairs only the two
+   * EXTREME (min) terms for provenance, so a NON-dominant auxiliary term inside
+   * a genuine polynomial is silently WHITENED (`[2,2m aux]/[1,m]` → `2` auth).
+   * When either side is a polynomial carrying any auxiliary term we refuse
+   * (conservative, mirrors semanticKey()'s polynomial branch — audit interne
+   * #78 1o-quater-bis). A pure monomial ÷ monomial keeps its exact provenance
+   * (both extremes ARE all the terms), so it is never over-refused. */
+  reduceMonomial() {
+    const num = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const den = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const poly = num.length > 1 || den.length > 1;
+    if (poly && (num.some((t2) => t2.aux) || den.some((t2) => t2.aux))) return null;
+    return fracQuotient(this.#num, this.#den, this.#thirty);
+  }
+  /** AUTHORITY-COMPLETE scalar reduction (audit interne #78 2c-a): N ≡ k·D with a
+   * DIMENSIONLESS, symbol-free quotient ⇒ the exact rational k, with the quotient's
+   * authority REPORTED, never laundered. The legacy `fracReduce` publishes `k` as an
+   * exact rational regardless of the quotient term's `aux` (a captured-decimal origin
+   * anywhere in the pairing) — this API keeps the two outcomes DISTINCT: `reduced`
+   * (every contributing extreme authoritative) vs `reduced-aux` (numerically the same
+   * k, but the reduction is not authority-proven). Zeros are NOT this API's job —
+   * `zeroState()` classifies them; an empty or non-quotient numerator is
+   * `irreducible` here. */
+  reduceScalar() {
+    const q2 = fracQuotient(this.#num, this.#den, this.#thirty);
+    if (q2 === null) return { kind: "irreducible" };
+    const c2 = termCanon(q2, this.#thirty);
+    if (c2.key !== "|") return { kind: "irreducible" };
+    const num9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const den9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const anyAux9 = num9.some((t2) => t2.aux) || den9.some((t2) => t2.aux);
+    return anyAux9 ? { kind: "reduced-aux", x: rnorm(c2.canonX) } : { kind: "reduced", x: rnorm(c2.canonX) };
+  }
+  // ─── projection ─────────────────────────────────────────────────────────────
+  /** Rigorous interval bracket of the numerator (directed rounding). */
+  numeratorInterval(prec) {
+    const iv = projectIval(this.#num, this.#thirty, prec);
+    return iv === null ? { kind: "unsupported" } : { kind: "ok", lo: iv[0], hi: iv[1] };
+  }
+  /** Rigorous interval bracket of the denominator; `straddle` when its sign is
+   * undecided at this precision (0 ∈ [lo, hi]) — the caller widens. */
+  denominatorInterval(prec) {
+    const iv = projectIval(this.#den, this.#thirty, prec);
+    if (iv === null) return { kind: "unsupported" };
+    const [lo, hi] = iv;
+    if (!lo.gt(0) && !hi.lt(0)) return { kind: "straddle" };
+    return { kind: "ok", lo, hi };
+  }
+  /** Exact rational numerator/denominator projection over the engine's rounded
+   * constants (expensive for high-exponent factorDec — the interval is the
+   * cheap path). Null when a component has no numeric recipe. */
+  projectExact() {
+    const nx = termsProject(this.#num, this.#thirty);
+    const dx = termsProject(this.#den, this.#thirty);
+    if (nx === null || dx === null) return null;
+    return { num: nx, den: dx };
+  }
+  /** Opaque preflight for the REEMISSION currency-as-×1 exception. Every
+   * currency definition on BOTH faces must be a pure provider label; a
+   * contradictory numeric/constant/affine recipe or foreign dimension is a
+   * typed coverage failure at the caller, never a `projectExactForReemit()`
+   * null that can be mistaken for `unchanged`. Definitions are snapshotted
+   * once per identity during this decision. */
+  currencyLabelsValidForReemit9() {
+    const seen9 = /* @__PURE__ */ new Map();
+    const snap9 = (def9) => {
+      const old9 = seen9.get(def9);
+      if (old9 !== void 0) return old9;
+      const fresh9 = snapshotUnitDefForReemit9(def9);
+      seen9.set(def9, fresh9);
+      return fresh9;
+    };
+    for (const list9 of [this.#num, this.#den]) for (const term9 of list9) for (const comp9 of term9.comps) {
+      const def9 = snap9(comp9.def);
+      if (def9.currency !== void 0 && !pureCurrencyLabelForReemit9(def9)) return false;
+    }
+    return true;
+  }
+  /** Exact counterpart of `projectIntervalsForReemit`: currency-only comps
+   * are opaque ×1 labels, while every other unsupported component still
+   * refuses. This is REEMISSION evidence only; identity/zero/compare keep
+   * using the context-free `projectExact()` and therefore never assume FX. */
+  projectExactForReemit() {
+    const currencyAsOne9 = (list9) => {
+      const out9 = [];
+      for (const t9 of list9) {
+        const comps9 = [];
+        for (const c9 of t9.comps) {
+          if (c9.def.currency !== void 0) {
+            if (!pureCurrencyLabelForReemit9(c9.def)) return null;
+            continue;
+          }
+          comps9.push({ ...c9 });
+        }
+        out9.push({ x: { n: t9.x.n, d: t9.x.d }, aux: t9.aux, comps: comps9 });
+      }
+      return out9;
+    };
+    const num9 = currencyAsOne9(this.#num);
+    const den9 = currencyAsOne9(this.#den);
+    if (num9 === null || den9 === null) return null;
+    const nx9 = termsProject(num9, this.#thirty);
+    const dx9 = termsProject(den9, this.#thirty);
+    if (nx9 === null || dx9 === null) return null;
+    return { num: nx9, den: dx9 };
+  }
+  /** Does any term (numerator OR denominator) carry an IRRATIONAL factorDec comp
+   * (radian, …)? Such a shadow's exact-rational projection is a 40-digit
+   * approximation, so its public reading must ride the CERTIFIED interval path
+   * — this reproduces reemit's `approx9` gate WITHOUT the caller touching
+   * terms/termsDen (audit interne #78 Phase 1p). */
+  hasApproxFactor() {
+    return this.#num.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0)) || this.#den.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
+  }
+  /** REEMISSION-ONLY interval projection (audit interne #78 Phase 1p, option a):
+   * numerator AND denominator brackets together, treating a CURRENCY comp as an
+   * OPAQUE ×1 label (no rate read). STRICTLY separate from the identity
+   * projections — a currency shadow like « 2 USD − 1 EUR » stays `unsupported`
+   * for any PROOF (zeroState/compare/semanticKey) even though its reemission
+   * projection IS computable here. `straddle` when the denominator's sign is
+   * undecided at this precision. Used ONLY by candidateReemit9's interval branch. */
+  projectIntervalsForReemit(prec) {
+    const n2 = projectIval(this.#num, this.#thirty, prec, true);
+    const d2 = projectIval(this.#den, this.#thirty, prec, true);
+    if (n2 === null || d2 === null) return { kind: "unsupported" };
+    if (!d2[0].gt(0) && !d2[1].lt(0)) return { kind: "straddle" };
+    return { kind: "ok", num: n2, den: d2 };
+  }
+  // ─── identity ────────────────────────────────────────────────────────────────
+  /** Sign of a term list's projection: +1 / −1, or 0 when undecided/unsupported
+   * (bracket straddles zero at prec 80, or a recipe-less comp). */
+  #signOf(list) {
+    const iv = projectIval(list, this.#thirty, 80);
+    if (iv === null) return 0;
+    if (iv[0].gt(0)) return 1;
+    if (iv[1].lt(0)) return -1;
+    return 0;
+  }
+  /** Ordered comparison this − other ∈ {−1, 0, 1}, or null when not provably
+   * decided. AUTHORITY-aware: a value-equal difference that absorbed a captured
+   * decimal is NOT provably equal (⇒ null, matching semanticKey which
+   * distinguishes it). DENOMINATOR-SIGN aware: a negative common denominator
+   * flips the order (audit interne #78 1o-bis). */
+  compare(other) {
+    this.#requireCtx(other);
+    const a2 = this.#distribute(this.#num, other.#den);
+    const b2 = this.#distribute(other.#num, this.#den);
+    if (a2 === null || b2 === null) return null;
+    const s2 = termsCmp(a2, b2, this.#thirty);
+    if (s2 === null) return null;
+    if (s2 === 0) {
+      return mergeTerms(a2, b2, -1n, this.#thirty, true).length === 0 ? 0 : null;
+    }
+    const sa = this.#signOf(this.#den);
+    const sb = this.#signOf(other.#den);
+    if (sa === 0 || sb === 0) return null;
+    return sa * sb > 0 ? s2 : -s2;
+  }
+  /** Narrow proof used by the provider-residue quotient route: two opaque
+   * fractions are structurally the same non-zero monomial, hence a/b = 1.
+   * Currency components deliberately remain unsupported by numeric
+   * projection, so the proof is purely algebraic: canonical numerator and
+   * denominator each contain one non-zero term and the cross-difference
+   * cancels without an auxiliary marker. It is NOT a generic x/x shortcut;
+   * the caller must separately prove correlation of the provider residue. */
+  correlatedUnitQuotient9(other) {
+    this.#requireCtx(other);
+    const an9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const ad9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const bn9 = mergeTerms(other.#num, [], 1n, this.#thirty, true);
+    const bd9 = mergeTerms(other.#den, [], 1n, this.#thirty, true);
+    if (an9.length !== 1 || ad9.length !== 1 || bn9.length !== 1 || bd9.length !== 1) return null;
+    if (an9[0].x.n === 0n || ad9[0].x.n === 0n || bn9[0].x.n === 0n || bd9[0].x.n === 0n) return null;
+    const left9 = this.#distribute(an9, bd9);
+    const right9 = this.#distribute(bn9, ad9);
+    if (left9 === null || right9 === null) return null;
+    if (mergeTerms(left9, right9, -1n, this.#thirty, true).length !== 0) return null;
+    return _ShadowFraction.scalar({ n: 1n, d: 1n }, false, this.#thirty);
+  }
+  /** Narrow divisor proof for a provider-labelled monomial. Numeric
+   * projection deliberately treats currency as unsupported, but a single
+   * AUTHORITATIVE symbolic monomial with a non-zero coefficient is still
+   * structurally non-zero when the resulting numerator and denominator have
+   * the SAME canonical support.  This lets the owning provider algebra form
+   * `(94 CHF/h)/(1 CHF/h)` without pretending that a context-free FX rate is
+   * available. The exact fraction remains first-class (its canonical scalar
+   * reduction is still 94); auxiliary terms and polynomial faces are never
+   * admitted.
+   *
+   * The method is intentionally NOT a generic fallback from `div()`: callers
+   * must first receive `unsupported` from the ordinary proof and must retain
+   * their own causal/provider verdict. */
+  divByAuthoritativeMonomial9(other) {
+    this.#requireCtx(other);
+    const an9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const ad9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    const on9 = mergeTerms(other.#num, [], 1n, this.#thirty, true);
+    const od9 = mergeTerms(other.#den, [], 1n, this.#thirty, true);
+    const structuralNonzero9 = (face9) => face9.length === 1 && face9[0].x.n !== 0n && face9[0].x.d !== 0n && face9[0].aux === false && face9[0].comps.every((comp9) => comp9.def.currency === void 0 || pureCurrencyLabelForReemit9(comp9.def));
+    if (!structuralNonzero9(an9) || !structuralNonzero9(ad9) || !structuralNonzero9(on9) || !structuralNonzero9(od9)) return null;
+    const num9 = this.#distribute(an9, od9);
+    const den9 = this.#distribute(ad9, on9);
+    if (num9 === null || den9 === null) return { kind: "budget-exhausted" };
+    const quotient9 = new _ShadowFraction(SF_CTOR9, num9, den9, this.#thirty);
+    if (quotient9.reduceScalar().kind !== "reduced") return null;
+    return { kind: "ok", value: quotient9 };
+  }
+  /** CANONICAL world digest of an AUTHORITATIVE value, or `null` (audit interne
+   * #78 observatrice, Finding A). Canonicalised through the SAME algebra as
+   * termCanon/mergeTerms — so `1 m` ≡ `100 cm`, `[1,1]` ≡ `[2]` — normalised by
+   * the leading denominator coefficient so (s·num)/(s·den) ≡ num/den, and
+   * PREFIXED by monthToDays so civil and '30' worlds never share a key.
+   *
+   * STRICT LAW: two NON-null equal keys imply `compare() === 0` — no exception.
+   * An AUXILIARY provenance (a captured decimal surviving the canonical
+   * reduction) has NO provable canonical world — compare() cedes (null) on it,
+   * even reflexively — so it gets NO key at all (`null`), NOT a distinct
+   * decisive key. Two `null`s are never compared as keys.
+   *
+   * NORMATIVE (audit interne #78 observatrice, Finding C): the absolute-vs-
+   * interval THERMAL ROLE belongs to the OUTER RT envelope; the shadow encodes
+   * only the canonical kelvin-LINEAR measure, where `ΔK ≡ K` by size — exactly
+   * as `1 m ≡ 100 cm`. So `1 K·rad/°` and `1 ΔK·rad/°` share this key (same
+   * measure) but stay distinct worlds through their outer envelope (K vs ΔK) and
+   * their typed behaviour (`K + K` refuses, `K + ΔK` succeeds, `ΔK − K` refuses).
+   * NOT a substitute for the legacy fingerprint, which still distinguishes
+   * writing-form shapes. */
+  semanticKey() {
+    const num = mergeTerms(this.#num, [], 1n, this.#thirty, true);
+    const den = mergeTerms(this.#den, [], 1n, this.#thirty, true);
+    if (den.length === 0 || den.every((t2) => rnorm(t2.x).n === 0n)) return null;
+    let reduced;
+    if (den.length === 1) {
+      const inv = { x: rDiv({ n: 1n, d: 1n }, den[0].x), comps: den[0].comps.map((c2) => ({ def: c2.def, exp: -c2.exp })), aux: den[0].aux };
+      const n2 = this.#distribute(num, [inv]);
+      if (n2 === null) return null;
+      reduced = n2;
+    } else {
+      if (num.some((t2) => t2.aux) || den.some((t2) => t2.aux)) return null;
+      const q2 = fracQuotient(this.#num, this.#den, this.#thirty);
+      if (q2 === null) return null;
+      reduced = [q2];
+    }
+    const finalTerms = mergeTerms(reduced, [], 1n, this.#thirty, true);
+    if (finalTerms.some((t2) => t2.aux)) return null;
+    const items = finalTerms.map((t2) => {
+      const c2 = termCanon(t2, this.#thirty);
+      const x2 = rnorm(c2.canonX);
+      return `${c2.key}=${x2.n}/${x2.d}`;
+    });
+    return `${this.#thirty ? "30" : "civ"}|${items.sort().join("+")}`;
+  }
+};
+Object.freeze(ShadowFraction.prototype);
+Object.freeze(ShadowFraction);
+var STORAGE_CTOR9 = /* @__PURE__ */ Symbol("opaque-shadow-storage");
+var STORAGE_BRAND9 = /* @__PURE__ */ new WeakSet();
+var OpaqueShadowStorage9 = class _OpaqueShadowStorage9 {
+  #capture9;
+  #present9;
+  #provenance9;
+  #sourceKeys9;
+  constructor(token9, capture9, present9, provenance9, sourceKeys9) {
+    if (token9 !== STORAGE_CTOR9) throw new Error("OpaqueShadowStorage9: construction is module-private");
+    this.#capture9 = capture9;
+    this.#present9 = Object.freeze([present9[0], present9[1]]);
+    this.#provenance9 = provenance9;
+    this.#sourceKeys9 = Object.freeze([...sourceKeys9]);
+    STORAGE_BRAND9.add(this);
+    Object.freeze(this);
+  }
+  static is9(value9) {
+    return typeof value9 === "object" && value9 !== null && STORAGE_BRAND9.has(value9);
+  }
+  static captureLegacy9(slots92, sourceKeys9 = Reflect.ownKeys(slots92)) {
+    const present9 = [Object.hasOwn(slots92, "terms"), Object.hasOwn(slots92, "termsDen")];
+    const num9 = slots92.terms;
+    const den9 = slots92.termsDen;
+    if (!present9[0] && !present9[1] && num9 === void 0 && den9 === void 0) return null;
+    const capture9 = captureSlotsFull9(num9, den9);
+    const ticket9 = recoverProv9(num9, den9, void 0, capture9.digest);
+    const provenance9 = ticket9 === null ? null : Object.freeze({ residue: ticket9.residue, thirty: ticket9.thirty, storageIdentity9: ticket9.storageIdentity9 ?? ticket9 });
+    return new _OpaqueShadowStorage9(STORAGE_CTOR9, capture9, present9, provenance9, sourceKeys9);
+  }
+  static fromFraction9(fraction9) {
+    const storage9 = _OpaqueShadowStorage9.captureLegacy9(fraction9.writeLegacy());
+    if (storage9 === null) throw new Error("OpaqueShadowStorage9: fraction export omitted its numerator");
+    return storage9;
+  }
+  hasShadow9() {
+    return this.#capture9.terms !== void 0 || this.#capture9.termsDen !== void 0;
+  }
+  legacyFingerprint9() {
+    const [num9, den9] = this.#capture9.legacyEnc;
+    const provenance9 = this.#provenance9;
+    return provenance9 === null ? JSON.stringify(["lf1", num9, den9]) : JSON.stringify(["lf1p", num9, den9, provenance9.residue.key, provenance9.thirty]);
+  }
+  /** Compatibility boundary only: a fresh, independently mutable pair.
+   * A validated ticket is re-bound to THAT pair, never to caller arrays. */
+  exportLegacy9() {
+    const num9 = this.#capture9.terms === void 0 ? void 0 : copyTerms(this.#capture9.terms);
+    const den9 = this.#capture9.termsDen === void 0 ? void 0 : copyTerms(this.#capture9.termsDen);
+    const out9 = {};
+    if (this.#present9[0] || num9 !== void 0) out9.terms = num9;
+    if (this.#present9[1] || den9 !== void 0) out9.termsDen = den9;
+    if (num9 !== void 0 && this.#provenance9 !== null) {
+      LEGACY_PROV9.set(num9, {
+        residue: this.#provenance9.residue,
+        termsDenRef: den9,
+        thirty: this.#provenance9.thirty,
+        rawShapeDigest: this.#capture9.digest,
+        storageIdentity9: this.#provenance9.storageIdentity9
+      });
+    }
+    return out9;
+  }
+  /** Restore the compatibility envelope's property order as well as its
+   * shadow slots. Keys removed by the caller stay removed; fields added
+   * later retain their insertion order. No outer value is retained here.
+   * This is for the frozen oracles, not a second production authority. */
+  exportLegacyEnvelope9(envelope9) {
+    const descriptors9 = Object.getOwnPropertyDescriptors(envelope9);
+    Reflect.deleteProperty(descriptors9, "shadow");
+    Reflect.deleteProperty(descriptors9, "terms");
+    Reflect.deleteProperty(descriptors9, "termsDen");
+    Object.assign(descriptors9, Object.getOwnPropertyDescriptors(this.exportLegacy9()));
+    const ordered9 = /* @__PURE__ */ Object.create(null);
+    for (const key9 of [...this.#sourceKeys9, ...Reflect.ownKeys(descriptors9)]) {
+      if (!Object.hasOwn(ordered9, key9) && Object.hasOwn(descriptors9, key9)) {
+        Object.defineProperty(ordered9, key9, { value: Reflect.get(descriptors9, key9), enumerable: true });
+      }
+    }
+    return Object.create(Object.getPrototypeOf(envelope9), ordered9);
+  }
+  /** Consumer-selected calendar and existing typed denominator verdicts.
+   * Context-mismatched causal tickets stay unusable, as in fromLegacy. */
+  fraction9(thirty9) {
+    const slots92 = this.exportLegacy9();
+    return ShadowFraction.fromLegacy(slots92.terms, slots92.termsDen, thirty9);
+  }
+};
+Object.freeze(OpaqueShadowStorage9.prototype);
+Object.freeze(OpaqueShadowStorage9);
+function captureOpaqueShadowEnvelope9(rt9) {
+  if (Object.hasOwn(rt9, "shadow")) throw new Error("opaque-storage: legacy import received an opaque slot");
+  const descriptors9 = Object.getOwnPropertyDescriptors(rt9);
+  const storage9 = OpaqueShadowStorage9.captureLegacy9(rt9);
+  if (storage9?.hasShadow9() && Reflect.get(rt9, "foldA9") !== void 0) {
+    throw new Error("invalid-authority-state: certificate and opaque shadow cannot coexist");
+  }
+  Reflect.deleteProperty(descriptors9, "terms");
+  Reflect.deleteProperty(descriptors9, "termsDen");
+  Object.defineProperty(descriptors9, "shadow", { enumerable: true, value: {
+    value: storage9,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  } });
+  return Object.create(Object.getPrototypeOf(rt9), descriptors9);
+}
+function constructOpaqueShadowEnvelope9(recipe9) {
+  if (!Object.hasOwn(recipe9, "shadow")) return captureOpaqueShadowEnvelope9(recipe9);
+  const storage9 = Reflect.get(recipe9, "shadow");
+  if (storage9 !== null && !OpaqueShadowStorage9.is9(storage9)) throw new Error("opaque-storage: forged construction capsule");
+  const hasNum9 = Object.hasOwn(recipe9, "terms"), hasDen9 = Object.hasOwn(recipe9, "termsDen");
+  if (!hasNum9 && !hasDen9) {
+    if (storage9?.hasShadow9() && Reflect.get(recipe9, "foldA9") !== void 0) {
+      throw new Error("invalid-authority-state: certificate and opaque shadow cannot coexist");
+    }
+    return recipe9;
+  }
+  const descriptors9 = Object.getOwnPropertyDescriptors(recipe9);
+  Reflect.deleteProperty(descriptors9, "shadow");
+  Reflect.deleteProperty(descriptors9, "terms");
+  Reflect.deleteProperty(descriptors9, "termsDen");
+  const bare9 = Object.create(Object.getPrototypeOf(recipe9), descriptors9);
+  const legacy9 = storage9 === null ? bare9 : storage9.exportLegacyEnvelope9(bare9);
+  if (hasNum9) Object.defineProperty(legacy9, "terms", { value: Reflect.get(recipe9, "terms"), enumerable: true, writable: true, configurable: true });
+  if (hasDen9) Object.defineProperty(legacy9, "termsDen", { value: Reflect.get(recipe9, "termsDen"), enumerable: true, writable: true, configurable: true });
+  return captureOpaqueShadowEnvelope9(legacy9);
+}
+function storageOfEnvelope9(rt9) {
+  if (!Object.hasOwn(rt9, "shadow")) return void 0;
+  if ("terms" in rt9 || "termsDen" in rt9) throw new Error("opaque-storage: mixed representations");
+  const storage9 = Reflect.get(rt9, "shadow");
+  if (storage9 !== null && !OpaqueShadowStorage9.is9(storage9)) throw new Error("opaque-storage: forged capsule");
+  return storage9;
+}
+function exportLegacyShadowEnvelope9(rt9) {
+  const storage9 = storageOfEnvelope9(rt9);
+  if (storage9 === void 0) return rt9;
+  if (storage9 !== null) return storage9.exportLegacyEnvelope9(rt9);
+  const descriptors9 = Object.getOwnPropertyDescriptors(rt9);
+  Reflect.deleteProperty(descriptors9, "shadow");
+  return Object.create(Object.getPrototypeOf(rt9), descriptors9);
+}
+var STORAGE_READS9 = /* @__PURE__ */ new WeakMap();
+function shadowReadSlots9(rt9) {
+  const storage9 = storageOfEnvelope9(rt9);
+  if (storage9 === void 0) return rt9;
+  if (storage9 === null) return {};
+  let slots92 = STORAGE_READS9.get(storage9);
+  if (slots92 === void 0) {
+    slots92 = deepFreeze9(storage9.exportLegacy9());
+    STORAGE_READS9.set(storage9, slots92);
+  }
+  return slots92;
+}
+function restoreShadowRepresentation9(source9, legacy9) {
+  return Object.hasOwn(source9, "shadow") ? captureOpaqueShadowEnvelope9(legacy9) : legacy9;
+}
+function shadowFromRT(rt2, thirty) {
+  if (rt2 === null) return { kind: "no-shadow" };
+  const storage9 = storageOfEnvelope9(rt2);
+  if (storage9 !== void 0) return storage9 === null ? { kind: "no-shadow" } : storage9.fraction9(thirty);
+  return ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
+}
+function snapshotShadowRT9(rt2, thirty, pool9) {
+  if (Object.hasOwn(rt2, "shadow")) {
+    const legacy9 = exportLegacyShadowEnvelope9(rt2);
+    const result9 = snapshotShadowRT9(legacy9, thirty, pool9);
+    if (result9.kind !== "ok") return result9;
+    return {
+      kind: "ok",
+      rt: restoreShadowRepresentation9(rt2, result9.rt),
+      shadow: result9.shadow,
+      replace: (fraction9) => restoreShadowRepresentation9(rt2, result9.replace(fraction9))
+    };
+  }
+  const descriptors9 = Object.getOwnPropertyDescriptors(rt2);
+  const termsDesc9 = descriptors9.terms;
+  const termsDenDesc9 = descriptors9.termsDen;
+  const ownOrInheritedTerms9 = termsDesc9 !== void 0 || "terms" in rt2;
+  const ownOrInheritedTermsDen9 = termsDenDesc9 !== void 0 || "termsDen" in rt2;
+  const terms9 = rt2.terms;
+  const termsDen9 = rt2.termsDen;
+  const foldDesc9 = descriptors9.foldA9;
+  const foldA9 = rt2.foldA9;
+  const hasFold9 = foldA9 !== void 0;
+  const hasShadow9 = terms9 !== void 0 || termsDen9 !== void 0;
+  if (hasShadow9 && hasFold9) return { kind: "invalid-authority-state" };
+  delete descriptors9.terms;
+  delete descriptors9.termsDen;
+  delete descriptors9.foldA9;
+  const snapshot9 = Object.create(Object.getPrototypeOf(rt2), descriptors9);
+  if (foldDesc9 !== void 0 || "foldA9" in rt2) {
+    Object.defineProperty(snapshot9, "foldA9", {
+      value: foldA9,
+      writable: foldDesc9 !== void 0 && "writable" in foldDesc9 ? foldDesc9.writable === true : true,
+      enumerable: foldDesc9?.enumerable ?? false,
+      configurable: foldDesc9?.configurable ?? true
+    });
+  }
+  const defineSlot9 = (name9, value9, old9) => {
+    Object.defineProperty(snapshot9, name9, {
+      value: value9,
+      writable: old9 !== void 0 && "writable" in old9 ? old9.writable === true : true,
+      enumerable: old9?.enumerable ?? true,
+      configurable: old9?.configurable ?? true
+    });
+  };
+  if (ownOrInheritedTerms9 || terms9 !== void 0) defineSlot9("terms", terms9, termsDesc9);
+  if (ownOrInheritedTermsDen9 || termsDen9 !== void 0) defineSlot9("termsDen", termsDen9, termsDenDesc9);
+  const replace9 = (fraction9) => {
+    const outDescriptors9 = Object.getOwnPropertyDescriptors(snapshot9);
+    delete outDescriptors9.terms;
+    delete outDescriptors9.termsDen;
+    const out9 = Object.create(Object.getPrototypeOf(snapshot9), outDescriptors9);
+    writeShadowSlots9(out9, fraction9.writeLegacy());
+    return out9;
+  };
+  return { kind: "ok", rt: snapshot9, shadow: ShadowFraction.fromLegacy(terms9, termsDen9, thirty, pool9), replace: replace9 };
+}
+function fingerprintFromRT(rt2) {
+  if (rt2 === null) return legacyFingerprint(void 0, void 0);
+  const storage9 = storageOfEnvelope9(rt2);
+  if (storage9 !== void 0) return storage9 === null ? legacyFingerprint(void 0, void 0) : storage9.legacyFingerprint9();
+  return legacyFingerprint(rt2.terms, rt2.termsDen);
+}
+function shadowApproxFromRT(rt2) {
+  const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
+  if (rt2 !== null) rt2 = shadowReadSlots9(rt2);
+  return rt2 !== null && (has(rt2.terms) || has(rt2.termsDen));
+}
+function readLegacyShadowNumerator9(rt2) {
+  return shadowReadSlots9(rt2).terms;
+}
+function readLegacyShadowDenominator9(rt2) {
+  return shadowReadSlots9(rt2).termsDen;
+}
+function negateShadowFromRT(rt2) {
+  if (rt2 === null) return {};
+  rt2 = shadowReadSlots9(rt2);
+  const out = {};
+  if (rt2.terms !== void 0) {
+    const r3 = ShadowFraction.fromLegacy(rt2.terms, void 0, false);
+    out.terms = r3.kind === "ok" ? r3.value.negate().writeLegacy().terms : copyTerms(rt2.terms);
+  } else if (rt2.termsDen !== void 0) {
+    out.terms = ONE_TERMS().map((t2) => ({ ...t2, x: { n: -t2.x.n, d: t2.x.d } }));
+  }
+  if (rt2.termsDen !== void 0) out.termsDen = rt2.termsDen;
+  return out;
+}
+function foldSeedFromRT(rt2, reading, comps, thirty) {
+  void reading;
+  void comps;
+  rt2 = shadowReadSlots9(rt2);
+  if (rt2.terms !== void 0 || rt2.termsDen !== void 0) {
+    const r3 = ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
+    switch (r3.kind) {
+      case "ok":
+        return { kind: "shadow", value: r3.value };
+      case "invalid-denominator":
+        return { kind: "invalid-denominator" };
+      case "undecidable-denominator":
+        return { kind: "undecidable-denominator" };
+      case "no-shadow":
+        break;
+    }
+  }
+  return { kind: "undecidable-authority" };
+}
+function foldSlotsVerbatim9(rt2) {
+  rt2 = shadowReadSlots9(rt2);
+  const out = {};
+  if (rt2.terms !== void 0) out.terms = copyTerms(rt2.terms);
+  if (rt2.termsDen !== void 0) out.termsDen = copyTerms(rt2.termsDen);
+  return out;
+}
+function slotsNum9(slots) {
+  return slots.terms;
+}
+function slotsPresent9(slots) {
+  return slots.terms !== void 0 || slots.termsDen !== void 0;
+}
+function slotsWithNum9(slots, num) {
+  const out = { terms: num };
+  if (slots.termsDen !== void 0) out.termsDen = slots.termsDen;
+  return out;
+}
+function hasShadowFromRT(rt2) {
+  if (rt2 !== null) {
+    const storage9 = storageOfEnvelope9(rt2);
+    if (storage9 !== void 0) return storage9 !== null && storage9.hasShadow9();
+  }
+  return rt2 !== null && (rt2.terms !== void 0 || rt2.termsDen !== void 0);
+}
+function replaceShadowFromFraction9(rt2, fraction) {
+  const out9 = { ...rt2 };
+  writeShadowSlots9(out9, fraction.writeLegacy());
+  return out9;
+}
+function stripShadowFromRT9(rt2) {
+  const out9 = { ...exportLegacyShadowEnvelope9(rt2) };
+  delete out9.terms;
+  delete out9.termsDen;
+  return restoreShadowRepresentation9(rt2, out9);
+}
+function restoreUndefinedShadowSlots9(rt2, slots) {
+  const out9 = { ...exportLegacyShadowEnvelope9(rt2) };
+  if (slots.includes("terms")) out9.terms = void 0;
+  if (slots.includes("termsDen")) out9.termsDen = void 0;
+  return restoreShadowRepresentation9(rt2, out9);
+}
+function editShadowSlots9(rt2, edit) {
+  const out9 = { ...exportLegacyShadowEnvelope9(rt2) };
+  if ("terms" in edit) {
+    if (edit.terms === null || edit.terms === void 0) delete out9.terms;
+    else out9.terms = edit.terms;
+  }
+  if ("termsDen" in edit) {
+    if (edit.termsDen === null || edit.termsDen === void 0) delete out9.termsDen;
+    else out9.termsDen = edit.termsDen;
+  }
+  return restoreShadowRepresentation9(rt2, out9);
+}
+function fractionFaces9(fraction) {
+  const slots92 = fraction.writeLegacy();
+  return [slots92.terms, slots92.termsDen ?? ONE_TERMS()];
+}
+function slots9(terms, termsDen) {
+  const s2 = {};
+  if (terms !== void 0) s2.terms = terms;
+  if (termsDen !== void 0) s2.termsDen = termsDen;
+  return s2;
+}
+function writeShadowSlots9(target, slots) {
+  if (target.foldA9 !== void 0) {
+    throw new Error("invalid-authority-state: a shadow can never be written onto a certificate-carrying value \u2014 rebuild fresh and consume the authority into the terms first");
+  }
+  if (Object.hasOwn(target, "shadow")) {
+    storageOfEnvelope9(target);
+    const normal9 = {};
+    if (slots.terms !== void 0) normal9.terms = slots.terms;
+    if (slots.termsDen !== void 0) normal9.termsDen = slots.termsDen;
+    const sourceKeys9 = [...Reflect.ownKeys(target).filter((key9) => key9 !== "shadow"), ...Reflect.ownKeys(normal9)];
+    const storage9 = OpaqueShadowStorage9.captureLegacy9(normal9, sourceKeys9);
+    Object.defineProperty(target, "shadow", { value: storage9, writable: true, enumerable: true, configurable: true });
+    return;
+  }
+  delete target.terms;
+  delete target.termsDen;
+  if (slots.terms !== void 0) target.terms = slots.terms;
+  if (slots.termsDen !== void 0) target.termsDen = slots.termsDen;
+}
+function transportShadowToCarrier9(source9, carrier9) {
+  source9 = shadowReadSlots9(source9);
+  const terms9 = source9.terms;
+  const termsDen9 = source9.termsDen;
+  if (terms9 === void 0 && termsDen9 === void 0) return null;
+  const out9 = { ...carrier9 };
+  writeShadowSlots9(out9, slots9(terms9, termsDen9));
+  return out9;
+}
+function scaleShadowFromRT(rt2, k2, thirty) {
+  if (rt2 === null) return { kind: "no-shadow" };
+  rt2 = shadowReadSlots9(rt2);
+  const r3 = ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
+  if (r3.kind === "no-shadow") return { kind: "no-shadow" };
+  if (r3.kind === "invalid-denominator") return { kind: "invalid-denominator" };
+  if (r3.kind === "undecidable-denominator") return { kind: "undecidable-denominator" };
+  const kn = rnorm(k2);
+  if (kn.n === 1n && kn.d === 1n) {
+    const slots = {};
+    if (rt2.terms !== void 0) slots.terms = copyTerms(rt2.terms);
+    if (rt2.termsDen !== void 0) slots.termsDen = copyTerms(rt2.termsDen);
+    return { kind: "ok", slots };
+  }
+  return { kind: "ok", slots: r3.value.scale(k2).writeLegacy() };
+}
+
+// ../textual-calculator/core/packages/engine/src/opaque-runtime.ts
+function legacyRTView9(rt9) {
+  if (rt9 === null || rt9 === void 0) return rt9;
+  return exportLegacyShadowEnvelope9(rt9);
+}
+function ownRuntimeRT9(rt9) {
+  if (rt9.t !== "d" && rt9.t !== "p" && rt9.t !== "q" && rt9.t !== "f") return rt9;
+  return constructOpaqueShadowEnvelope9(rt9);
+}
+
 // ../textual-calculator/core/node_modules/jsbi/dist/jsbi.mjs
 var JSBI = class _JSBI extends Array {
   constructor(i2, _2) {
@@ -29015,1212 +30428,6 @@ for (const e of Zt) {
   (t2.configurable || t2.enumerable || t2.writable) && (t2.configurable = false, t2.enumerable = false, t2.writable = false, Object.defineProperty(e, "prototype", t2));
 }
 
-// ../textual-calculator/core/packages/engine/src/rat.ts
-var bgcd = (a2, b2) => {
-  a2 = a2 < 0n ? -a2 : a2;
-  b2 = b2 < 0n ? -b2 : b2;
-  while (b2) {
-    const t2 = a2 % b2;
-    a2 = b2;
-    b2 = t2;
-  }
-  return a2 || 1n;
-};
-var rnorm = (x2) => {
-  if (x2.d === 0n) throw new RangeError("exact arithmetic: zero denominator");
-  const g2 = bgcd(x2.n, x2.d);
-  const s2 = x2.d < 0n ? -1n : 1n;
-  return { n: s2 * x2.n / g2, d: s2 * x2.d / g2 };
-};
-var rMul = (a2, b2) => rnorm({ n: a2.n * b2.n, d: a2.d * b2.d });
-var rDiv = (a2, b2) => rnorm({ n: a2.n * b2.d, d: a2.d * b2.n });
-var rAdd = (a2, b2) => rnorm({ n: a2.n * b2.d + b2.n * a2.d, d: a2.d * b2.d });
-var rSub = (a2, b2) => rnorm({ n: a2.n * b2.d - b2.n * a2.d, d: a2.d * b2.d });
-var rPowInt = (a2, e) => {
-  if (e >= 0) return { n: a2.n ** BigInt(e), d: a2.d ** BigInt(e) };
-  const n9 = a2.d ** BigInt(-e);
-  const d9 = a2.n ** BigInt(-e);
-  if (d9 === 0n) throw new RangeError("exact arithmetic: zero denominator");
-  return d9 < 0n ? { n: -n9, d: -d9 } : { n: n9, d: d9 };
-};
-function decToRat(v2) {
-  const s2 = v2.toFixed();
-  const neg = s2.startsWith("-");
-  const body = neg ? s2.slice(1) : s2;
-  const [int2, frac = ""] = body.split(".");
-  const n2 = BigInt(int2 + frac);
-  return rnorm({ n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) });
-}
-var ratToDec = (x2) => new DecC(x2.n.toString()).div(x2.d.toString());
-var ratOfFactor = (f2) => ({ n: f2.n, d: f2.d });
-var gcd = (a2, b2) => {
-  a2 = a2 < 0n ? -a2 : a2;
-  b2 = b2 < 0n ? -b2 : b2;
-  while (b2) [a2, b2] = [b2, a2 % b2];
-  return a2;
-};
-var rCmp = (a2, b2) => {
-  const lhs = a2.n * b2.d;
-  const rhs = b2.n * a2.d;
-  return lhs < rhs ? -1 : lhs > rhs ? 1 : 0;
-};
-var rFloor = (x2) => {
-  const q2 = x2.n / x2.d;
-  return x2.n < 0n && q2 * x2.d !== x2.n ? q2 - 1n : q2;
-};
-
-// ../textual-calculator/core/packages/engine/src/terms.ts
-var canonComps = (list) => {
-  const out = [];
-  for (const c2 of list) {
-    const same = out.find((o2) => o2.def.id === c2.def.id);
-    if (same) same.exp += c2.exp;
-    else out.push({ ...c2 });
-  }
-  return out.filter((o2) => o2.exp !== 0);
-};
-var mkTerm = (x2, comps, aux) => ({ x: x2, comps, aux });
-var termCanon = (t2, thirty) => {
-  const dims = /* @__PURE__ */ new Map();
-  const sym = [];
-  let fold = { n: 1n, d: 1n };
-  for (const c2 of t2.comps) {
-    const d2 = c2.def;
-    if (d2.currency !== void 0) {
-      sym.push(`C:${d2.currency}^${c2.exp}`);
-      continue;
-    }
-    if (d2.constSym !== void 0) {
-      sym.push(`P:${d2.constSym}^${c2.exp}`);
-      continue;
-    }
-    if (d2.factorDec !== void 0) {
-      sym.push(`D:${d2.factorDec}^${c2.exp}`);
-      continue;
-    }
-    if (d2.affine !== void 0) {
-      sym.push(`A:${d2.id}^${c2.exp}`);
-      continue;
-    }
-    fold = rMul(fold, rPowInt(ratOfFactor(d2.factor ?? { n: 1n, d: 1n }), c2.exp));
-    for (const [k2, v2] of Object.entries(d2.dim)) {
-      let kk = k2 === "tempdelta" ? "temperature" : k2;
-      if (thirty === true && kk === "calmonths") {
-        kk = "caldays";
-        fold = rMul(fold, rPowInt({ n: 30n, d: 1n }, v2 * c2.exp));
-      }
-      dims.set(kk, (dims.get(kk) ?? 0) + v2 * c2.exp);
-    }
-  }
-  const dimKey = [...dims].filter(([, v2]) => v2 !== 0).sort((a2, b2) => a2[0] < b2[0] ? -1 : 1).map(([k2, v2]) => `${k2}^${v2}`).join("\xB7");
-  return { key: `${dimKey}|${sym.sort().join("\xB7")}`, canonX: rMul(t2.x, fold), fold };
-};
-var mergeTerms = (a2, b2, sign2, thirty, keepAuxZero = false) => {
-  const out = /* @__PURE__ */ new Map();
-  const addAll = (list, s2) => {
-    for (const t2 of list) {
-      const { key, canonX, fold } = termCanon(t2, thirty);
-      const xs = s2 === 1n ? canonX : { n: -canonX.n, d: canonX.d };
-      const prev = out.get(key);
-      if (prev) {
-        prev.canonX = rAdd(prev.canonX, xs);
-        if (t2.aux) prev.aux = true;
-      } else out.set(key, { canonX: xs, comps: t2.comps, fold, aux: t2.aux });
-    }
-  };
-  addAll(a2, 1n);
-  addAll(b2, sign2);
-  return [...out.values()].flatMap((e) => {
-    const zero = rnorm(e.canonX).n === 0n;
-    if (zero) return keepAuxZero && e.aux ? [{ x: { n: 0n, d: 1n }, comps: e.comps, aux: true }] : [];
-    return [{ x: rDiv(e.canonX, e.fold), comps: e.comps, aux: e.aux }];
-  });
-};
-var distributeTerms = (a2, b2, thirty, sign2 = 1, keepAuxZero = false) => {
-  if (a2.length * b2.length > 65536) return null;
-  const out = [];
-  for (const ta of a2) {
-    for (const tb of b2) {
-      out.push({
-        x: sign2 === 1 ? rMul(ta.x, tb.x) : rDiv(ta.x, tb.x),
-        comps: canonComps([
-          ...ta.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
-          ...tb.comps.map((c2) => ({ def: c2.def, exp: c2.exp * sign2 }))
-        ]),
-        // a product/quotient touching a captured decimal stays auxiliary (1n)
-        aux: ta.aux || tb.aux
-      });
-    }
-  }
-  const merged = mergeTerms(out, [], 1n, thirty, keepAuxZero);
-  return merged.length > 4096 ? null : merged;
-};
-var ONE_TERMS = () => [{ x: { n: 1n, d: 1n }, comps: [], aux: false }];
-var tvCache = /* @__PURE__ */ new WeakMap();
-var termVecInner = (t2, thirty) => {
-  const v2 = /* @__PURE__ */ new Map();
-  const bump = (k2, e) => {
-    v2.set(k2, (v2.get(k2) ?? 0) + e);
-  };
-  for (const c2 of t2.comps) {
-    const d2 = c2.def;
-    if (d2.currency !== void 0) {
-      bump(`C:${d2.currency}`, c2.exp);
-      continue;
-    }
-    if (d2.constSym !== void 0) {
-      bump(`P:${d2.constSym}`, c2.exp);
-      continue;
-    }
-    if (d2.factorDec !== void 0) {
-      bump(`D:${d2.factorDec}`, c2.exp);
-      continue;
-    }
-    if (d2.affine !== void 0) {
-      bump(`A:${d2.id}`, c2.exp);
-      continue;
-    }
-    for (const [k2, e] of Object.entries(d2.dim)) {
-      let kk = k2 === "tempdelta" ? "temperature" : k2;
-      if (thirty === true && kk === "calmonths") kk = "caldays";
-      bump(`d:${kk}`, e * c2.exp);
-    }
-  }
-  return v2;
-};
-var termVec = (t2, thirty) => {
-  if (thirty === true) return termVecInner(t2, thirty);
-  const hit9 = tvCache.get(t2);
-  if (hit9 !== void 0) return hit9;
-  const v9 = termVecInner(t2, thirty);
-  tvCache.set(t2, v9);
-  return v9;
-};
-var termVecCmp = (a2, b2, thirty) => {
-  const va = termVec(a2, thirty);
-  const vb = termVec(b2, thirty);
-  const axes = [.../* @__PURE__ */ new Set([...va.keys(), ...vb.keys()])].sort();
-  for (const ax of axes) {
-    const d2 = (va.get(ax) ?? 0) - (vb.get(ax) ?? 0);
-    if (d2 !== 0) return d2 < 0 ? -1 : 1;
-  }
-  return 0;
-};
-var fracQuotient = (N2, D2, thirty) => {
-  if (N2.length !== D2.length || N2.length === 0) return null;
-  let nMin = N2[0];
-  for (const n2 of N2) if (termVecCmp(n2, nMin, thirty) < 0) nMin = n2;
-  let dMin = D2[0];
-  for (const d2 of D2) if (termVecCmp(d2, dMin, thirty) < 0) dMin = d2;
-  if (rnorm(termCanon(dMin, thirty).canonX).n === 0n) return null;
-  const qc = canonComps([
-    ...nMin.comps.map((c2) => ({ def: c2.def, exp: c2.exp })),
-    ...dMin.comps.map((c2) => ({ def: c2.def, exp: -c2.exp }))
-  ]);
-  const probe = distributeTerms([{ x: { n: 1n, d: 1n }, comps: qc, aux: false }], [dMin], thirty);
-  if (probe === null || probe.length !== 1) return null;
-  const pc = termCanon(probe[0], thirty);
-  const nc = termCanon(nMin, thirty);
-  if (pc.key !== nc.key || rnorm(pc.canonX).n === 0n) return null;
-  const cand = { x: rDiv(nc.canonX, pc.canonX), comps: qc, aux: nMin.aux || dMin.aux };
-  const full = distributeTerms(D2, [cand], thirty);
-  return full !== null && mergeTerms(N2, full, -1n, thirty).length === 0 ? cand : null;
-};
-var termsCmp = (a2, b2, thirty) => {
-  const d2 = mergeTerms(a2, b2, -1n, thirty);
-  if (d2.length === 0) return 0;
-  if (d2.length === 1) {
-    const x2 = rnorm(d2[0].x);
-    return x2.n === 0n ? 0 : x2.n > 0n ? 1 : -1;
-  }
-  let sum2 = { n: 0n, d: 1n };
-  let dimKey = null;
-  for (const t2 of d2) {
-    const { key, canonX } = termCanon(t2, thirty);
-    const [dk, sym] = key.split("|");
-    if (sym !== "") return null;
-    if (dimKey === null) dimKey = dk;
-    else if (dimKey !== dk) return null;
-    sum2 = rAdd(sum2, canonX);
-  }
-  const s2 = rnorm(sum2);
-  return s2.n === 0n ? 0 : s2.n > 0n ? 1 : -1;
-};
-var polyDiv = (num9, den9, thirty) => {
-  const lead9 = (list9) => {
-    let best9 = list9[0];
-    for (let k9 = 1; k9 < list9.length; k9++) {
-      if (termVecCmp(list9[k9], best9, thirty) > 0) best9 = list9[k9];
-    }
-    return best9;
-  };
-  const dl9 = lead9(den9);
-  let rest9 = num9;
-  const q9 = [];
-  let prev9 = null;
-  const qCap9 = 4096;
-  let work9 = 0;
-  const digitCap9 = 2 * Math.max(40, ...[...num9, ...den9].map((t9) => Math.max((t9.x.n < 0n ? -t9.x.n : t9.x.n).toString().length, t9.x.d.toString().length))) + 80;
-  for (let it9 = 0; it9 < 8192 && rest9.length > 0; it9++) {
-    if (q9.length > qCap9) return null;
-    work9 += rest9.length + den9.length;
-    if (work9 > 262144) return null;
-    const nl9 = lead9(rest9);
-    if (prev9 !== null && termVecCmp(nl9, prev9, thirty) >= 0) return null;
-    prev9 = nl9;
-    const map9 = /* @__PURE__ */ new Map();
-    for (const c9 of nl9.comps) map9.set(c9.def.id, { def: c9.def, exp: c9.exp });
-    for (const c9 of dl9.comps) {
-      const e9 = map9.get(c9.def.id) ?? { def: c9.def, exp: 0 };
-      e9.exp -= c9.exp;
-      map9.set(c9.def.id, e9);
-    }
-    if (rnorm(dl9.x).n === 0n) return null;
-    const m9 = { x: rDiv(nl9.x, dl9.x), comps: [...map9.values()].filter((c9) => c9.exp !== 0), aux: nl9.aux || dl9.aux };
-    if ((m9.x.n < 0n ? -m9.x.n : m9.x.n).toString().length > digitCap9 || m9.x.d.toString().length > digitCap9) return null;
-    q9.push(m9);
-    const sub9 = distributeTerms([m9], den9, thirty);
-    if (sub9 === null) return null;
-    rest9 = mergeTerms(rest9, sub9, -1n, thirty);
-  }
-  return rest9.length === 0 && q9.length > 0 ? mergeTerms(q9, [], 1n, thirty) : null;
-};
-var termsProject = (list9, thirty) => {
-  let acc9 = { n: 0n, d: 1n };
-  for (const t9 of list9) {
-    let x9 = t9.x;
-    for (const c9 of t9.comps) {
-      if (c9.def.currency !== void 0) return null;
-      if (c9.def.factorDec !== void 0) x9 = rMul(x9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
-      else if (c9.def.factor !== void 0) {
-        let f9 = ratOfFactor(c9.def.factor);
-        if (thirty === true && (c9.def.dim["calmonths"] ?? 0) !== 0) {
-          f9 = rMul(f9, rPowInt({ n: 30n, d: 1n }, c9.def.dim["calmonths"]));
-        }
-        x9 = rMul(x9, rPowInt(f9, c9.exp));
-      } else return null;
-    }
-    acc9 = rAdd(acc9, x9);
-  }
-  return acc9;
-};
-
-// ../textual-calculator/core/packages/engine/src/shadow.ts
-var pureCurrencyLabelForReemit9 = (d9) => {
-  if (d9.currency === void 0 || d9.factor !== void 0 || d9.factorDec !== void 0 || d9.constSym !== void 0 || d9.affine !== void 0) return false;
-  const live9 = Object.entries(d9.dim).filter(([, x9]) => x9 !== 0);
-  return live9.length === 0 || live9.length === 1 && live9[0][0] === "currency" && live9[0][1] === 1;
-};
-var projectIval = (list, thirty, prec, currencyAsOne = false) => {
-  const Dlo = DecC.clone({ precision: prec, rounding: 3 });
-  const Dhi = DecC.clone({ precision: prec, rounding: 2 });
-  const dec2 = (D9, n2, d2) => new D9(n2.toString()).div(d2.toString());
-  let lo = new Dlo(0);
-  let hi = new Dhi(0);
-  for (const t2 of list) {
-    let flo = new Dlo(1);
-    let fhi = new Dhi(1);
-    for (const c2 of t2.comps) {
-      let blo;
-      let bhi;
-      if (c2.def.currency !== void 0) {
-        if (currencyAsOne && pureCurrencyLabelForReemit9(c2.def)) continue;
-        return null;
-      }
-      if (c2.def.factorDec !== void 0) {
-        blo = new Dlo(c2.def.factorDec);
-        bhi = new Dhi(c2.def.factorDec);
-      } else if (c2.def.factor !== void 0) {
-        const fr = ratOfFactor(c2.def.factor);
-        blo = dec2(Dlo, fr.n, fr.d);
-        bhi = dec2(Dhi, fr.n, fr.d);
-        if (thirty === true && (c2.def.dim["calmonths"] ?? 0) !== 0) {
-          blo = blo.times(new Dlo(30).pow(c2.def.dim["calmonths"]));
-          bhi = bhi.times(new Dhi(30).pow(c2.def.dim["calmonths"]));
-        }
-      } else return null;
-      if (c2.exp >= 0) {
-        flo = flo.times(blo.pow(c2.exp));
-        fhi = fhi.times(bhi.pow(c2.exp));
-      } else {
-        const e = -c2.exp;
-        flo = flo.div(bhi.pow(e));
-        fhi = fhi.div(blo.pow(e));
-      }
-    }
-    const xlo = dec2(Dlo, t2.x.n, t2.x.d);
-    const xhi = dec2(Dhi, t2.x.n, t2.x.d);
-    if (t2.x.n >= 0n) {
-      lo = lo.plus(xlo.times(flo));
-      hi = hi.plus(xhi.times(fhi));
-    } else {
-      lo = lo.plus(xlo.times(fhi));
-      hi = hi.plus(xhi.times(flo));
-    }
-  }
-  return [lo, hi];
-};
-var copyTerms = (list) => list.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps.map((c2) => ({ ...c2 })), aux: t2.aux }));
-var encExp9 = (e) => Object.is(e, -0) ? "-0" : String(e);
-var SNAP_BRAND9 = /* @__PURE__ */ new WeakSet();
-var DEF_CAP_CACHE9 = /* @__PURE__ */ new WeakMap();
-var DEF_POOL9 = /* @__PURE__ */ new WeakMap();
-var createUnitDefSnapshotPool9 = () => {
-  const pool9 = Object.freeze({});
-  DEF_POOL9.set(pool9, { defs: /* @__PURE__ */ new Map(), comps: /* @__PURE__ */ new WeakMap() });
-  return pool9;
-};
-var defPoolMap9 = (pool9) => {
-  const state9 = DEF_POOL9.get(pool9);
-  if (state9 === void 0) throw new Error("shadow capture: forged UnitDef snapshot pool");
-  return state9.defs;
-};
-var snapDefCap9 = (d9, local9) => {
-  if (SNAP_BRAND9.has(d9)) {
-    const hit9 = DEF_CAP_CACHE9.get(d9);
-    if (hit9 !== void 0) return hit9;
-    const out92 = snapDefCapRaw9(d9);
-    DEF_CAP_CACHE9.set(d9, out92);
-    return out92;
-  }
-  const loc9 = local9.get(d9);
-  if (loc9 !== void 0) return loc9;
-  const out9 = snapDefCapRaw9(d9);
-  local9.set(d9, out9);
-  return out9;
-};
-var snapshotUnitDefInPool9 = (pool9, def9) => snapDefCap9(def9, defPoolMap9(pool9)).snap;
-var snapshotQCompInPool9 = (pool9, comp9) => {
-  const state9 = DEF_POOL9.get(pool9);
-  if (state9 === void 0) throw new Error("shadow capture: forged UnitDef snapshot pool");
-  const hit9 = state9.comps.get(comp9);
-  if (hit9 !== void 0) return hit9;
-  const def9 = comp9.def;
-  const exp9 = requireNumberField9("comp.exp", comp9.exp);
-  const out9 = Object.freeze({ def: snapDefCap9(def9, state9.defs).snap, exp: exp9 });
-  state9.comps.set(comp9, out9);
-  return out9;
-};
-var requireStringField9 = (field9, v9) => {
-  if (typeof v9 !== "string") throw new Error(`shadow capture: ${field9} must be a string when present (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
-  return v9;
-};
-var requireBigintField9 = (field9, v9) => {
-  if (typeof v9 !== "bigint") throw new Error(`shadow capture: ${field9} must be a bigint (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
-  return v9;
-};
-var requireNumberField9 = (field9, v9) => {
-  if (typeof v9 !== "number") throw new Error(`shadow capture: ${field9} must be a number (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
-  return v9;
-};
-var requireBooleanField9 = (field9, v9) => {
-  if (typeof v9 !== "boolean") throw new Error(`shadow capture: ${field9} must be a boolean (fail-closed; got ${v9 === null ? "null" : typeof v9})`);
-  return v9;
-};
-var snapDefCapRaw9 = (d9) => {
-  const id9 = requireStringField9("id", d9.id);
-  const sym9 = requireStringField9("symbol", d9.symbol);
-  const f9 = d9.factor;
-  const fd0 = d9.factorDec;
-  const fd9 = fd0 === void 0 ? void 0 : requireStringField9("factorDec", fd0);
-  const cs0 = d9.constSym;
-  const cs9 = cs0 === void 0 ? void 0 : requireStringField9("constSym", cs0);
-  const aff9 = d9.affine;
-  const cur0 = d9.currency;
-  const cur9 = cur0 === void 0 ? void 0 : requireStringField9("currency", cur0);
-  const dimPairs9 = Object.entries(d9.dim);
-  for (const [k9, v9] of dimPairs9) requireNumberField9(`dim.${k9}`, v9);
-  const dimSem9 = dimPairs9.filter(([, v9]) => v9 !== 0).sort((a9, b9) => a9[0] < b9[0] ? -1 : 1).map(([k9, v9]) => [k9, encExp9(v9)]);
-  const dim9 = {};
-  for (const [k9, v9] of dimPairs9) dim9[k9] = v9;
-  const fSnap9 = f9 === void 0 ? void 0 : Object.freeze({ n: requireBigintField9("factor.n", f9.n), d: requireBigintField9("factor.d", f9.d) });
-  const aSnap9 = aff9 === void 0 ? void 0 : Object.freeze({ a: requireBigintField9("affine.a", aff9.a), b: requireBigintField9("affine.b", aff9.b), c: requireBigintField9("affine.c", aff9.c) });
-  const snap9 = Object.freeze({
-    id: id9,
-    symbol: sym9,
-    dim: Object.freeze(dim9),
-    ...fSnap9 !== void 0 && { factor: fSnap9 },
-    ...fd9 !== void 0 && { factorDec: fd9 },
-    ...cs9 !== void 0 && { constSym: cs9 },
-    ...aSnap9 !== void 0 && { affine: aSnap9 },
-    ...cur9 !== void 0 && { currency: cur9 }
-  });
-  const opt9 = (v9) => v9 === void 0 ? ["u"] : ["s", v9];
-  const sem9 = [
-    id9,
-    sym9,
-    dimSem9,
-    fSnap9 === void 0 ? ["u"] : ["s", fSnap9.n.toString(), fSnap9.d.toString()],
-    opt9(fd9),
-    opt9(cs9),
-    aSnap9 === void 0 ? ["u"] : ["s", aSnap9.a.toString(), aSnap9.b.toString(), aSnap9.c.toString()],
-    opt9(cur9)
-  ];
-  SNAP_BRAND9.add(snap9);
-  return { snap: snap9, sem: deepFreeze9(sem9), id9 };
-};
-var deepFreeze9 = (v9) => {
-  if (v9 !== null && typeof v9 === "object" && !Object.isFrozen(v9)) {
-    Object.freeze(v9);
-    for (const k9 of Object.keys(v9)) deepFreeze9(v9[k9]);
-  }
-  return v9;
-};
-var captureSlotsFull9 = (terms, termsDen, pool9) => {
-  const local9 = pool9 === void 0 ? /* @__PURE__ */ new Map() : defPoolMap9(pool9);
-  const capList9 = (list9) => {
-    if (list9 === void 0) return { sem: null, leg: null, copy: void 0 };
-    const sem9 = [];
-    const leg9 = [];
-    const copy9 = [];
-    for (const t9 of list9) {
-      const x9 = t9.x;
-      const n9 = requireBigintField9("x.n", x9.n);
-      const d9 = requireBigintField9("x.d", x9.d);
-      const aux9 = requireBooleanField9("aux", t9.aux);
-      const semC9 = [];
-      const legC9 = [];
-      const comps9 = [];
-      for (const c9 of t9.comps) {
-        const ownedC9 = pool9 === void 0 ? (() => {
-          const def9 = c9.def;
-          const exp92 = requireNumberField9("comp.exp", c9.exp);
-          return Object.freeze({ def: snapDefCap9(def9, local9).snap, exp: exp92 });
-        })() : snapshotQCompInPool9(pool9, c9);
-        const exp9 = ownedC9.exp;
-        const dd92 = snapDefCap9(ownedC9.def, local9);
-        semC9.push([dd92.sem, encExp9(exp9)]);
-        legC9.push([dd92.id9, encExp9(exp9)]);
-        comps9.push(ownedC9);
-      }
-      sem9.push(Object.freeze([n9.toString(), d9.toString(), aux9 ? 1 : 0, deepFreeze9(semC9)]));
-      leg9.push(Object.freeze([n9.toString(), d9.toString(), aux9 ? 1 : 0, deepFreeze9(legC9)]));
-      copy9.push(Object.freeze({ x: Object.freeze({ n: n9, d: d9 }), comps: Object.freeze(comps9), aux: aux9 }));
-    }
-    OWNED9.add(copy9);
-    return { sem: Object.freeze(sem9), leg: Object.freeze(leg9), copy: Object.freeze(copy9) };
-  };
-  const tt9 = capList9(terms);
-  const dd9 = capList9(termsDen);
-  return Object.freeze({
-    digest: JSON.stringify(["sc1", tt9.sem, dd9.sem]),
-    legacyEnc: Object.freeze([tt9.leg, dd9.leg]),
-    terms: tt9.copy,
-    termsDen: dd9.copy
-  });
-};
-var captureSlots9 = (terms, termsDen) => captureSlotsFull9(terms, termsDen).digest;
-var captureUnitDef9 = (def) => JSON.stringify(["ud1", snapDefCapRaw9(def).sem]);
-var snapshotUnitDefForReemit9 = (def) => snapDefCapRaw9(def).snap;
-var legacyFingerprint = (terms, termsDen) => {
-  const cap9 = captureSlotsFull9(terms, termsDen);
-  const t9 = recoverProv9(terms, termsDen, void 0, cap9.digest);
-  if (t9 !== null) return JSON.stringify(["lf1p", cap9.legacyEnc[0], cap9.legacyEnc[1], t9.residue.key, t9.thirty]);
-  return JSON.stringify(["lf1", cap9.legacyEnc[0], cap9.legacyEnc[1]]);
-};
-var requireCleanResidueKey9 = (v9) => {
-  if (/[\u0000-\u001f\u007f-\u009f]/u.test(v9)) throw new Error("ShadowFraction: control characters are not part of a provider-residue key");
-  return v9;
-};
-var LEGACY_PROV9 = /* @__PURE__ */ new WeakMap();
-var recoverProv9 = (terms, termsDen, thirty, capture9) => {
-  if (terms === void 0) return null;
-  const t9 = LEGACY_PROV9.get(terms);
-  if (t9 === void 0) return null;
-  if (t9.termsDenRef !== termsDen) return null;
-  if (thirty !== void 0 && t9.thirty !== thirty) return null;
-  if (capture9 !== t9.rawShapeDigest) return null;
-  return t9;
-};
-var OWNED9 = /* @__PURE__ */ new WeakSet();
-var SF_CTOR9 = /* @__PURE__ */ Symbol("shadow-fraction-ctor");
-var PROV_CARRIER_GUARDS9 = /* @__PURE__ */ new WeakMap();
-function registerProvCarrierGuard9(value9, guard9) {
-  if (PROV_CARRIER_GUARDS9.has(value9)) throw new Error("ShadowFraction: residue carrier guard already registered");
-  const attach9 = guard9.attach;
-  const recover9 = guard9.recover;
-  if (typeof attach9 !== "function" || typeof recover9 !== "function") throw new Error("ShadowFraction: invalid residue carrier guard");
-  PROV_CARRIER_GUARDS9.set(value9, Object.freeze({ attach: attach9, recover: recover9 }));
-}
-var ownTerms9 = (list9) => {
-  if (OWNED9.has(list9)) return list9;
-  const local9 = /* @__PURE__ */ new Map();
-  const out9 = list9.map((t9) => Object.freeze({
-    x: Object.freeze({ n: t9.x.n, d: t9.x.d }),
-    comps: Object.freeze(t9.comps.map((c9) => Object.freeze({ def: SNAP_BRAND9.has(c9.def) ? c9.def : snapDefCap9(c9.def, local9).snap, exp: c9.exp }))),
-    aux: t9.aux
-  }));
-  Object.freeze(out9);
-  OWNED9.add(out9);
-  return out9;
-};
-var ShadowFraction = class _ShadowFraction {
-  #num;
-  #den;
-  #thirty;
-  /** Phase 2-S0 opaque storage slot. S0 LAW: the residue survives AT REST
-   * only (attach → writeLegacy → fromLegacy on the same array) — NO central
-   * operation transports it (every op builds a residue-less instance);
-   * composition laws belong to B1-B. At the OPAQUE CUTOVER this constructor
-   * will REQUIRE the slot (central-ctor contract, persistence decision). */
-  #prov9;
-  constructor(token9, num, den, thirty, prov9 = null) {
-    if (token9 !== SF_CTOR9) throw new Error("ShadowFraction: construction is module-private (token required)");
-    this.#num = ownTerms9(num);
-    this.#den = ownTerms9(den);
-    this.#thirty = thirty;
-    this.#prov9 = prov9;
-    Object.freeze(this);
-  }
-  /** Attach an opaque Phase-2 residue — returns a NEW instance (value
-   * untouched, immutable law). S0-bis: `key` and `value` are read EXACTLY
-   * ONCE from the caller's (possibly getter/Proxy-backed) object; a
-   * non-string key is refused at RUNTIME before the Cc validation; only the
-   * validated SNAPSHOTS are stored — a changing getter can never smuggle a
-   * different key past the validation. */
-  withProvResidue9(r9) {
-    const key9 = r9.key;
-    const value9 = r9.value;
-    if (typeof key9 !== "string") throw new Error("ShadowFraction: a provider-residue key must be a string");
-    requireCleanResidueKey9(key9);
-    const frozen9 = Object.freeze({ key: key9, value: value9 });
-    const next9 = new _ShadowFraction(SF_CTOR9, this.#num, this.#den, this.#thirty, frozen9);
-    if (typeof value9 === "object" && value9 !== null) {
-      const guard9 = PROV_CARRIER_GUARDS9.get(value9);
-      if (guard9 !== void 0 && !guard9.attach(this, next9)) {
-        throw new Error("ShadowFraction: residue carrier transplantation refused");
-      }
-    }
-    return next9;
-  }
-  /** Read the opaque residue (null when absent). */
-  provResidue9() {
-    return this.#prov9;
-  }
-  /** Return the same owned fraction with the opaque provider residue removed.
-   * This is the ONLY supported purge primitive: callers cannot rebuild from
-   * legacy slots (and thereby accidentally recover the S0 side-band ticket).
-   * The value, authority, calendar context and both faces stay byte-for-byte
-   * owned by this immutable instance. */
-  withoutProvResidue9() {
-    if (this.#prov9 === null) return this;
-    return new _ShadowFraction(SF_CTOR9, this.#num, this.#den, this.#thirty, null);
-  }
-  /** Read-only calendar context (B1-B-bis: the fraction↔contribution
-   * binding checks it — never exposed for mutation). */
-  thirty9() {
-    return this.#thirty;
-  }
-  // ─── factories ────────────────────────────────────────────────────────────
-  /** Bridge from the legacy `terms`/`termsDen` storage (Phase 1 adapter),
-   * returning a DISCRIMINATED result (audit interne #78 1o-ter) — `no-shadow`
-   * (a plain number), `invalid-denominator` (empty or proven-zero denominator),
-   * and `ok` are distinct, never conflated in one `null`. The denominator is
-   * MERGED first, so a structurally-zero currency denominator like
-   * « [1 USD, −1 USD] » is caught before any FX-blind projection. */
-  static fromLegacy(terms, termsDen, thirty, pool9) {
-    if (terms === void 0 && termsDen === void 0) return { kind: "no-shadow" };
-    const cap9 = captureSlotsFull9(terms, termsDen, pool9);
-    let den = ONE_TERMS();
-    if (cap9.termsDen !== void 0) {
-      den = mergeTerms(cap9.termsDen, [], 1n, thirty, true);
-      if (den.length === 0) return { kind: "invalid-denominator" };
-      const dz = new _ShadowFraction(SF_CTOR9, den, ONE_TERMS(), thirty).zeroState();
-      if (dz === "authoritative-zero") return { kind: "invalid-denominator" };
-      if (dz === "auxiliary-zero") return { kind: "undecidable-denominator" };
-    }
-    const ticket9 = recoverProv9(terms, termsDen, thirty, cap9.digest);
-    const value9 = new _ShadowFraction(SF_CTOR9, cap9.terms ?? ONE_TERMS(), den, thirty, ticket9 === null ? null : ticket9.residue);
-    if (ticket9 !== null && typeof ticket9.residue.value === "object" && ticket9.residue.value !== null) {
-      PROV_CARRIER_GUARDS9.get(ticket9.residue.value)?.recover(value9);
-    }
-    return { kind: "ok", value: value9 };
-  }
-  /** Cross-context operations are FORBIDDEN (audit interne #78 1o-bis): two
-   * shadows built under different `monthToDays` calendars must never combine
-   * silently on the left context. */
-  #requireCtx(other) {
-    if (this.#thirty !== other.#thirty) {
-      throw new Error("ShadowFraction: operation across incompatible calendar contexts (monthToDays) is forbidden");
-    }
-  }
-  /** EVERY ShadowFraction distribution forces `keepAuxZero=true` (audit interne
-   * #78 1o-quater), so an auxiliary-zero marker is COMPOSITIONAL through × ÷ +:
-   * « z × 2 », « 2 × z », « z ÷ 2 », « z + authZero » all stay auxiliary zero.
-   * The engine's own distributeTerms keeps the historical default (false). */
-  #distribute(a2, b2) {
-    return distributeTerms(a2, b2, this.#thirty, 1, true);
-  }
-  /** Legacy view for storing back into an RT during Phase 1 (never exposes the
-   * private arrays by reference — always a copy). A trivial `1` denominator is
-   * elided to match the historical shape. */
-  writeLegacy() {
-    const denTrivial = this.#den.length === 1 && this.#den[0].comps.length === 0 && rnorm(this.#den[0].x).n === 1n && rnorm(this.#den[0].x).d === 1n;
-    const terms9 = copyTerms(this.#num);
-    const den9 = denTrivial ? void 0 : copyTerms(this.#den);
-    if (this.#prov9 !== null) {
-      LEGACY_PROV9.set(terms9, { residue: this.#prov9, termsDenRef: den9, thirty: this.#thirty, rawShapeDigest: captureSlots9(terms9, den9) });
-    }
-    return { terms: terms9, ...den9 === void 0 ? {} : { termsDen: den9 } };
-  }
-  /** A dimensionless scalar. `aux` is DECLARED by the caller from parse
-   * provenance (captured decimal ⇒ true; exact rational/integer ⇒ false). */
-  static scalar(x2, aux, thirty) {
-    const n9 = requireBigintField9("scalar.n", x2.n);
-    const d9 = requireBigintField9("scalar.d", x2.d);
-    if (d9 === 0n) throw new Error("shadow scalar: zero denominator is not a rational (fail-closed)");
-    return new _ShadowFraction(SF_CTOR9, [mkTerm({ n: n9, d: d9 }, [], requireBooleanField9("scalar.aux", aux))], ONE_TERMS(), thirty);
-  }
-  /** The authoritative exact zero (empty numerator). */
-  static zero(thirty) {
-    return new _ShadowFraction(SF_CTOR9, [], ONE_TERMS(), thirty);
-  }
-  // ─── authority ────────────────────────────────────────────────────────────
-  /** Does the NUMERATOR carry a captured-decimal (auxiliary) term? The reemit's
-   * zero decision reads ONLY this — the denominator never requalifies it. */
-  numeratorAuxiliary() {
-    return this.#num.some((t2) => t2.aux);
-  }
-  /** Classify the value as a zero. `authoritative-zero` overrides a drifted
-   * direct reading; `auxiliary-zero` cedes to it; `nonzero`/`undecidable` are
-   * explicit (never an ambiguous null). Structural emptiness is decided first
-   * (cheap); a factorDec near-zero is confirmed by an interval that excludes,
-   * or an exact projection that reaches, zero. */
-  zeroState() {
-    if (this.#num.length === 0) return "authoritative-zero";
-    const merged = mergeTerms(this.#num, [], 1n, this.#thirty, true);
-    if (merged.every((t2) => rnorm(t2.x).n === 0n)) {
-      return merged.some((t2) => t2.aux) ? "auxiliary-zero" : "authoritative-zero";
-    }
-    const iv = projectIval(this.#num, this.#thirty, 80);
-    if (iv === null) return "unsupported";
-    const [lo, hi] = iv;
-    if (lo.gt(0) || hi.lt(0)) return "nonzero";
-    const nx = termsProject(this.#num, this.#thirty);
-    if (nx === null) return "unsupported";
-    if (rnorm(nx).n !== 0n) return "nonzero";
-    return this.numeratorAuxiliary() ? "auxiliary-zero" : "authoritative-zero";
-  }
-  // ─── central operations (authority carried by construction) ─────────────────
-  /** −(num/den) = (−num)/den — authority per term preserved verbatim. */
-  negate() {
-    return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: { n: -t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
-  }
-  /** Scale the numerator by an EXACT rational k (audit interne #78 2b) — a captured
-   * decimal stays captured (aux preserved); k itself is a pure multiplier and never a
-   * source of auxiliarity. LAWS: `scale(0)` on any VALID fraction is the AUTHORITATIVE
-   * zero (a finite value times an exact zero is a proven zero — the numerator empties,
-   * the denominator collapses to canonical 1, so zeroState()==='authoritative-zero'
-   * and invert() ⇒ division-by-zero), mirroring `mul`'s authZero law; `scale(1)` is
-   * form-preserving; `scale(-1) ≡ negate()`; `scale(a).scale(b) ≡ scale(a·b)`. The
-   * zero shortcut is legal ONLY here because `scale` acts on an already-constructed
-   * (hence valid) fraction and takes an EXACT rational k — a capped/projected-zero
-   * scalar must be gated OUT by the caller BEFORE it ever reaches `scale(0)`. */
-  scale(k2) {
-    const kn = rnorm(k2);
-    if (kn.n === 0n) return _ShadowFraction.zero(this.#thirty);
-    if (kn.n === 1n && kn.d === 1n) return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: { n: t2.x.n, d: t2.x.d }, comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
-    if (kn.n === -1n && kn.d === 1n) return this.negate();
-    return new _ShadowFraction(SF_CTOR9, this.#num.map((t2) => ({ x: rMul(t2.x, kn), comps: t2.comps, aux: t2.aux })), this.#den, this.#thirty);
-  }
-  /** num/den ± other = (num·oDen ± oNum·den)/(den·oDen), authority infecting
-   * through the AUTHORITY-AWARE merge (keepAuxZero): a sum touching a captured
-   * decimal stays captured, and « 1/2 (auth) − 0.5 (aux) » cancels to an
-   * AUXILIARY zero, not a clean authoritative one. `budget-exhausted` when a
-   * distribution exceeds the shadow bound. */
-  addSigned(other, sign2) {
-    this.#requireCtx(other);
-    const a2 = this.#distribute(this.#num, other.#den);
-    const b2 = this.#distribute(other.#num, this.#den);
-    const dd = this.#distribute(this.#den, other.#den);
-    if (a2 === null || b2 === null || dd === null) return { kind: "budget-exhausted" };
-    const num = mergeTerms(a2, b2, sign2, this.#thirty, true);
-    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, dd, this.#thirty) };
-  }
-  add(other) {
-    return this.addSigned(other, 1n);
-  }
-  sub(other) {
-    return this.addSigned(other, -1n);
-  }
-  /** Product with the authZero × finite = authZero LAW: an authoritative
-   * structural zero times any finite shadow is an authoritative zero — the
-   * other operand's captured-decimal terms do not taint a zero they merely
-   * scale. Otherwise the numerators/denominators distribute and authority
-   * infects per term. `budget-exhausted` when a distribution exceeds the bound. */
-  mul(other) {
-    this.#requireCtx(other);
-    if (this.zeroState() === "authoritative-zero" || other.zeroState() === "authoritative-zero") {
-      return { kind: "ok", value: _ShadowFraction.zero(this.#thirty) };
-    }
-    const num = this.#distribute(this.#num, other.#num);
-    const den = this.#distribute(this.#den, other.#den);
-    if (num === null || den === null) return { kind: "budget-exhausted" };
-    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, den, this.#thirty) };
-  }
-  /** num/den ÷ other = (num·oDen)/(den·oNum). Inversion is legal ONLY on a
-   * PROVEN non-zero divisor: a zero → division-by-zero; an undecidable sign →
-   * undecidable; a recipe-less divisor → unsupported (audit interne #78 1o-bis).
-   * An `undecidable` operand is NEVER inverted. */
-  div(other) {
-    this.#requireCtx(other);
-    const oz = other.zeroState();
-    if (oz === "authoritative-zero") return { kind: "division-by-zero" };
-    if (oz === "auxiliary-zero") return { kind: "undecidable" };
-    if (oz === "unsupported") return { kind: "unsupported" };
-    if (oz === "undecidable") return { kind: "undecidable" };
-    const num = this.#distribute(this.#num, other.#den);
-    const den = this.#distribute(this.#den, other.#num);
-    if (num === null || den === null) return { kind: "budget-exhausted" };
-    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, num, den, this.#thirty) };
-  }
-  /** 1/(num/den) = den/num — legal ONLY when the numerator is PROVEN non-zero;
-   * every other state is explicit (never 1/0 by omission, never invert an
-   * undecidable). */
-  invert() {
-    const z2 = this.zeroState();
-    if (z2 === "authoritative-zero") return { kind: "division-by-zero" };
-    if (z2 === "auxiliary-zero") return { kind: "undecidable" };
-    if (z2 === "unsupported") return { kind: "unsupported" };
-    if (z2 === "undecidable") return { kind: "undecidable" };
-    return { kind: "ok", value: new _ShadowFraction(SF_CTOR9, copyTerms(this.#den), copyTerms(this.#num), this.#thirty) };
-  }
-  /** Reduce num/den to a single monomial term when it divides exactly (z²/z = z),
-   * carrying authority; null when no monomial quotient exists — OR when the
-   * reduction is not authority-complete. `fracQuotient` pairs only the two
-   * EXTREME (min) terms for provenance, so a NON-dominant auxiliary term inside
-   * a genuine polynomial is silently WHITENED (`[2,2m aux]/[1,m]` → `2` auth).
-   * When either side is a polynomial carrying any auxiliary term we refuse
-   * (conservative, mirrors semanticKey()'s polynomial branch — audit interne
-   * #78 1o-quater-bis). A pure monomial ÷ monomial keeps its exact provenance
-   * (both extremes ARE all the terms), so it is never over-refused. */
-  reduceMonomial() {
-    const num = mergeTerms(this.#num, [], 1n, this.#thirty, true);
-    const den = mergeTerms(this.#den, [], 1n, this.#thirty, true);
-    const poly = num.length > 1 || den.length > 1;
-    if (poly && (num.some((t2) => t2.aux) || den.some((t2) => t2.aux))) return null;
-    return fracQuotient(this.#num, this.#den, this.#thirty);
-  }
-  /** AUTHORITY-COMPLETE scalar reduction (audit interne #78 2c-a): N ≡ k·D with a
-   * DIMENSIONLESS, symbol-free quotient ⇒ the exact rational k, with the quotient's
-   * authority REPORTED, never laundered. The legacy `fracReduce` publishes `k` as an
-   * exact rational regardless of the quotient term's `aux` (a captured-decimal origin
-   * anywhere in the pairing) — this API keeps the two outcomes DISTINCT: `reduced`
-   * (every contributing extreme authoritative) vs `reduced-aux` (numerically the same
-   * k, but the reduction is not authority-proven). Zeros are NOT this API's job —
-   * `zeroState()` classifies them; an empty or non-quotient numerator is
-   * `irreducible` here. */
-  reduceScalar() {
-    const q2 = fracQuotient(this.#num, this.#den, this.#thirty);
-    if (q2 === null) return { kind: "irreducible" };
-    const c2 = termCanon(q2, this.#thirty);
-    if (c2.key !== "|") return { kind: "irreducible" };
-    const num9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
-    const den9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
-    const anyAux9 = num9.some((t2) => t2.aux) || den9.some((t2) => t2.aux);
-    return anyAux9 ? { kind: "reduced-aux", x: rnorm(c2.canonX) } : { kind: "reduced", x: rnorm(c2.canonX) };
-  }
-  // ─── projection ─────────────────────────────────────────────────────────────
-  /** Rigorous interval bracket of the numerator (directed rounding). */
-  numeratorInterval(prec) {
-    const iv = projectIval(this.#num, this.#thirty, prec);
-    return iv === null ? { kind: "unsupported" } : { kind: "ok", lo: iv[0], hi: iv[1] };
-  }
-  /** Rigorous interval bracket of the denominator; `straddle` when its sign is
-   * undecided at this precision (0 ∈ [lo, hi]) — the caller widens. */
-  denominatorInterval(prec) {
-    const iv = projectIval(this.#den, this.#thirty, prec);
-    if (iv === null) return { kind: "unsupported" };
-    const [lo, hi] = iv;
-    if (!lo.gt(0) && !hi.lt(0)) return { kind: "straddle" };
-    return { kind: "ok", lo, hi };
-  }
-  /** Exact rational numerator/denominator projection over the engine's rounded
-   * constants (expensive for high-exponent factorDec — the interval is the
-   * cheap path). Null when a component has no numeric recipe. */
-  projectExact() {
-    const nx = termsProject(this.#num, this.#thirty);
-    const dx = termsProject(this.#den, this.#thirty);
-    if (nx === null || dx === null) return null;
-    return { num: nx, den: dx };
-  }
-  /** Opaque preflight for the REEMISSION currency-as-×1 exception. Every
-   * currency definition on BOTH faces must be a pure provider label; a
-   * contradictory numeric/constant/affine recipe or foreign dimension is a
-   * typed coverage failure at the caller, never a `projectExactForReemit()`
-   * null that can be mistaken for `unchanged`. Definitions are snapshotted
-   * once per identity during this decision. */
-  currencyLabelsValidForReemit9() {
-    const seen9 = /* @__PURE__ */ new Map();
-    const snap9 = (def9) => {
-      const old9 = seen9.get(def9);
-      if (old9 !== void 0) return old9;
-      const fresh9 = snapshotUnitDefForReemit9(def9);
-      seen9.set(def9, fresh9);
-      return fresh9;
-    };
-    for (const list9 of [this.#num, this.#den]) for (const term9 of list9) for (const comp9 of term9.comps) {
-      const def9 = snap9(comp9.def);
-      if (def9.currency !== void 0 && !pureCurrencyLabelForReemit9(def9)) return false;
-    }
-    return true;
-  }
-  /** Exact counterpart of `projectIntervalsForReemit`: currency-only comps
-   * are opaque ×1 labels, while every other unsupported component still
-   * refuses. This is REEMISSION evidence only; identity/zero/compare keep
-   * using the context-free `projectExact()` and therefore never assume FX. */
-  projectExactForReemit() {
-    const currencyAsOne9 = (list9) => {
-      const out9 = [];
-      for (const t9 of list9) {
-        const comps9 = [];
-        for (const c9 of t9.comps) {
-          if (c9.def.currency !== void 0) {
-            if (!pureCurrencyLabelForReemit9(c9.def)) return null;
-            continue;
-          }
-          comps9.push({ ...c9 });
-        }
-        out9.push({ x: { n: t9.x.n, d: t9.x.d }, aux: t9.aux, comps: comps9 });
-      }
-      return out9;
-    };
-    const num9 = currencyAsOne9(this.#num);
-    const den9 = currencyAsOne9(this.#den);
-    if (num9 === null || den9 === null) return null;
-    const nx9 = termsProject(num9, this.#thirty);
-    const dx9 = termsProject(den9, this.#thirty);
-    if (nx9 === null || dx9 === null) return null;
-    return { num: nx9, den: dx9 };
-  }
-  /** Does any term (numerator OR denominator) carry an IRRATIONAL factorDec comp
-   * (radian, …)? Such a shadow's exact-rational projection is a 40-digit
-   * approximation, so its public reading must ride the CERTIFIED interval path
-   * — this reproduces reemit's `approx9` gate WITHOUT the caller touching
-   * terms/termsDen (audit interne #78 Phase 1p). */
-  hasApproxFactor() {
-    return this.#num.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0)) || this.#den.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
-  }
-  /** REEMISSION-ONLY interval projection (audit interne #78 Phase 1p, option a):
-   * numerator AND denominator brackets together, treating a CURRENCY comp as an
-   * OPAQUE ×1 label (no rate read). STRICTLY separate from the identity
-   * projections — a currency shadow like « 2 USD − 1 EUR » stays `unsupported`
-   * for any PROOF (zeroState/compare/semanticKey) even though its reemission
-   * projection IS computable here. `straddle` when the denominator's sign is
-   * undecided at this precision. Used ONLY by candidateReemit9's interval branch. */
-  projectIntervalsForReemit(prec) {
-    const n2 = projectIval(this.#num, this.#thirty, prec, true);
-    const d2 = projectIval(this.#den, this.#thirty, prec, true);
-    if (n2 === null || d2 === null) return { kind: "unsupported" };
-    if (!d2[0].gt(0) && !d2[1].lt(0)) return { kind: "straddle" };
-    return { kind: "ok", num: n2, den: d2 };
-  }
-  // ─── identity ────────────────────────────────────────────────────────────────
-  /** Sign of a term list's projection: +1 / −1, or 0 when undecided/unsupported
-   * (bracket straddles zero at prec 80, or a recipe-less comp). */
-  #signOf(list) {
-    const iv = projectIval(list, this.#thirty, 80);
-    if (iv === null) return 0;
-    if (iv[0].gt(0)) return 1;
-    if (iv[1].lt(0)) return -1;
-    return 0;
-  }
-  /** Ordered comparison this − other ∈ {−1, 0, 1}, or null when not provably
-   * decided. AUTHORITY-aware: a value-equal difference that absorbed a captured
-   * decimal is NOT provably equal (⇒ null, matching semanticKey which
-   * distinguishes it). DENOMINATOR-SIGN aware: a negative common denominator
-   * flips the order (audit interne #78 1o-bis). */
-  compare(other) {
-    this.#requireCtx(other);
-    const a2 = this.#distribute(this.#num, other.#den);
-    const b2 = this.#distribute(other.#num, this.#den);
-    if (a2 === null || b2 === null) return null;
-    const s2 = termsCmp(a2, b2, this.#thirty);
-    if (s2 === null) return null;
-    if (s2 === 0) {
-      return mergeTerms(a2, b2, -1n, this.#thirty, true).length === 0 ? 0 : null;
-    }
-    const sa = this.#signOf(this.#den);
-    const sb = this.#signOf(other.#den);
-    if (sa === 0 || sb === 0) return null;
-    return sa * sb > 0 ? s2 : -s2;
-  }
-  /** Narrow proof used by the provider-residue quotient route: two opaque
-   * fractions are structurally the same non-zero monomial, hence a/b = 1.
-   * Currency components deliberately remain unsupported by numeric
-   * projection, so the proof is purely algebraic: canonical numerator and
-   * denominator each contain one non-zero term and the cross-difference
-   * cancels without an auxiliary marker. It is NOT a generic x/x shortcut;
-   * the caller must separately prove correlation of the provider residue. */
-  correlatedUnitQuotient9(other) {
-    this.#requireCtx(other);
-    const an9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
-    const ad9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
-    const bn9 = mergeTerms(other.#num, [], 1n, this.#thirty, true);
-    const bd9 = mergeTerms(other.#den, [], 1n, this.#thirty, true);
-    if (an9.length !== 1 || ad9.length !== 1 || bn9.length !== 1 || bd9.length !== 1) return null;
-    if (an9[0].x.n === 0n || ad9[0].x.n === 0n || bn9[0].x.n === 0n || bd9[0].x.n === 0n) return null;
-    const left9 = this.#distribute(an9, bd9);
-    const right9 = this.#distribute(bn9, ad9);
-    if (left9 === null || right9 === null) return null;
-    if (mergeTerms(left9, right9, -1n, this.#thirty, true).length !== 0) return null;
-    return _ShadowFraction.scalar({ n: 1n, d: 1n }, false, this.#thirty);
-  }
-  /** Narrow divisor proof for a provider-labelled monomial. Numeric
-   * projection deliberately treats currency as unsupported, but a single
-   * AUTHORITATIVE symbolic monomial with a non-zero coefficient is still
-   * structurally non-zero when the resulting numerator and denominator have
-   * the SAME canonical support.  This lets the owning provider algebra form
-   * `(94 CHF/h)/(1 CHF/h)` without pretending that a context-free FX rate is
-   * available. The exact fraction remains first-class (its canonical scalar
-   * reduction is still 94); auxiliary terms and polynomial faces are never
-   * admitted.
-   *
-   * The method is intentionally NOT a generic fallback from `div()`: callers
-   * must first receive `unsupported` from the ordinary proof and must retain
-   * their own causal/provider verdict. */
-  divByAuthoritativeMonomial9(other) {
-    this.#requireCtx(other);
-    const an9 = mergeTerms(this.#num, [], 1n, this.#thirty, true);
-    const ad9 = mergeTerms(this.#den, [], 1n, this.#thirty, true);
-    const on9 = mergeTerms(other.#num, [], 1n, this.#thirty, true);
-    const od9 = mergeTerms(other.#den, [], 1n, this.#thirty, true);
-    const structuralNonzero9 = (face9) => face9.length === 1 && face9[0].x.n !== 0n && face9[0].x.d !== 0n && face9[0].aux === false && face9[0].comps.every((comp9) => comp9.def.currency === void 0 || pureCurrencyLabelForReemit9(comp9.def));
-    if (!structuralNonzero9(an9) || !structuralNonzero9(ad9) || !structuralNonzero9(on9) || !structuralNonzero9(od9)) return null;
-    const num9 = this.#distribute(an9, od9);
-    const den9 = this.#distribute(ad9, on9);
-    if (num9 === null || den9 === null) return { kind: "budget-exhausted" };
-    const quotient9 = new _ShadowFraction(SF_CTOR9, num9, den9, this.#thirty);
-    if (quotient9.reduceScalar().kind !== "reduced") return null;
-    return { kind: "ok", value: quotient9 };
-  }
-  /** CANONICAL world digest of an AUTHORITATIVE value, or `null` (audit interne
-   * #78 observatrice, Finding A). Canonicalised through the SAME algebra as
-   * termCanon/mergeTerms — so `1 m` ≡ `100 cm`, `[1,1]` ≡ `[2]` — normalised by
-   * the leading denominator coefficient so (s·num)/(s·den) ≡ num/den, and
-   * PREFIXED by monthToDays so civil and '30' worlds never share a key.
-   *
-   * STRICT LAW: two NON-null equal keys imply `compare() === 0` — no exception.
-   * An AUXILIARY provenance (a captured decimal surviving the canonical
-   * reduction) has NO provable canonical world — compare() cedes (null) on it,
-   * even reflexively — so it gets NO key at all (`null`), NOT a distinct
-   * decisive key. Two `null`s are never compared as keys.
-   *
-   * NORMATIVE (audit interne #78 observatrice, Finding C): the absolute-vs-
-   * interval THERMAL ROLE belongs to the OUTER RT envelope; the shadow encodes
-   * only the canonical kelvin-LINEAR measure, where `ΔK ≡ K` by size — exactly
-   * as `1 m ≡ 100 cm`. So `1 K·rad/°` and `1 ΔK·rad/°` share this key (same
-   * measure) but stay distinct worlds through their outer envelope (K vs ΔK) and
-   * their typed behaviour (`K + K` refuses, `K + ΔK` succeeds, `ΔK − K` refuses).
-   * NOT a substitute for the legacy fingerprint, which still distinguishes
-   * writing-form shapes. */
-  semanticKey() {
-    const num = mergeTerms(this.#num, [], 1n, this.#thirty, true);
-    const den = mergeTerms(this.#den, [], 1n, this.#thirty, true);
-    if (den.length === 0 || den.every((t2) => rnorm(t2.x).n === 0n)) return null;
-    let reduced;
-    if (den.length === 1) {
-      const inv = { x: rDiv({ n: 1n, d: 1n }, den[0].x), comps: den[0].comps.map((c2) => ({ def: c2.def, exp: -c2.exp })), aux: den[0].aux };
-      const n2 = this.#distribute(num, [inv]);
-      if (n2 === null) return null;
-      reduced = n2;
-    } else {
-      if (num.some((t2) => t2.aux) || den.some((t2) => t2.aux)) return null;
-      const q2 = fracQuotient(this.#num, this.#den, this.#thirty);
-      if (q2 === null) return null;
-      reduced = [q2];
-    }
-    const finalTerms = mergeTerms(reduced, [], 1n, this.#thirty, true);
-    if (finalTerms.some((t2) => t2.aux)) return null;
-    const items = finalTerms.map((t2) => {
-      const c2 = termCanon(t2, this.#thirty);
-      const x2 = rnorm(c2.canonX);
-      return `${c2.key}=${x2.n}/${x2.d}`;
-    });
-    return `${this.#thirty ? "30" : "civ"}|${items.sort().join("+")}`;
-  }
-};
-Object.freeze(ShadowFraction.prototype);
-Object.freeze(ShadowFraction);
-function shadowFromRT(rt2, thirty) {
-  if (rt2 === null) return { kind: "no-shadow" };
-  return ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
-}
-function snapshotShadowRT9(rt2, thirty, pool9) {
-  const descriptors9 = Object.getOwnPropertyDescriptors(rt2);
-  const termsDesc9 = descriptors9.terms;
-  const termsDenDesc9 = descriptors9.termsDen;
-  const ownOrInheritedTerms9 = termsDesc9 !== void 0 || "terms" in rt2;
-  const ownOrInheritedTermsDen9 = termsDenDesc9 !== void 0 || "termsDen" in rt2;
-  const terms9 = rt2.terms;
-  const termsDen9 = rt2.termsDen;
-  const foldDesc9 = descriptors9.foldA9;
-  const foldA9 = rt2.foldA9;
-  const hasFold9 = foldA9 !== void 0;
-  const hasShadow9 = terms9 !== void 0 || termsDen9 !== void 0;
-  if (hasShadow9 && hasFold9) return { kind: "invalid-authority-state" };
-  delete descriptors9.terms;
-  delete descriptors9.termsDen;
-  delete descriptors9.foldA9;
-  const snapshot9 = Object.create(Object.getPrototypeOf(rt2), descriptors9);
-  if (foldDesc9 !== void 0 || "foldA9" in rt2) {
-    Object.defineProperty(snapshot9, "foldA9", {
-      value: foldA9,
-      writable: foldDesc9 !== void 0 && "writable" in foldDesc9 ? foldDesc9.writable === true : true,
-      enumerable: foldDesc9?.enumerable ?? false,
-      configurable: foldDesc9?.configurable ?? true
-    });
-  }
-  const defineSlot9 = (name9, value9, old9) => {
-    Object.defineProperty(snapshot9, name9, {
-      value: value9,
-      writable: old9 !== void 0 && "writable" in old9 ? old9.writable === true : true,
-      enumerable: old9?.enumerable ?? true,
-      configurable: old9?.configurable ?? true
-    });
-  };
-  if (ownOrInheritedTerms9 || terms9 !== void 0) defineSlot9("terms", terms9, termsDesc9);
-  if (ownOrInheritedTermsDen9 || termsDen9 !== void 0) defineSlot9("termsDen", termsDen9, termsDenDesc9);
-  const replace9 = (fraction9) => {
-    const outDescriptors9 = Object.getOwnPropertyDescriptors(snapshot9);
-    delete outDescriptors9.terms;
-    delete outDescriptors9.termsDen;
-    const out9 = Object.create(Object.getPrototypeOf(snapshot9), outDescriptors9);
-    writeShadowSlots9(out9, fraction9.writeLegacy());
-    return out9;
-  };
-  return { kind: "ok", rt: snapshot9, shadow: ShadowFraction.fromLegacy(terms9, termsDen9, thirty, pool9), replace: replace9 };
-}
-function fingerprintFromRT(rt2) {
-  if (rt2 === null) return legacyFingerprint(void 0, void 0);
-  return legacyFingerprint(rt2.terms, rt2.termsDen);
-}
-function shadowApproxFromRT(rt2) {
-  const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
-  return rt2 !== null && (has(rt2.terms) || has(rt2.termsDen));
-}
-function negateShadowFromRT(rt2) {
-  if (rt2 === null) return {};
-  const out = {};
-  if (rt2.terms !== void 0) {
-    const r3 = ShadowFraction.fromLegacy(rt2.terms, void 0, false);
-    out.terms = r3.kind === "ok" ? r3.value.negate().writeLegacy().terms : copyTerms(rt2.terms);
-  } else if (rt2.termsDen !== void 0) {
-    out.terms = ONE_TERMS().map((t2) => ({ ...t2, x: { n: -t2.x.n, d: t2.x.d } }));
-  }
-  if (rt2.termsDen !== void 0) out.termsDen = rt2.termsDen;
-  return out;
-}
-function foldSeedFromRT(rt2, reading, comps, thirty) {
-  void reading;
-  void comps;
-  if (rt2.terms !== void 0 || rt2.termsDen !== void 0) {
-    const r3 = ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
-    switch (r3.kind) {
-      case "ok":
-        return { kind: "shadow", value: r3.value };
-      case "invalid-denominator":
-        return { kind: "invalid-denominator" };
-      case "undecidable-denominator":
-        return { kind: "undecidable-denominator" };
-      case "no-shadow":
-        break;
-    }
-  }
-  return { kind: "undecidable-authority" };
-}
-function foldSlotsVerbatim9(rt2) {
-  const out = {};
-  if (rt2.terms !== void 0) out.terms = copyTerms(rt2.terms);
-  if (rt2.termsDen !== void 0) out.termsDen = copyTerms(rt2.termsDen);
-  return out;
-}
-function slotsNum9(slots) {
-  return slots.terms;
-}
-function slotsPresent9(slots) {
-  return slots.terms !== void 0 || slots.termsDen !== void 0;
-}
-function slotsWithNum9(slots, num) {
-  const out = { terms: num };
-  if (slots.termsDen !== void 0) out.termsDen = slots.termsDen;
-  return out;
-}
-function hasShadowFromRT(rt2) {
-  return rt2 !== null && (rt2.terms !== void 0 || rt2.termsDen !== void 0);
-}
-function replaceShadowFromFraction9(rt2, fraction) {
-  const out9 = { ...rt2 };
-  writeShadowSlots9(out9, fraction.writeLegacy());
-  return out9;
-}
-function stripShadowFromRT9(rt2) {
-  const out9 = { ...rt2 };
-  delete out9.terms;
-  delete out9.termsDen;
-  return out9;
-}
-function restoreUndefinedShadowSlots9(rt2, slots) {
-  const out9 = { ...rt2 };
-  if (slots.includes("terms")) out9.terms = void 0;
-  if (slots.includes("termsDen")) out9.termsDen = void 0;
-  return out9;
-}
-function editShadowSlots9(rt2, edit) {
-  const out9 = { ...rt2 };
-  if ("terms" in edit) {
-    if (edit.terms === null || edit.terms === void 0) delete out9.terms;
-    else out9.terms = edit.terms;
-  }
-  if ("termsDen" in edit) {
-    if (edit.termsDen === null || edit.termsDen === void 0) delete out9.termsDen;
-    else out9.termsDen = edit.termsDen;
-  }
-  return out9;
-}
-function fractionFaces9(fraction) {
-  const slots92 = fraction.writeLegacy();
-  return [slots92.terms, slots92.termsDen ?? ONE_TERMS()];
-}
-function slots9(terms, termsDen) {
-  const s2 = {};
-  if (terms !== void 0) s2.terms = terms;
-  if (termsDen !== void 0) s2.termsDen = termsDen;
-  return s2;
-}
-function writeShadowSlots9(target, slots) {
-  if (target.foldA9 !== void 0) {
-    throw new Error("invalid-authority-state: a shadow can never be written onto a certificate-carrying value \u2014 rebuild fresh and consume the authority into the terms first");
-  }
-  delete target.terms;
-  delete target.termsDen;
-  if (slots.terms !== void 0) target.terms = slots.terms;
-  if (slots.termsDen !== void 0) target.termsDen = slots.termsDen;
-}
-function transportShadowToCarrier9(source9, carrier9) {
-  const terms9 = source9.terms;
-  const termsDen9 = source9.termsDen;
-  if (terms9 === void 0 && termsDen9 === void 0) return null;
-  const out9 = { ...carrier9 };
-  writeShadowSlots9(out9, slots9(terms9, termsDen9));
-  return out9;
-}
-function scaleShadowFromRT(rt2, k2, thirty) {
-  if (rt2 === null) return { kind: "no-shadow" };
-  const r3 = ShadowFraction.fromLegacy(rt2.terms, rt2.termsDen, thirty);
-  if (r3.kind === "no-shadow") return { kind: "no-shadow" };
-  if (r3.kind === "invalid-denominator") return { kind: "invalid-denominator" };
-  if (r3.kind === "undecidable-denominator") return { kind: "undecidable-denominator" };
-  const kn = rnorm(k2);
-  if (kn.n === 1n && kn.d === 1n) {
-    const slots = {};
-    if (rt2.terms !== void 0) slots.terms = copyTerms(rt2.terms);
-    if (rt2.termsDen !== void 0) slots.termsDen = copyTerms(rt2.termsDen);
-    return { kind: "ok", slots };
-  }
-  return { kind: "ok", slots: r3.value.scale(k2).writeLegacy() };
-}
-
 // ../textual-calculator/core/packages/engine/src/fold-authority.ts
 var AUTH9 = Object.freeze({ v: 1, kind: "auth" });
 var AUX9 = Object.freeze({ v: 1, kind: "aux" });
@@ -30247,6 +30454,10 @@ function authAbsorbZero9(zero) {
   return zero;
 }
 function stampAuth9(rt2, a2) {
+  if (Object.hasOwn(rt2, "shadow")) {
+    const legacy9 = exportLegacyShadowEnvelope9(rt2);
+    return restoreShadowRepresentation9(rt2, stampAuth9(legacy9, a2));
+  }
   const descriptors9 = Object.getOwnPropertyDescriptors(rt2);
   const termsDesc9 = Reflect.get(descriptors9, "terms");
   const termsDenDesc9 = Reflect.get(descriptors9, "termsDen");
@@ -30286,6 +30497,59 @@ function factorProof9(flag, capF, jac, rem) {
   if ((fk?.length ?? 0) > 0 || flag && fk === void 0) return { num: "capped", capF: fk, rem };
   if (flag) return { num: "capped", capF: fk, rem };
   return fk === void 0 ? F_EXACT9 : { num: "exact", capF: [] };
+}
+
+// ../textual-calculator/core/packages/engine/src/numeric-construction.ts
+function copyRuntimeRT9(rt2) {
+  return { ...rt2 };
+}
+function editRuntimeCopy9(copy, fields) {
+  const out9 = { ...copy, ...fields };
+  return Object.hasOwn(out9, "shadow") ? constructOpaqueShadowEnvelope9(out9) : out9;
+}
+function copyNumericShell9(shell) {
+  return { ...shell };
+}
+function completeNumericShell9(shell, reading) {
+  const shellFields9 = exportLegacyShadowEnvelope9(shell);
+  const readingFields9 = reading;
+  return constructOpaqueShadowEnvelope9({ ...shellFields9, ...readingFields9 });
+}
+function createDecimalRT9(read) {
+  return { t: "d", ...read, shadow: null };
+}
+function createPercentageRT9(read) {
+  return { t: "p", ...read, shadow: null };
+}
+function createQuantityRT9(read) {
+  return { t: "q", ...read, shadow: null };
+}
+function rebuildDecimalRT9(fields) {
+  return constructOpaqueShadowEnvelope9({ t: "d", ...fields });
+}
+function rebuildPercentageRT9(fields) {
+  return constructOpaqueShadowEnvelope9({ t: "p", ...fields });
+}
+function rebuildQuantityRT9(fields) {
+  return constructOpaqueShadowEnvelope9({ t: "q", ...fields });
+}
+function captureFractionRT9(fields) {
+  return constructOpaqueShadowEnvelope9({ t: "f", ...fields });
+}
+function createRationalRT9(n2, d2, origin) {
+  if (d2 === 0n) return { t: "e", code: "division-by-zero" };
+  if (d2 < 0n) {
+    n2 = -n2;
+    d2 = -d2;
+  }
+  const g2 = gcd(n2, d2) || 1n;
+  n2 /= g2;
+  d2 /= g2;
+  if (d2 === 1n) return { t: "d", v: new DecC(n2.toString()), shadow: null };
+  return { t: "f", n: n2, d: d2, origin, shadow: null };
+}
+function createUnitRT9(read, def) {
+  return { t: "q", ...read, dim: def.dim, symbol: def.symbol, def, comps: [{ def, exp: 1 }], shadow: null };
 }
 
 // ../textual-calculator/core/packages/engine/src/b1-unit-envelope.ts
@@ -33099,16 +33363,7 @@ var qv = (x2) => {
 };
 var ratIsExactDec = (x2) => qv(x2).vx === void 0;
 var makeFrac = (n2, d2, origin) => {
-  if (d2 === 0n) return err("division-by-zero");
-  if (d2 < 0n) {
-    n2 = -n2;
-    d2 = -d2;
-  }
-  const g2 = gcd(n2, d2) || 1n;
-  n2 /= g2;
-  d2 /= g2;
-  if (d2 === 1n) return { t: "d", v: new DecC(n2.toString()) };
-  return { t: "f", n: n2, d: d2, origin };
+  return createRationalRT9(n2, d2, origin);
 };
 var toDec = (rt2) => rt2.t === "f" ? new DecC(rt2.n.toString()).div(rt2.d.toString()) : rt2.v;
 var TRANSCENDENTAL_FNS = /* @__PURE__ */ new Set([
@@ -33187,13 +33442,13 @@ var toDecHi = (rt2) => {
 var HUNDRED = new DecC(100);
 var MAX_POW_EXPONENT = 1e6;
 var isRepresentable = (v2) => v2.isFinite() && Math.abs(v2.e) <= 9999;
-var dec = (v2) => isRepresentable(v2) ? { t: "d", v: v2 } : err("inexact", "result exceeds the representable range (10^\xB19999)");
+var dec = (v2) => isRepresentable(v2) ? createDecimalRT9({ v: v2 }) : err("inexact", "result exceeds the representable range (10^\xB19999)");
 function factorial(n2) {
   if (!n2.isInteger() || n2.isNegative()) return err("inexact", "factorial needs a whole number \u2265 0");
   if (n2.gt(500)) return err("inexact", "factorial argument too large");
   let acc = 1n;
   for (let k2 = 2n; k2 <= BigInt(n2.toNumber()); k2++) acc *= k2;
-  return { t: "d", ...qv({ n: acc, d: 1n }) };
+  return createDecimalRT9(qv({ n: acc, d: 1n }));
 }
 var numRat = (rt2) => rt2.t === "f" ? rnorm({ n: rt2.n, d: rt2.d }) : rt2.vx ?? decToRat(rt2.v);
 function perfectRoot(n2, k2) {
@@ -33228,7 +33483,7 @@ function applyExactFunction(fn, rts) {
   ].includes(fn) && rts.some((r9) => cap9(r9))) {
     return err("inexact", `${fn}() decides from its argument \u2014 a capped value decides nothing; exactness was dropped upstream`);
   }
-  const asF = (x3) => rts.some((r3) => r3.t === "f") ? makeFrac(x3.n, x3.d, "derived") : { t: "d", ...qv(x3) };
+  const asF = (x3) => rts.some((r3) => r3.t === "f") ? makeFrac(x3.n, x3.d, "derived") : createDecimalRT9(qv(x3));
   const x2 = numRat(rts[0]);
   switch (fn) {
     case "sqrt":
@@ -33252,8 +33507,8 @@ function applyExactFunction(fn, rts) {
       const neg9 = x2.n < 0n;
       const absB9 = asF(neg9 ? { n: -x2.n, d: x2.d } : x2);
       const sh9 = rts[0];
-      if (absB9.t !== "e" && (sh9.terms !== void 0 || sh9.termsDen !== void 0)) {
-        return { ...absB9, ...neg9 ? negateShadow9(rts[0]) : { ...sh9.terms && { terms: sh9.terms }, ...sh9.termsDen && { termsDen: sh9.termsDen } } };
+      if (absB9.t !== "e" && (readLegacyShadowNumerator9(sh9) !== void 0 || readLegacyShadowDenominator9(sh9) !== void 0)) {
+        return editRuntimeCopy9(copyRuntimeRT9(absB9), { ...neg9 ? negateShadow9(rts[0]) : { ...readLegacyShadowNumerator9(sh9) && { terms: readLegacyShadowNumerator9(sh9) }, ...readLegacyShadowDenominator9(sh9) && { termsDen: readLegacyShadowDenominator9(sh9) } } });
       }
       return absB9;
     }
@@ -33262,12 +33517,12 @@ function applyExactFunction(fn, rts) {
     case "max":
       return asF(rts.map(numRat).reduce((a2, b2) => rCmp(b2, a2) > 0 ? b2 : a2));
     case "floor":
-      return { t: "d", v: new DecC(rFloor(x2).toString()) };
+      return createDecimalRT9({ v: new DecC(rFloor(x2).toString()) });
     case "ceil":
     case "ceiling":
-      return { t: "d", v: new DecC((-rFloor({ n: -x2.n, d: x2.d })).toString()) };
+      return createDecimalRT9({ v: new DecC((-rFloor({ n: -x2.n, d: x2.d })).toString()) });
     case "trunc":
-      return { t: "d", v: new DecC((x2.n / x2.d).toString()) };
+      return createDecimalRT9({ v: new DecC((x2.n / x2.d).toString()) });
     case "fact":
     case "factorial":
     case "factorielle":
@@ -33280,9 +33535,9 @@ function applyExactFunction(fn, rts) {
         const b2 = numRat(rts[1]);
         if (b2.n === b2.d) return err("inexact", "log base 1 is undefined");
         const a0 = numRat(rts[0]);
-        if (a0.n === a0.d && b2.n > 0n) return { t: "d", v: new DecC(0) };
+        if (a0.n === a0.d && b2.n > 0n) return createDecimalRT9({ v: new DecC(0) });
         if (rCmp(a0, b2) === 0 && a0.n > 0n) {
-          return { t: "d", v: new DecC(1) };
+          return createDecimalRT9({ v: new DecC(1) });
         }
         if (b2.n > 0n && b2.n !== b2.d && a0.n > 0n) {
           const kEst9 = (() => {
@@ -33311,7 +33566,7 @@ function applyExactFunction(fn, rts) {
           for (const k9 of kEst9 === null ? [] : [kEst9, kEst9 - 1, kEst9 + 1]) {
             if (k9 === 0 || k9 === 1 || Math.abs(k9) * bits9 > 4e5) continue;
             if (rCmp(a0, rPowInt(b2, k9)) === 0) {
-              return { t: "d", ...qv({ n: BigInt(k9), d: 1n }) };
+              return createDecimalRT9(qv({ n: BigInt(k9), d: 1n }));
             }
           }
         }
@@ -33333,7 +33588,7 @@ function applyExactFunction(fn, rts) {
       const scaled = { n: (neg ? -x2.n : x2.n) * scale, d: x2.d };
       const twice = { n: 2n * scaled.n + scaled.d, d: 2n * scaled.d };
       const mag = rFloor(twice);
-      return { t: "d", ...qv({ n: neg ? -mag : mag, d: scale }) };
+      return createDecimalRT9(qv({ n: neg ? -mag : mag, d: scale }));
     }
     default:
       return null;
@@ -33633,20 +33888,13 @@ function fxRat(provider, from, to, ctx) {
 }
 function fxJoinStamp9(out, source) {
   if (out.t !== "q" && out.t !== "d" && out.t !== "p" && out.t !== "f") return out;
-  if (out.terms !== void 0 || out.termsDen !== void 0) return out;
+  if (readLegacyShadowNumerator9(out) !== void 0 || readLegacyShadowDenominator9(out) !== void 0) return out;
   const src9 = source.foldA9;
   const zero9 = zeroState(out) === "zero";
   const cls9 = zero9 ? authPreserve9(src9) : authJoin9(src9, AUX9);
   return cls9 === void 0 ? out : stampAuth9(out, cls9);
 }
-var mkQ = (x2, def) => ({
-  t: "q",
-  ...qv(x2),
-  dim: def.dim,
-  symbol: def.symbol,
-  def,
-  comps: [{ def, exp: 1 }]
-});
+var mkQ = (x2, def) => createUnitRT9(qv(x2), def);
 function convertRat(x2, from, to) {
   if (from.factorDec || to.factorDec) return null;
   if (from.affine || to.affine) {
@@ -33703,9 +33951,9 @@ function convertQuantityInner9(rt2, to, ctx, inputCapture9) {
           capture: inputCapture9,
           frameOp: { kind: "reframe", target: b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30"), factor: { n: 1n, d: 1n } },
           meta: { kind: "reframe" }
-        }, () => alR9(rt2, { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] }));
+        }, () => alR9(rt2, editRuntimeCopy9(copyRuntimeRT9(rt2), { def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] })));
       }
-      const same9 = alR9(rt2, { ...rt2, def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] });
+      const same9 = alR9(rt2, editRuntimeCopy9(copyRuntimeRT9(rt2), { def: to, symbol: to.symbol, comps: [{ def: to, exp: 1 }] }));
       const target93 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
       return finish9(
         same9,
@@ -33722,7 +33970,7 @@ function convertQuantityInner9(rt2, to, ctx, inputCapture9) {
     if ("t" in fx) return fx;
     const numFxRecipe9 = [];
     const convTerms9 = () => {
-      const inputTerms9 = rt2.terms;
+      const inputTerms9 = readLegacyShadowNumerator9(rt2);
       if (inputTerms9 === void 0) return void 0;
       const out9 = [];
       for (const t9 of inputTerms9) {
@@ -33763,11 +34011,11 @@ function convertQuantityInner9(rt2, to, ctx, inputCapture9) {
       return out9;
     };
     const conv9 = convTerms9();
-    const fxNum9 = rt2.terms === void 0 ? [[fx.atom]] : numFxRecipe9;
-    const fxDen9 = (rt2.termsDen ?? ONE_TERMS()).map(() => []);
+    const fxNum9 = readLegacyShadowNumerator9(rt2) === void 0 ? [[fx.atom]] : numFxRecipe9;
+    const fxDen9 = (readLegacyShadowDenominator9(rt2) ?? ONE_TERMS()).map(() => []);
     const target92 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
     const legacyFx9 = (ownerCtx9) => {
-      const legacyOut9 = { ...mkQ(rMul(qx(rt2), fx.rat), to), ...conv9 && { terms: conv9 }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+      const legacyOut9 = legacyRTView9(ownRuntimeRT9({ ...mkQ(rMul(qx(rt2), fx.rat), to), ...conv9 && { terms: conv9 }, ...readLegacyShadowDenominator9(rt2) && { termsDen: readLegacyShadowDenominator9(rt2) }, ...rt2.capped === true && { capped: true } }));
       const joinOut9 = ownerCtx9.__fxJoin9 === true || ownerCtx9.__convAuth9 === true ? fxJoinStamp9(legacyOut9, rt2) : legacyOut9;
       if (ownerCtx9.__fxObserver9 !== void 0) {
         ownerCtx9.__fxObserver9({ site: fx.route === "direct" ? "convertQuantityDirect" : "convertQuantityInverse", factor: fx.rat, route: fx.route, provenance: { kind: "provider", route: fx.route }, authority: "aux", legacyOut: legacyOut9, candOut: joinOut9, touchedNum: [], touchedDen: [] });
@@ -33797,13 +34045,13 @@ function convertQuantityInner9(rt2, to, ctx, inputCapture9) {
   if (x2 === null) {
     const shadowA9 = shadowTermsA9(rt2, ctx);
     if (!Array.isArray(shadowA9)) return shadowA9;
-    const shadow9 = rt2.terms !== void 0 ? shadowA9 : shadowA9.map((t9) => t9.comps.length === 0 ? { ...t9, comps: [{ def: from, exp: 1 }] } : t9);
-    const cvOut9 = { t: "q", v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, terms: shadow9, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+    const shadow9 = readLegacyShadowNumerator9(rt2) !== void 0 ? shadowA9 : shadowA9.map((t9) => t9.comps.length === 0 ? { ...t9, comps: [{ def: from, exp: 1 }] } : t9);
+    const cvOut9 = rebuildQuantityRT9({ v: convertExact(rt2.v, from, to), dim: to.dim, symbol: to.symbol, def: to, comps: [{ def: to, exp: 1 }], vx: void 0, terms: shadow9, ...readLegacyShadowDenominator9(rt2) && { termsDen: readLegacyShadowDenominator9(rt2) }, ...rt2.capped === true && { capped: true } });
     const scaled9 = capScaleConv9(cvOut9, rt2, decToRat(convertExact(new DecC(1), from, to)));
     const target92 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
     return finish9(scaled9, { kind: "convert", target: target92 }, { kind: "reframe" });
   }
-  const cvOut8 = { ...mkQ(x2, to), ...rt2.terms && { terms: rt2.terms }, ...rt2.termsDen && { termsDen: rt2.termsDen }, ...rt2.capped === true && { capped: true } };
+  const cvOut8 = editRuntimeCopy9(copyRuntimeRT9(mkQ(x2, to)), { ...readLegacyShadowNumerator9(rt2) && { terms: readLegacyShadowNumerator9(rt2) }, ...readLegacyShadowDenominator9(rt2) && { termsDen: readLegacyShadowDenominator9(rt2) }, ...rt2.capped === true && { capped: true } });
   const exactOut9 = alR9(rt2, capScaleConv9(cvOut8, rt2, qx(rt2).n === 0n ? null : rDiv(x2, qx(rt2))));
   const target9 = b1CaptureOperand9(mkQ({ n: 1n, d: 1n }, to), ctx.monthToDays === "30");
   return finish9(exactOut9, { kind: "convert", target: target9 }, { kind: "reframe" });
@@ -33841,21 +34089,21 @@ function basePartOf(comps, ctx) {
   }
   return { rat, dec: dec2 };
 }
-var termsOf = (q2) => q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
+var termsOf = (q2) => readLegacyShadowNumerator9(q2) ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
 var shadowFracA9 = (q2, ctx, authoritySource9) => {
   if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
   if (ctx.__convAuth9 !== true && authoritySource9 === void 0) {
-    return { kind: "frac", den9: "valid", num: termsOf(q2), den: q2.termsDen ?? ONE_TERMS() };
+    return { kind: "frac", den9: "valid", num: termsOf(q2), den: readLegacyShadowDenominator9(q2) ?? ONE_TERMS() };
   }
-  const legacy9 = ShadowFraction.fromLegacy(q2.terms, q2.termsDen, ctx.monthToDays === "30");
+  const legacy9 = ShadowFraction.fromLegacy(readLegacyShadowNumerator9(q2), readLegacyShadowDenominator9(q2), ctx.monthToDays === "30");
   if (legacy9.kind === "invalid-denominator") {
     return { kind: "refuse", why: "invalid-denominator", err: err("division-by-zero", `the denominator shadow of \u201C${q2.symbol}\u201D is structurally zero`) };
   }
   if (legacy9.kind === "undecidable-denominator") {
     return { kind: "refuse", why: "undecidable-denominator", err: err("undecidable-authority", `the denominator shadow of \u201C${q2.symbol}\u201D cedes to an auxiliary zero \u2014 undecidable, refused`) };
   }
-  if (q2.terms !== void 0) return { kind: "frac", den9: "valid", num: q2.terms, den: q2.termsDen ?? ONE_TERMS() };
-  if (q2.termsDen !== void 0) return { kind: "frac", den9: "valid", num: ONE_TERMS(), den: q2.termsDen };
+  if (readLegacyShadowNumerator9(q2) !== void 0) return { kind: "frac", den9: "valid", num: readLegacyShadowNumerator9(q2), den: readLegacyShadowDenominator9(q2) ?? ONE_TERMS() };
+  if (readLegacyShadowDenominator9(q2) !== void 0) return { kind: "frac", den9: "valid", num: ONE_TERMS(), den: readLegacyShadowDenominator9(q2) };
   const cls9 = authStateOf9((authoritySource9 ?? q2).foldA9, false);
   if (cls9 === "auth" || cls9 === "aux") {
     return { kind: "frac", den9: "valid", num: [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c9) => ({ ...c9 })), aux: cls9 === "aux" }], den: ONE_TERMS() };
@@ -33871,7 +34119,7 @@ var shadowTermsFromSourceA9 = (source9, projection9, ctx) => {
   const v9 = shadowFracA9(projection9, ctx, source9);
   return v9.kind === "frac" ? v9.num : v9.err;
 };
-var shadowNeed9 = (parts9) => parts9.some((p9) => p9.terms !== void 0 || p9.termsDen !== void 0);
+var shadowNeed9 = (parts9) => parts9.some((p9) => readLegacyShadowNumerator9(p9) !== void 0 || readLegacyShadowDenominator9(p9) !== void 0);
 var shadowViewIfNeeded9 = (parts9, q9, ctx) => {
   if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
   return ctx.__convAuth9 === true && !shadowNeed9(parts9) ? termsOf(q9) : shadowTermsA9(q9, ctx);
@@ -33884,13 +34132,13 @@ var shadowAggregateView9 = (parts9, source9, projection9, ctx) => {
 };
 var shadowFracViewIfNeeded9 = (parts9, q9, ctx) => {
   if (ctx.__siteTrace9 !== void 0) ctx.__siteTrace9(new Error().stack ?? "");
-  if (ctx.__convAuth9 === true && !shadowNeed9(parts9)) return { kind: "frac", den9: "valid", num: termsOf(q9), den: q9.termsDen ?? ONE_TERMS() };
+  if (ctx.__convAuth9 === true && !shadowNeed9(parts9)) return { kind: "frac", den9: "valid", num: termsOf(q9), den: readLegacyShadowDenominator9(q9) ?? ONE_TERMS() };
   return shadowFracA9(q9, ctx);
 };
 function fracReduceTerm(q2, thirty) {
-  if (q2.terms === void 0 && q2.termsDen === void 0) return null;
-  const N2 = q2.terms ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
-  return fracQuotient(N2, q2.termsDen ?? ONE_TERMS(), thirty);
+  if (readLegacyShadowNumerator9(q2) === void 0 && readLegacyShadowDenominator9(q2) === void 0) return null;
+  const N2 = readLegacyShadowNumerator9(q2) ?? [{ x: qx(q2), comps: (compsOf(q2) ?? []).map((c2) => ({ ...c2 })), aux: rnorm(qx(q2)).d !== 1n }];
+  return fracQuotient(N2, readLegacyShadowDenominator9(q2) ?? ONE_TERMS(), thirty);
 }
 function fracReduceKey(q2, thirty) {
   const t2 = fracReduceTerm(q2, thirty);
@@ -33905,24 +34153,24 @@ function fracReduce(q2, thirty) {
   const c2 = termCanon(t2, thirty);
   return c2.key === "|" ? c2.canonX : null;
 }
-var fracOf = (q2) => ({ num: termsOf(q2), den: q2.termsDen ?? ONE_TERMS() });
+var fracOf = (q2) => ({ num: termsOf(q2), den: readLegacyShadowDenominator9(q2) ?? ONE_TERMS() });
 var attachFrac = (base, num, den) => {
-  if (num === null || den === null) return { ...base, terms: void 0, termsDen: void 0 };
+  if (num === null || den === null) return editRuntimeCopy9(copyRuntimeRT9(base), { terms: void 0, termsDen: void 0 });
   if (den.length === 1 && den[0].comps.length === 0 && rnorm(den[0].x).n !== 0n) {
     const k2 = den[0].x;
-    return { ...base, terms: num.map((t2) => ({ ...t2, x: rDiv(t2.x, k2) })), termsDen: void 0 };
+    return editRuntimeCopy9(copyRuntimeRT9(base), { terms: num.map((t2) => ({ ...t2, x: rDiv(t2.x, k2) })), termsDen: void 0 });
   }
-  return { ...base, terms: num, termsDen: den };
+  return editRuntimeCopy9(copyRuntimeRT9(base), { terms: num, termsDen: den });
 };
 var fracCmpRT = (a9, b9, thirty) => {
-  if (a9.termsDen === void 0 && b9.termsDen === void 0) return termsCmp(termsOf(a9), termsOf(b9), thirty);
-  const x9 = distributeTerms(termsOf(a9), b9.termsDen ?? ONE_TERMS(), thirty);
-  const y9 = distributeTerms(termsOf(b9), a9.termsDen ?? ONE_TERMS(), thirty);
+  if (readLegacyShadowDenominator9(a9) === void 0 && readLegacyShadowDenominator9(b9) === void 0) return termsCmp(termsOf(a9), termsOf(b9), thirty);
+  const x9 = distributeTerms(termsOf(a9), readLegacyShadowDenominator9(b9) ?? ONE_TERMS(), thirty);
+  const y9 = distributeTerms(termsOf(b9), readLegacyShadowDenominator9(a9) ?? ONE_TERMS(), thirty);
   if (x9 === null || y9 === null) return null;
   const d9 = mergeTerms(x9, y9, -1n, thirty);
   if (d9.length === 0) return 0;
   const sN9 = termsCmp(d9, [], thirty);
-  const dd9 = distributeTerms(a9.termsDen ?? ONE_TERMS(), b9.termsDen ?? ONE_TERMS(), thirty);
+  const dd9 = distributeTerms(readLegacyShadowDenominator9(a9) ?? ONE_TERMS(), readLegacyShadowDenominator9(b9) ?? ONE_TERMS(), thirty);
   const sD9 = dd9 === null ? null : termsCmp(dd9, [], thirty);
   if (sN9 === null || sD9 === null || sD9 === 0) return null;
   return sN9 * sD9;
@@ -33932,7 +34180,7 @@ var zeroState = (rt2, thirty) => {
   if (x9 === null) return "nonzero";
   if (x9.n !== 0n) return "nonzero";
   if (rt2.capped === true) return "undecidable";
-  const t9 = rt2.terms;
+  const t9 = readLegacyShadowNumerator9(rt2);
   if (t9 === void 0 || t9.length === 0 || t9.every((u9) => u9.x.n === 0n)) return "zero";
   const m9 = mergeTerms(t9, [], 1n, thirty);
   if (m9.length === 0) return "zero";
@@ -33949,42 +34197,40 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
   if (num9 !== null && (num9.length === 0 || num9.every((t9) => t9.x.n === 0n))) {
     const dvDims9 = divisor9.t === "q" && (compsOf(divisor9)?.length ?? 0) > 0 ? divisor9 : null;
     if (dvDims9 !== null) {
-      const l1 = dividend9 !== void 0 && dividend9.t === "q" ? { ...dividend9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 } : { t: "q", ...qv({ n: 0n, d: 1n }), dim: {}, symbol: "", comps: [] };
-      const r1 = {
-        t: "q",
+      const l1 = dividend9 !== void 0 && dividend9.t === "q" ? editRuntimeCopy9(copyRuntimeRT9(dividend9), { ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 }) : createQuantityRT9({ ...qv({ n: 0n, d: 1n }), dim: {}, symbol: "", comps: [] });
+      const r1 = createQuantityRT9({
         v: new DecC(1),
         dim: dvDims9.dim,
         symbol: dvDims9.symbol,
         comps: (compsOf(dvDims9) ?? []).map((c9) => ({ ...c9 }))
-      };
+      });
       const shell9 = combineQuantities(l1, r1, "/", ctx);
-      if (shell9.t === "q") return { ...shell9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+      if (shell9.t === "q") return editRuntimeCopy9(copyRuntimeRT9(shell9), { ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 });
       if (shell9.t === "ts") return shell9;
       if (shell9.t === "e") return shell9;
-      return { t: "d", ...qv({ n: 0n, d: 1n }) };
+      return createDecimalRT9(qv({ n: 0n, d: 1n }));
     }
     if (dividend9 !== void 0 && dividend9.t === "q" && (compsOf(dividend9)?.length ?? 0) > 0) {
-      return { ...dividend9, ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 };
+      return editRuntimeCopy9(copyRuntimeRT9(dividend9), { ...qv({ n: 0n, d: 1n }), terms: void 0, termsDen: void 0 });
     }
-    if (dividend9 !== void 0 && dividend9.t === "p") return { t: "p", ...qv({ n: 0n, d: 1n }) };
-    return { t: "d", ...qv({ n: 0n, d: 1n }) };
+    if (dividend9 !== void 0 && dividend9.t === "p") return createPercentageRT9(qv({ n: 0n, d: 1n }));
+    return createDecimalRT9(qv({ n: 0n, d: 1n }));
   }
   const quot9 = num9 === null || den9 === null ? null : fracQuotient(num9, den9, t30);
   if (quot9 !== null) {
     const c9 = termCanon(quot9, t30);
-    if (c9.key === "|" && dividend9 !== void 0 && dividend9.t === "p") return { t: "p", ...qv(c9.canonX) };
-    if (c9.key === "|") return { t: "d", ...qv(c9.canonX) };
-    const raw9 = {
-      t: "q",
+    if (c9.key === "|" && dividend9 !== void 0 && dividend9.t === "p") return createPercentageRT9(qv(c9.canonX));
+    if (c9.key === "|") return createDecimalRT9(qv(c9.canonX));
+    const raw9 = createQuantityRT9({
       ...qv(quot9.x),
       dim: dimOfComps(quot9.comps),
       symbol: compsSymbol(quot9.comps),
       comps: quot9.comps.map((c8) => ({ ...c8 }))
-    };
+    });
     if (dividend9 !== void 0 && dividend9.t === "q" && dividend9.chosen === true) {
-      return { ...raw9, terms: [quot9], chosen: true };
+      return editRuntimeCopy9(copyRuntimeRT9(raw9), { terms: [quot9], chosen: true });
     }
-    const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+    const one9 = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
     return combineQuantities(one9, raw9, "*", ctx);
   }
   if (num9 !== null && den9 !== null) {
@@ -33992,9 +34238,9 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       if (q82.every((t9) => dimIsEmpty(dimOfComps(t9.comps)))) {
         const v8 = termsProject(q82, t30);
         if (v8 !== null) {
-          const car8 = attachFrac({ t: "q", ...qv(v8), dim: {}, symbol: "", comps: [] }, q82, ONE_TERMS());
+          const car8 = attachFrac(createQuantityRT9({ ...qv(v8), dim: {}, symbol: "", comps: [] }), q82, ONE_TERMS());
           if (dividend9 !== void 0 && dividend9.t === "p") {
-            return { t: "p", ...qv(v8), ...car8.terms && { terms: car8.terms }, ...car8.termsDen && { termsDen: car8.termsDen } };
+            return rebuildPercentageRT9({ ...qv(v8), ...readLegacyShadowNumerator9(car8) && { terms: readLegacyShadowNumerator9(car8) }, ...readLegacyShadowDenominator9(car8) && { termsDen: readLegacyShadowDenominator9(car8) } });
           }
           return car8;
         }
@@ -34026,8 +34272,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
       if (Object.keys(dim8).length > 0 && Object.keys(dim8).every((k9) => k9 === "calmonths" || k9 === "caldays") && !dimsCompatible(dim8, {}, ctx)) {
         return err("inexact", "a timespan count carrying an irreducible shadow is not exact");
       }
-      return {
-        t: "q",
+      return rebuildQuantityRT9({
         ...qv(acc8),
         dim: dim8,
         symbol: compsSymbol(rep8.comps),
@@ -34035,7 +34280,7 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
         ...def8 && { def: def8 },
         terms: q82,
         ...dividend9 !== void 0 && dividend9.t === "q" && dividend9.chosen === true && { chosen: true }
-      };
+      });
     };
     const q8 = polyDiv(num9, den9, t30);
     if (q8 !== null) {
@@ -34045,30 +34290,28 @@ var divProjZero = (num9, den9, divisor9, ctx, dividend9) => {
     const q2 = polyDiv(den9, num9, t30);
     if (q2 !== null) {
       const em0 = emitPoly8(q2);
-      const em2 = em0 !== null && em0.t === "p" ? {
-        t: "q",
+      const em2 = em0 !== null && em0.t === "p" ? rebuildQuantityRT9({
         v: em0.v,
         ...em0.vx !== void 0 && { vx: em0.vx },
         dim: {},
         symbol: "",
         comps: [],
-        ...em0.terms && { terms: em0.terms },
-        ...em0.termsDen && { termsDen: em0.termsDen }
-      } : em0;
+        ...readLegacyShadowNumerator9(em0) && { terms: readLegacyShadowNumerator9(em0) },
+        ...readLegacyShadowDenominator9(em0) && { termsDen: readLegacyShadowDenominator9(em0) }
+      }) : em0;
       if (em2 !== null && em2.t === "q") {
         const px2 = qx(em2);
         if (px2.n !== 0n) {
           const invComps2 = (compsOf(em2) ?? []).map((c9) => ({ def: c9.def, exp: -c9.exp }));
-          const base2 = {
-            t: "q",
+          const base2 = createQuantityRT9({
             ...qv(rDiv({ n: 1n, d: 1n }, px2)),
             dim: dimOfComps(invComps2),
             symbol: compsSymbol(invComps2),
             comps: invComps2
-          };
+          });
           const rec2 = attachFrac(base2, ONE_TERMS(), q2);
           if (dividend9 !== void 0 && dividend9.t === "p" && isCarrier(rec2)) {
-            return { t: "p", ...qv(qx(rec2)), ...rec2.terms && { terms: rec2.terms }, ...rec2.termsDen && { termsDen: rec2.termsDen } };
+            return rebuildPercentageRT9({ ...qv(qx(rec2)), ...readLegacyShadowNumerator9(rec2) && { terms: readLegacyShadowNumerator9(rec2) }, ...readLegacyShadowDenominator9(rec2) && { termsDen: readLegacyShadowDenominator9(rec2) } });
           }
           return rec2;
         }
@@ -34092,7 +34335,9 @@ var carrierNum = (rt2, ctx, site) => {
     return publishCandFold9(candidateCarrierNum9(rt2, ctx.monthToDays === "30"), ctx, "carrierNum", site);
   }
   const before9 = ctx.capNotes?.length ?? 0;
-  const out = legacyCarrierNum9(rt2, ctx);
+  const legacyInput9 = legacyRTView9(rt2);
+  const legacyOut9 = legacyCarrierNum9(legacyInput9, ctx);
+  const out = legacyOut9 === legacyInput9 ? rt2 : ownRuntimeRT9(legacyOut9);
   const pushedN9 = (ctx.capNotes?.length ?? 0) - before9;
   if (ctx.__foldEffectLog9 !== void 0) {
     for (let i9 = 0; i9 < pushedN9; i9++) ctx.__foldEffectLog9.push(`carrierNum:${site}:carrier`);
@@ -34106,12 +34351,12 @@ var carrierNum = (rt2, ctx, site) => {
   }
   return out;
 };
-var scaleTerms = (q2, k2) => q2.terms ? { terms: q2.terms.map((t2) => ({ ...t2, x: rMul(t2.x, k2) })) } : {};
+var scaleTerms = (q2, k2) => readLegacyShadowNumerator9(q2) ? { terms: readLegacyShadowNumerator9(q2).map((t2) => ({ ...t2, x: rMul(t2.x, k2) })) } : {};
 var negateShadow9 = (rt2) => {
   const r9 = rt2;
   return {
-    ...r9.terms && { terms: r9.terms.map((t9) => ({ ...t9, x: { n: -t9.x.n, d: t9.x.d } })) },
-    ...r9.termsDen && { termsDen: r9.termsDen }
+    ...readLegacyShadowNumerator9(r9) && { terms: readLegacyShadowNumerator9(r9).map((t9) => ({ ...t9, x: { n: -t9.x.n, d: t9.x.d } })) },
+    ...readLegacyShadowDenominator9(r9) && { termsDen: readLegacyShadowDenominator9(r9) }
   };
 };
 var pctScale9 = (base9, factor9, cap9, ctx, factor, source9) => routeScale9(
@@ -34285,7 +34530,7 @@ var reemitFromShadow9 = (rt2, thirty, site, observe, causal) => {
       snapshots9.set(value9, owned9);
       return owned9;
     };
-    observe(site, snapshot9(rt2), snapshot9(legacyReemitFromShadow9(rt2, thirty)), { res, out: snapshot9(out) }, thirty);
+    observe(site, snapshot9(rt2), snapshot9(legacyReemitFromShadow9(legacyRTView9(rt2), thirty)), { res, out: snapshot9(out) }, thirty);
   }
   return out;
 };
@@ -34443,12 +34688,12 @@ var applyCandReemit9 = (rt2, res) => {
     case "unchanged":
       return rt2;
     case "reemit-decimal": {
-      const out = { ...rt2, v: res.v };
+      const out = editRuntimeCopy9(copyRuntimeRT9(rt2), { v: res.v });
       delete out.vx;
       return out;
     }
     case "reemit-exact":
-      return { ...rt2, ...qv(res.val) };
+      return editRuntimeCopy9(copyRuntimeRT9(rt2), { ...qv(res.val) });
     case "inexact":
     case "unsupported":
       return err("inexact", res.why);
@@ -34537,12 +34782,12 @@ var b1StructuralZeroVerdict9 = (op9, left9, right9, allowMechanismAuxPurge9) => 
   return resultZero9 === "authoritative-zero" || allowMechanismAuxPurge9 && (op9 === "+" || op9 === "-") && leftZero9 === "nonzero" && rightZero9 === "nonzero" && resultZero9 === "auxiliary-zero" ? Object.freeze({ kind: "purged", authority: AUTH9 }) : void 0;
 };
 var emitB1BinaryOutput9 = (ctx9, boundary9, sources9, output9, capturedAuthority9, op9) => {
-  let published9 = output9;
+  let published9 = ownRuntimeRT9(output9);
   if (ctx9.__b1EligibilityPartition9 === true && capturedAuthority9 !== void 0 && output9.t !== "e" && !hasShadowFromRT(output9) && output9.foldA9 === void 0 && sources9.length >= 2) {
     const joined9 = authJoin9(capturedAuthority9.left, capturedAuthority9.right) ?? capturedAuthority9.algebraVerdict?.authority;
     if (joined9 !== void 0) {
       published9 = stampAuth9(
-        output9,
+        published9,
         joined9
       );
     }
@@ -34677,13 +34922,13 @@ var b1FrameRT9 = (rt9, thirty9, ownerDecision9) => {
 var b1ExactCarrier9 = (captured9, exact9) => {
   let source9 = stripShadowFromRT9(captured9.rt);
   if (source9.t === "q" && source9.def === void 0 && captured9.envelope !== null && captured9.envelope.denComps === null && captured9.envelope.numComps.length === 1 && captured9.envelope.numComps[0].exp === 1) {
-    source9 = { ...source9, def: captured9.envelope.numComps[0].def };
+    source9 = editRuntimeCopy9(copyRuntimeRT9(source9), { def: captured9.envelope.numComps[0].def });
   }
   const value9 = qv(exact9);
   if (source9.t === "f") return makeFrac(value9.vx?.n ?? exact9.n, value9.vx?.d ?? exact9.d, source9.origin);
   if (source9.t === "d" || source9.t === "p" || source9.t === "q") {
     const { v: _oldV9, vx: _oldVx9, ...tail9 } = source9;
-    return value9.vx === void 0 ? { ...tail9, v: value9.v } : { ...tail9, v: value9.v, vx: value9.vx };
+    return value9.vx === void 0 ? completeNumericShell9(copyNumericShell9(tail9), { v: value9.v }) : completeNumericShell9(copyNumericShell9(tail9), { v: value9.v, vx: value9.vx });
   }
   return source9;
 };
@@ -34691,13 +34936,12 @@ var b1ReframedCarrier9 = (source9, target9, exact9, factor9) => {
   if (source9.rt.t !== "q" || target9.kind !== "ok" || target9.rt.t !== "q") return null;
   const targetEnv9 = target9.envelope;
   const targetDef9 = targetEnv9 !== null && targetEnv9.denComps === null && targetEnv9.numComps.length === 1 && targetEnv9.numComps[0].exp === 1 ? targetEnv9.numComps[0].def : void 0;
-  const targetRT9 = {
-    ...stripShadowFromRT9(target9.rt),
+  const targetRT9 = editRuntimeCopy9(copyRuntimeRT9(stripShadowFromRT9(target9.rt)), {
     ...targetDef9 !== void 0 && { def: targetDef9 }
-  };
+  });
   const value9 = qv(exact9);
   const { v: _oldV9, vx: _oldVx9, ...targetTail9 } = targetRT9;
-  const out9 = value9.vx === void 0 ? { ...targetTail9, v: value9.v } : { ...targetTail9, v: value9.v, vx: value9.vx };
+  const out9 = value9.vx === void 0 ? completeNumericShell9(copyNumericShell9(targetTail9), { v: value9.v }) : completeNumericShell9(copyNumericShell9(targetTail9), { v: value9.v, vx: value9.vx });
   delete out9.foldA9;
   delete out9.capped;
   delete out9.capF;
@@ -34721,7 +34965,7 @@ var b1SynthesizeTransformFrame9 = (captured9, op9, ctx9) => {
       const operation9 = Object.freeze({ kind: "ok", left: captured9, right: op9.unit });
       const frame9 = b1MulDivFrame9(captured9, op9.unit, "*", ctx9);
       const boundedFrame9 = captured9.boundedCause !== void 0 && frame9.kind === "numeric" ? { ...frame9, shell: capProdTransport9(
-        { ...frame9.shell, capped: true },
+        editRuntimeCopy9(copyRuntimeRT9(frame9.shell), { capped: true }),
         [captured9.rt, op9.unit.rt],
         "b1:bounded:attach"
       ) } : frame9;
@@ -34819,7 +35063,7 @@ var b1SynthesizeTransformFrame9 = (captured9, op9, ctx9) => {
       shell9 = b1ExactCarrier9(captured9, rPowInt(exact9, exp9));
       if (shell9.t === "q" && captured9.rt.t === "q") {
         const comps9 = (captured9.rt.comps ?? (captured9.rt.def === void 0 ? [] : [{ def: captured9.rt.def, exp: 1 }])).map((c9) => ({ def: c9.def, exp: c9.exp * exp9 })).filter((c9) => c9.exp !== 0);
-        shell9 = { ...shell9, dim: dimOfComps(comps9), symbol: compsSymbol(comps9), comps: comps9 };
+        shell9 = editRuntimeCopy9(copyRuntimeRT9(shell9), { dim: dimOfComps(comps9), symbol: compsSymbol(comps9), comps: comps9 });
       }
       break;
     }
@@ -34837,7 +35081,7 @@ var b1SynthesizeTransformFrame9 = (captured9, op9, ctx9) => {
         if (op9.plan.left.kind !== "ok" || op9.plan.right.kind !== "ok") break;
         const operation9 = Object.freeze({ kind: "ok", left: op9.plan.left, right: op9.plan.right });
         const quantityFrame9 = b1MulDivFrame9(op9.plan.left, op9.plan.right, op9.plan.op, ctx9);
-        const framedWithChosen9 = quantityFrame9.kind === "numeric" && quantityFrame9.shell.t === "q" && captured9.rt.t === "q" && captured9.rt.chosen === true ? { ...quantityFrame9, shell: { ...quantityFrame9.shell, chosen: true } } : quantityFrame9;
+        const framedWithChosen9 = quantityFrame9.kind === "numeric" && quantityFrame9.shell.t === "q" && captured9.rt.t === "q" && captured9.rt.chosen === true ? { ...quantityFrame9, shell: editRuntimeCopy9(copyRuntimeRT9(quantityFrame9.shell), { chosen: true }) } : quantityFrame9;
         return Object.freeze({
           kind: "quantity-compose",
           op: op9.plan.op,
@@ -34906,13 +35150,13 @@ var b1PublishProduction9 = (ctx9, owner9, decision9, legacyThunk9) => {
   if (decision9.effect === "unexpected-loss") throw new Error("CAPTURE_CAUSAL_UNEXPECTED_LOSS");
   if (decision9.output === B1_MECHANISM_ROUTE9) {
     if (decision9.eligibility !== "mechanism") throw new Error("CAPTURE_CAUSAL_INVALID_ROUTE");
-    const out92 = legacyThunk9(b1FrozenContext9(ctx9, false));
+    const out92 = ownRuntimeRT9(legacyThunk9(b1FrozenContext9(ctx9, false)));
     ctx9.__b1ProductionObserver9?.({ ...owner9, decision: decision9, published: out92, legacyOut: out92 });
     return out92;
   }
   const out9 = decision9.output;
   if (ctx9.__b1ProductionObserver9 !== void 0) {
-    const legacyOut9 = legacyThunk9(b1FrozenContext9(ctx9, true));
+    const legacyOut9 = legacyRTView9(ownRuntimeRT9(legacyThunk9(b1FrozenContext9(ctx9, true))));
     ctx9.__b1ProductionObserver9({ ...owner9, decision: decision9, published: out9, legacyOut: legacyOut9 });
   }
   return out9;
@@ -35036,7 +35280,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
   const lc = compsOf(l2);
   const rc = compsOf(r3);
   if (lc && rc && (lc.length !== 1 || rc.length !== 1 || lc[0].exp !== 1 || rc[0].exp !== 1 || lc[0].def.currency !== void 0 && rc[0].def.currency !== void 0 && lc[0].def.currency !== rc[0].def.currency)) {
-    const shadowed = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+    const shadowed = (q9) => readLegacyShadowNumerator9(q9) !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
     const needShadow = () => shadowed(r3) || shadowed(l2);
     const keepShadow = () => needShadow() ? shadowTermsA9(r3, ctx) : void 0;
     const lBase = basePartOf(lc, ctx);
@@ -35056,13 +35300,12 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
       };
       const sh9 = keepShadow();
       if (sh9 !== void 0 && !Array.isArray(sh9)) return sh9;
-      const { vx: _leftVx9, terms: _leftTerms9, termsDen: _leftTermsDen9, ...leftShell9 } = l2;
-      const alignedQ9 = (value9, exact9) => ({
-        ...leftShell9,
+      const { vx: _leftVx9, ...leftShell9 } = stripShadowFromRT9(l2);
+      const alignedQ9 = (value9, exact9) => editRuntimeCopy9(copyRuntimeRT9(leftShell9), {
         v: value9,
         ...exact9 !== void 0 && { vx: exact9 },
         ...sh9 !== void 0 && { terms: sh9 },
-        ...r3.termsDen !== void 0 && { termsDen: r3.termsDen }
+        ...readLegacyShadowDenominator9(r3) !== void 0 && { termsDen: readLegacyShadowDenominator9(r3) }
       });
       if (lBase.dec === null && rBase.dec === null) {
         if (targetCapture9 !== void 0) setFrameOp9?.({ kind: "reframe", target: targetCapture9, factor: ratio2 });
@@ -35124,7 +35367,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
     const rawR9 = rawR9v;
     const canceled9 = (() => {
       const num0 = rawR9.map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
-      const den0 = r3.termsDen?.map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
+      const den0 = readLegacyShadowDenominator9(r3)?.map((t9) => ({ ...t9, comps: idMergeTop9(t9.comps) }));
       if (den0 === void 0 || num0.length === 0 || den0.length === 0) return { num: num0, den: den0 };
       const codes0 = /* @__PURE__ */ new Set();
       for (const t9 of [...num0, ...den0]) for (const c9 of t9.comps) if (c9.def.currency !== void 0) codes0.add(c9.def.currency);
@@ -35389,7 +35632,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
       return out9;
     })();
     const denShadow = (() => {
-      if (r3.termsDen === void 0 || !needShadow()) return r3.termsDen;
+      if (readLegacyShadowDenominator9(r3) === void 0 || !needShadow()) return readLegacyShadowDenominator9(r3);
       const lCodes8 = [...new Set(lCur.map((c9) => c9.def.currency))];
       const idMerge8 = (comps9) => {
         const m9 = /* @__PURE__ */ new Map();
@@ -35401,7 +35644,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
         return [...m9.values()].filter((c9) => c9.exp !== 0);
       };
       const out8 = [];
-      for (const t0 of canceled9.den ?? r3.termsDen) {
+      for (const t0 of canceled9.den ?? readLegacyShadowDenominator9(r3)) {
         const t9 = { ...t0, comps: idMerge8(t0.comps) };
         let x9 = t9.x;
         let bad9 = false;
@@ -35435,7 +35678,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
             cv8 = true;
             push8(lDef8, c9.exp);
           }
-          if (bad9) return r3.termsDen;
+          if (bad9) return readLegacyShadowDenominator9(r3);
           out8.push({ ...t9, x: x9, comps: [...comps8.values()].filter((c9) => c9.exp !== 0) });
           denConv9.push(cv8);
           denFxRecipe9.push(atoms82);
@@ -35451,7 +35694,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
           continue;
         }
         const tgt8 = dimOf8(curs8) === dimOf8(lNeg8) ? lNeg8 : dimOf8(curs8) === -dimOf8(lCur) ? lCur.map((c9) => ({ def: c9.def, exp: -c9.exp })) : null;
-        if (tgt8 === null) return r3.termsDen;
+        if (tgt8 === null) return readLegacyShadowDenominator9(r3);
         const atoms8 = [];
         for (const c9 of curs8) {
           const k9 = pathRatOf(c9.def.currency);
@@ -35481,7 +35724,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
           x9 = rMul(x9, rPowInt(k9, -c9.exp));
           atoms8.push(...aa9.map((a9) => ({ ...a9, exp: a9.exp * BigInt(-c9.exp) })));
         }
-        if (bad9) return r3.termsDen;
+        if (bad9) return readLegacyShadowDenominator9(r3);
         out8.push({
           ...t9,
           x: x9,
@@ -35546,7 +35789,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
     if (lBase2.dec === null && rBase2.dec === null) {
       if (targetCapture9 !== void 0) setFrameOp9?.({ kind: "reframe", target: targetCapture9, factor: ratio });
       return alFx9(
-        (tt9, dd9) => alStampC9({ ...l2, ...qv(rMul(qx(r3), ratio)), terms: tt9, termsDen: dd9 }, ratio),
+        (tt9, dd9) => alStampC9(editRuntimeCopy9(copyRuntimeRT9(l2), { ...qv(rMul(qx(r3), ratio)), terms: tt9, termsDen: dd9 }), ratio),
         { kind: "reframe", target: targetCapture9 ?? b1CaptureOperand9(l2, ctx.monthToDays === "30"), factor: ratio }
       );
     }
@@ -35559,7 +35802,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
       exact: decToRat(alignedDec9)
     });
     return alFx9(
-      (tt9, dd9) => alStampC9({ ...l2, v: alignedDec9, vx: void 0, terms: tt9, termsDen: dd9 }, decToRat(ratToDec(ratio).times(decR))),
+      (tt9, dd9) => alStampC9(editRuntimeCopy9(copyRuntimeRT9(l2), { v: alignedDec9, vx: void 0, terms: tt9, termsDen: dd9 }), decToRat(ratToDec(ratio).times(decR))),
       {
         kind: "reframe",
         target: targetCapture9 ?? b1CaptureOperand9(l2, ctx.monthToDays === "30"),
@@ -35572,7 +35815,7 @@ function alignForAddInner9(l2, r3, ctx, setMeta9, setFrameOp9, targetCapture9) {
   if (targetCapture9 !== void 0) setFrameOp9?.({ kind: "convert", target: targetCapture9 });
   const conv = convertQuantityInner9(r3, l2.def, ctx, null);
   if (conv.t === "e") return conv;
-  const alQ9 = { ...l2, ...qv(qx(conv)), terms: conv.terms, termsDen: conv.termsDen };
+  const alQ9 = editRuntimeCopy9(copyRuntimeRT9(l2), { ...qv(qx(conv)), terms: readLegacyShadowNumerator9(conv), termsDen: readLegacyShadowDenominator9(conv) });
   const cfR9 = capFOf9(conv);
   if (cfR9 !== void 0 && cfR9.length > 0) {
     alQ9.capF = cfR9;
@@ -35641,8 +35884,7 @@ var quantityEnvelope9 = (x9, dim9, comps9) => {
     symbol9 = compsSymbol(comps9);
   }
   const reading9 = qv(x9);
-  return {
-    t: "q",
+  return createQuantityRT9({
     v: reading9.v,
     ...reading9.vx !== void 0 && { vx: reading9.vx },
     dim: dim9,
@@ -35650,7 +35892,7 @@ var quantityEnvelope9 = (x9, dim9, comps9) => {
     ...def9 !== void 0 && { def: def9 },
     ...rate9 !== void 0 && { rate: rate9 },
     comps: comps9
-  };
+  });
 };
 var materializeB1MonomialShell9 = (term9) => quantityEnvelope9(term9.x, dimOfComps(term9.comps), term9.comps.map((c9) => ({ ...c9 })));
 function effFactor(c2, ctx) {
@@ -35737,12 +35979,12 @@ function combineQuantitiesInner9(l2, r3, op, ctx) {
         const sym9 = comps.filter((c9) => !c9.def.currency).map((c9) => ({ ...c9 }));
         const shadow9 = [{ x: xPre9, comps: [...ordered.map((c9) => ({ ...c9 })), ...sym9], aux: false }];
         const exactV9 = rMul(x2, decScaleR9);
-        return { ...base2, ...qv(exactV9), terms: shadow9 };
+        return completeNumericShell9(copyNumericShell9(base2), { ...qv(exactV9), terms: shadow9 });
       }
-      return { ...base2, ...qv(x2) };
+      return completeNumericShell9(copyNumericShell9(base2), { ...qv(x2) });
     }
     if (comps.some((c2) => c2.def.factorDec !== void 0)) {
-      return { t: "q", ...qv(x2), dim: dimOfComps(comps), symbol: compsSymbol(comps), comps: comps.map((c2) => ({ ...c2 })) };
+      return createQuantityRT9({ ...qv(x2), dim: dimOfComps(comps), symbol: compsSymbol(comps), comps: comps.map((c2) => ({ ...c2 })) });
     }
     for (const c2 of comps) {
       if (isPureLinear(c2.def)) {
@@ -35752,7 +35994,7 @@ function combineQuantitiesInner9(l2, r3, op, ctx) {
       }
     }
     const xn = rnorm(x2);
-    return { t: "d", v: ratToDec(xn), ...!ratIsExactDec(xn) && { vx: xn } };
+    return createDecimalRT9({ v: ratToDec(xn), ...!ratIsExactDec(xn) && { vx: xn } });
   }
   if (ctx.monthToDays !== "30" && comps.some((c2) => c2.def.dim["calmonths"]) && comps.some((c2) => c2.def.dim["caldays"])) {
     return err("anchor-required", "months/years and days/weeks only combine around a date");
@@ -35760,10 +36002,10 @@ function combineQuantitiesInner9(l2, r3, op, ctx) {
   if (comps.length === 1 && comps[0].exp === 1 && Object.keys(comps[0].def.dim).every((k2) => k2 === "calmonths" || k2 === "caldays")) {
     if (capIn9) return err("inexact", "a timespan count built from a capped value is not exact");
     const dirtySpan9 = (s9) => {
-      if (s9.terms === void 0 && s9.termsDen === void 0) return false;
+      if (readLegacyShadowNumerator9(s9) === void 0 && readLegacyShadowDenominator9(s9) === void 0) return false;
       if (fracReduce(s9, ctx.monthToDays === "30") !== null) return false;
-      if (s9.terms !== void 0 && s9.terms.every((t9) => t9.x.n === 0n)) return false;
-      if (s9.terms !== void 0 && s9.termsDen !== void 0 && mergeTerms(s9.terms, s9.termsDen, -1n, ctx.monthToDays === "30").length === 0) return false;
+      if (readLegacyShadowNumerator9(s9) !== void 0 && readLegacyShadowNumerator9(s9).every((t9) => t9.x.n === 0n)) return false;
+      if (readLegacyShadowNumerator9(s9) !== void 0 && readLegacyShadowDenominator9(s9) !== void 0 && mergeTerms(readLegacyShadowNumerator9(s9), readLegacyShadowDenominator9(s9), -1n, ctx.monthToDays === "30").length === 0) return false;
       return true;
     };
     const monoPair9 = (() => {
@@ -35771,8 +36013,8 @@ function combineQuantitiesInner9(l2, r3, op, ctx) {
       if (flv9.kind === "refuse") return { k9: "refuse", e9: flv9.err };
       const frv9 = shadowFracViewIfNeeded9([l2, r3], r3, ctx);
       if (frv9.kind === "refuse") return { k9: "refuse", e9: frv9.err };
-      if (op === "/" && qx(l2).n === 0n && (l2.terms === void 0 || l2.terms.every((t9) => t9.x.n === 0n))) return { k9: "proved" };
-      if (!(l2.terms !== void 0 || r3.terms !== void 0)) return { k9: "not-proved" };
+      if (op === "/" && qx(l2).n === 0n && (readLegacyShadowNumerator9(l2) === void 0 || readLegacyShadowNumerator9(l2).every((t9) => t9.x.n === 0n))) return { k9: "proved" };
+      if (!(readLegacyShadowNumerator9(l2) !== void 0 || readLegacyShadowNumerator9(r3) !== void 0)) return { k9: "not-proved" };
       const t30q = ctx.monthToDays === "30";
       const fl9 = flv9;
       const fr9 = frv9;
@@ -35824,7 +36066,7 @@ var spanStructuralZero9 = (span9) => !span9.c.years && !span9.c.months && !span9
 var stampTimespan9 = (out9, cert9) => out9.t === "ts" && cert9 !== void 0 ? stampAuth9(out9, cert9) : out9;
 var capTimespan9 = (out9, capped92) => {
   if (!capped92 || out9.t !== "ts") return out9;
-  return stampTimespan9({ ...out9, capped: true }, authPreserve9(out9.foldA9));
+  return stampTimespan9(editRuntimeCopy9(copyRuntimeRT9(out9), { capped: true }), authPreserve9(out9.foldA9));
 };
 var tsScaleWithAuthority9 = (span9, k9, factor9, ctx9) => {
   const out9 = tsScale(span9, k9, ctx9);
@@ -35902,19 +36144,18 @@ var spanHalf = (months, days, groups, n2, ctx, cert9) => {
 };
 var pctFigure = (p9, thirty) => {
   if (p9.capped === true) return "irr";
-  if (p9.terms === void 0 && p9.termsDen === void 0) return p9.vx ?? decToRat(p9.v);
-  const q9 = {
-    t: "q",
+  if (readLegacyShadowNumerator9(p9) === void 0 && readLegacyShadowDenominator9(p9) === void 0) return p9.vx ?? decToRat(p9.v);
+  const q9 = rebuildQuantityRT9({
     v: p9.v,
     ...p9.vx && { vx: p9.vx },
     dim: {},
     symbol: "",
     comps: [],
-    ...p9.terms && { terms: p9.terms },
-    ...p9.termsDen && { termsDen: p9.termsDen }
-  };
-  const numZero9 = p9.terms !== void 0 && (p9.terms.length === 0 || p9.terms.every((t9) => t9.x.n === 0n));
-  const denZero9 = p9.termsDen !== void 0 && (p9.termsDen.length === 0 || p9.termsDen.every((t9) => t9.x.n === 0n));
+    ...readLegacyShadowNumerator9(p9) && { terms: readLegacyShadowNumerator9(p9) },
+    ...readLegacyShadowDenominator9(p9) && { termsDen: readLegacyShadowDenominator9(p9) }
+  });
+  const numZero9 = readLegacyShadowNumerator9(p9) !== void 0 && (readLegacyShadowNumerator9(p9).length === 0 || readLegacyShadowNumerator9(p9).every((t9) => t9.x.n === 0n));
+  const denZero9 = readLegacyShadowDenominator9(p9) !== void 0 && (readLegacyShadowDenominator9(p9).length === 0 || readLegacyShadowDenominator9(p9).every((t9) => t9.x.n === 0n));
   if (numZero9 && !denZero9) return { n: 0n, d: 1n };
   return fracReduce(q9, thirty) ?? "irr";
 };
@@ -35955,7 +36196,7 @@ var negVx9 = (vx9) => vx9 ? { vx: { n: -vx9.n, d: vx9.d } } : {};
 var candNum9 = (v9, asFrac9) => {
   if (asFrac9) return makeFrac(v9.n, v9.d, "derived");
   const q9 = qv(v9);
-  return { t: "d", v: q9.v, ...q9.vx !== void 0 ? { vx: q9.vx } : {} };
+  return createDecimalRT9({ v: q9.v, ...q9.vx !== void 0 ? { vx: q9.vx } : {} });
 };
 var applyNegCapF9 = (src9, out9) => {
   const cf9 = capFOf9(src9);
@@ -36015,7 +36256,7 @@ function candidateNegate9(rt9, thirty9) {
   if (e9.t === "f") {
     const fr9 = makeFrac(-e9.n, e9.d, e9.origin);
     if (fr9.t === "e") return { kind: "ok", rt: fr9 };
-    const negF9 = e9.capped === true ? { ...fr9, capped: true } : fr9;
+    const negF9 = e9.capped === true ? editRuntimeCopy9(copyRuntimeRT9(fr9), { capped: true }) : fr9;
     applyNegCapF9(e9, negF9);
     return { kind: "ok", rt: negF9 };
   }
@@ -36026,16 +36267,16 @@ function candidateNegate9(rt9, thirty9) {
   if (e9.t === "ds" || e9.t === "wd" || e9.t === "ct") return { kind: "unsupported", fn: "neg" };
   const sh9 = negateShadowFromRT(e9);
   if (e9.t === "p") {
-    const negP9 = { t: "p", v: e9.v.neg(), ...negVx9(e9.vx), ...sh9, ...e9.capped === true && { capped: true } };
+    const negP9 = rebuildPercentageRT9({ v: e9.v.neg(), ...negVx9(e9.vx), ...sh9, ...e9.capped === true && { capped: true } });
     applyNegCapF9(e9, negP9);
     return { kind: "ok", rt: negP9 };
   }
   if (e9.t === "q") {
-    const negQ9 = { ...e9, v: e9.v.neg(), ...negVx9(e9.vx), ...sh9 };
+    const negQ9 = editRuntimeCopy9(copyRuntimeRT9(e9), { v: e9.v.neg(), ...negVx9(e9.vx), ...sh9 });
     applyNegCapF9(e9, negQ9);
     return { kind: "ok", rt: negQ9 };
   }
-  const negD9 = { t: "d", v: e9.v.neg(), ...negVx9(e9.vx), ...e9.capped === true && { capped: true }, ...sh9 };
+  const negD9 = rebuildDecimalRT9({ v: e9.v.neg(), ...negVx9(e9.vx), ...e9.capped === true && { capped: true }, ...sh9 });
   applyNegCapF9(e9, negD9);
   return { kind: "ok", rt: negD9 };
 }
@@ -36047,7 +36288,7 @@ function candidateAbs9(rt9raw, thirty9, ctx9) {
   if (capped9(rt9) || hasCapF9(rt9)) return { kind: "inexact", reason: "capped", fn: "abs", why: "capped or non-empty capF (after fold) \u2014 abs decides nothing" };
   const shadowed9 = shadowFromRT(rt9, thirty9).kind !== "no-shadow";
   if (isCarrier(rt9) || shadowed9) {
-    const c9 = candOrderCmp9(rt9, { t: "d", v: new DecC(0) }, thirty9, "abs", ctx9);
+    const c9 = candOrderCmp9(rt9, createDecimalRT9({ v: new DecC(0) }), thirty9, "abs", ctx9);
     if ("refuse" in c9) return refuseToUnary9(c9, "abs");
     if (c9.ok >= 0) return { kind: "ok", rt: rt9 };
     return candidateNegate9(rt9, thirty9);
@@ -36055,7 +36296,7 @@ function candidateAbs9(rt9raw, thirty9, ctx9) {
   const x9 = numRat(rt9);
   return { kind: "ok", rt: candNum9(x9.n < 0n ? { n: -x9.n, d: x9.d } : x9, rt9.t === "f") };
 }
-var stripSelection9 = (rt2) => ({ ...rt2 });
+var stripSelection9 = (rt2) => copyRuntimeRT9(rt2);
 function candidateOrder9(args9raw, which9, thirty9, ctx9) {
   if (args9raw.length === 0) return { kind: "unsupported", fn: which9 };
   const rawFlags9 = args9raw.map((a9) => ({ capped: capped9(a9), capF: hasCapF9(a9) }));
@@ -36196,7 +36437,7 @@ function routeOrder9(ctx, res, inputs, legacy) {
   if (ctx.orderObserver !== void 0) {
     if (ctx.__orderCounts9 !== void 0) ctx.__orderCounts9.legacy++;
     const lg = legacy();
-    ctx.orderObserver(lg.site, inputs, lg.out, { res, out }, ctx.monthToDays === "30");
+    ctx.orderObserver(lg.site, inputs, legacyRTView9(ownRuntimeRT9(lg.out)), { res, out }, ctx.monthToDays === "30");
   }
   return out;
 }
@@ -36251,14 +36492,14 @@ function candScale9(base, k2, thirty, capf, extraCapped, factor, onEntry) {
   if (base.t === "f") {
     if (factor.num === "refuse") return { kind: "refuse", code: "inexact", message: factor.message };
     if (cappedZeroFactor) {
-      const out3 = { t: "d", ...qv({ n: 0n, d: 1n }), capped: true };
+      const out3 = createDecimalRT9({ ...qv({ n: 0n, d: 1n }), capped: true });
       writeShadowSlots9(out3, ShadowFraction.scalar({ n: 0n, d: 1n }, true, thirty).writeLegacy());
       applyMode9(out3);
       return { kind: "ok", rt: out3 };
     }
     const fs = makeFrac(base.n * kn.n, base.d * kn.d, "derived");
     if (fs.t === "e") return { kind: "ok", rt: fs };
-    const out2 = cappedOut ? { ...fs, capped: true } : fs;
+    const out2 = cappedOut ? editRuntimeCopy9(copyRuntimeRT9(fs), { capped: true }) : fs;
     applyMode9(out2);
     return { kind: "ok", rt: out2 };
   }
@@ -36322,7 +36563,7 @@ var routeScale9 = (ctx, site, base, k2, thirty, capf, extraCapped, factorArg9, l
     const out9 = applyCandScale9(res);
     if (ownerCtx9.__scaleCounts9 !== void 0) ownerCtx9.__scaleCounts9.cand++;
     if (ownerCtx9.scaleObserver !== void 0) {
-      const legacyOut9 = legacyThunk();
+      const legacyOut9 = legacyRTView9(ownRuntimeRT9(legacyThunk()));
       if (ownerCtx9.__scaleCounts9 !== void 0) ownerCtx9.__scaleCounts9.legacy++;
       ownerCtx9.scaleObserver(site, base, k2, legacyOut9, { res, out: out9 }, thirty, factor);
     }
@@ -36424,7 +36665,7 @@ var convOut9 = (ctx9, src9, out9) => {
 };
 var alR9 = (src9, out9) => {
   if (out9 === src9 || out9.t === "e") return out9;
-  if (out9.terms !== void 0 || out9.termsDen !== void 0) return out9;
+  if (readLegacyShadowNumerator9(out9) !== void 0 || readLegacyShadowDenominator9(out9) !== void 0) return out9;
   const cert9 = authPreserve9(src9.foldA9);
   return cert9 === void 0 ? out9 : stampAuth9(out9, cert9);
 };
@@ -36717,25 +36958,25 @@ var projectStable = (list9, thirty) => {
 };
 var engineExactRat = (q9, thirty) => {
   if (q9.capped === true) return null;
-  const structZero9 = q9.terms !== void 0 && q9.terms.every((t9) => t9.x.n === 0n);
+  const structZero9 = readLegacyShadowNumerator9(q9) !== void 0 && readLegacyShadowNumerator9(q9).every((t9) => t9.x.n === 0n);
   const r9 = fracReduce(q9, thirty);
   if (r9 !== null) return r9.n === 0n && !structZero9 ? null : r9;
-  if (q9.terms === void 0) return null;
-  const n9 = projectStable(q9.terms, thirty);
-  const d9 = q9.termsDen === void 0 ? { n: 1n, d: 1n } : projectStable(q9.termsDen, thirty);
+  if (readLegacyShadowNumerator9(q9) === void 0) return null;
+  const n9 = projectStable(readLegacyShadowNumerator9(q9), thirty);
+  const d9 = readLegacyShadowDenominator9(q9) === void 0 ? { n: 1n, d: 1n } : projectStable(readLegacyShadowDenominator9(q9), thirty);
   if (n9 === null || d9 === null || d9.n === 0n) return null;
   if (n9.n === 0n && !structZero9) return null;
   return rDiv(n9, d9);
 };
 var carrierFaithful = (q9, thirty) => {
-  if (q9.terms === void 0 && q9.termsDen === void 0) return true;
+  if (readLegacyShadowNumerator9(q9) === void 0 && readLegacyShadowDenominator9(q9) === void 0) return true;
   if (fracReduce(q9, thirty) !== null) return true;
   const okSide9 = (list9) => {
     if (list9 === void 0) return true;
     if (list9.every((t9) => t9.x.n === 0n)) return true;
     return projectStable(list9, thirty) !== null;
   };
-  return okSide9(q9.terms) && okSide9(q9.termsDen);
+  return okSide9(readLegacyShadowNumerator9(q9)) && okSide9(readLegacyShadowDenominator9(q9));
 };
 var capturedExponentFaithful9 = (captured9, thirty9) => {
   if (captured9.kind !== "ok" || captured9.shadow.kind !== "ok") return true;
@@ -36745,9 +36986,9 @@ var capturedExponentFaithful9 = (captured9, thirty9) => {
   return carrier9.t !== "q" || !dimIsEmpty(carrier9.dim) || carrierFaithful(carrier9, thirty9);
 };
 var pctFactorFrac = (p9, mode9, thirty) => {
-  if (p9.terms === void 0 && p9.termsDen === void 0) return null;
-  const pn9 = p9.terms ?? [{ x: p9.vx ?? decToRat(p9.v), comps: [], aux: rnorm(p9.vx ?? decToRat(p9.v)).d !== 1n }];
-  const pd9 = p9.termsDen ?? ONE_TERMS();
+  if (readLegacyShadowNumerator9(p9) === void 0 && readLegacyShadowDenominator9(p9) === void 0) return null;
+  const pn9 = readLegacyShadowNumerator9(p9) ?? [{ x: p9.vx ?? decToRat(p9.v), comps: [], aux: rnorm(p9.vx ?? decToRat(p9.v)).d !== 1n }];
+  const pd9 = readLegacyShadowDenominator9(p9) ?? ONE_TERMS();
   const cd9 = pd9.map((t9) => ({ ...t9, x: rMul(t9.x, { n: 100n, d: 1n }) }));
   switch (mode9) {
     case "of":
@@ -36784,15 +37025,15 @@ var applyFracFactor = (base9, x9, ff9, ctx, cap9) => {
     const d9 = distributeTerms(f9.den, ff9.den, t30);
     if (n92 === null || d9 === null) {
       ctx.capNotes?.push("product");
-      return { ...base9, ...qv(x9), terms: void 0, termsDen: void 0, capped: true };
+      return editRuntimeCopy9(copyRuntimeRT9(base9), { ...qv(x9), terms: void 0, termsDen: void 0, capped: true });
     }
-    const out92 = attachFrac({ ...base9, ...qv(x9) }, n92, d9);
-    return scaleCapF9(cap9 ? { ...out92, capped: true } : out92);
+    const out92 = attachFrac(editRuntimeCopy9(copyRuntimeRT9(base9), { ...qv(x9) }), n92, d9);
+    return scaleCapF9(cap9 ? editRuntimeCopy9(copyRuntimeRT9(out92), { capped: true }) : out92);
   }
   const b9 = numRat(base9);
   const n9 = ff9.num.map((t9) => ({ ...t9, x: rMul(t9.x, b9) }));
-  const out9 = attachFrac({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [] }, n9, ff9.den);
-  return scaleCapF9(cap9 ? { ...out9, capped: true } : out9);
+  const out9 = attachFrac(createQuantityRT9({ ...qv(x9), dim: {}, symbol: "", comps: [] }), n9, ff9.den);
+  return scaleCapF9(cap9 ? editRuntimeCopy9(copyRuntimeRT9(out9), { capped: true }) : out9);
 };
 var tsScalarOf = (o2, ctx) => {
   if (o2.capped === true) return "irr";
@@ -36804,7 +37045,7 @@ var tsScalarOf = (o2, ctx) => {
   if (o2.t === "q") {
     const f2 = foldIrrationalResidue(o2, ctx.monthToDays === "30", ctx, "tsScalar");
     if (f2.t === "e") return "irr";
-    if (isCarrier(f2) && (f2.terms !== void 0 || f2.termsDen !== void 0)) return "irr";
+    if (isCarrier(f2) && (readLegacyShadowNumerator9(f2) !== void 0 || readLegacyShadowDenominator9(f2) !== void 0)) return "irr";
     if (f2.t === "d") return f2.vx ?? decToRat(f2.v);
     if (f2.t === "q" && dimIsEmpty(f2.dim) && (compsOf(f2) ?? []).every((c2) => isPureLinear(c2.def))) {
       let k2 = qx(f2);
@@ -36844,7 +37085,7 @@ var tsRatio = (a2, b2, ctx) => {
   if (b2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
   const capA9 = a2.capped === true;
   const ratioOut9 = (x9) => {
-    const out9 = { t: "d", ...qv(rnorm(x9)), ...capA9 && { capped: true } };
+    const out9 = createDecimalRT9({ ...qv(rnorm(x9)), ...capA9 && { capped: true } });
     const cert9 = authJoin9(a2.foldA9, b2.foldA9);
     return cert9 === void 0 ? out9 : stampAuth9(out9, cert9);
   };
@@ -36874,16 +37115,16 @@ function addSummable(acc, v2, ctx) {
     if ((acc.t === "d" || acc.t === "f") && (v2.t === "d" || v2.t === "f") && (s9.t === "d" || s9.t === "f")) {
       const g9 = capAddGate9(acc, v2, numRat(s9), 1n);
       if (g9.err) return g9.err;
-      return capStamp9({ ...s9, capped: true }, g9);
+      return capStamp9(editRuntimeCopy9(copyRuntimeRT9(s9), { capped: true }), g9);
     }
     if (acc.t === "q" && v2.t === "q" && s9.t === "q") {
       const vGate9 = effectiveRhs9 ?? v2;
       const g9 = capAddGate9(acc, vGate9, qx(s9), 1n);
       if (g9.err) return g9.err;
-      return capStamp9({ ...s9, capped: true }, g9);
+      return capStamp9(editRuntimeCopy9(copyRuntimeRT9(s9), { capped: true }), g9);
     }
     const f9 = capFAdd9(capFOf9(acc), capFOf9(v2), 1n);
-    const out9 = { ...s9, capped: true };
+    const out9 = editRuntimeCopy9(copyRuntimeRT9(s9), { capped: true });
     if (f9.length > 0) out9.capF = f9;
     return out9;
   }
@@ -36974,10 +37215,10 @@ function addSummableInnerCore9(acc, v2, ctx, onEffectiveRhs9) {
       },
       out9
     );
-    const irr9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-    if (acc.termsDen !== void 0 || v2.termsDen !== void 0 || rhs.termsDen !== void 0) {
+    const irr9 = (q9) => readLegacyShadowNumerator9(q9) !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+    if (readLegacyShadowDenominator9(acc) !== void 0 || readLegacyShadowDenominator9(v2) !== void 0 || readLegacyShadowDenominator9(rhs) !== void 0) {
       const t30 = ctx.monthToDays === "30";
-      const rr9 = rhs.terms !== void 0 || rhs.termsDen !== void 0 ? rhs : v2;
+      const rr9 = readLegacyShadowNumerator9(rhs) !== void 0 || readLegacyShadowDenominator9(rhs) !== void 0 ? rhs : v2;
       const fav9 = shadowFracA9(acc, ctx);
       if (fav9.kind === "refuse") return fav9.err;
       const fbv9 = shadowFracA9(rr9, ctx);
@@ -36995,8 +37236,8 @@ function addSummableInnerCore9(acc, v2, ctx, onEffectiveRhs9) {
       ctx.capNotes?.push("aggregate");
       return finishQ9(b1QValue9(acc, sumX9, { terms: null, termsDen: null }));
     }
-    if (irr9(acc) || irr9(v2) || rhs.terms !== void 0) {
-      const vPick9 = rhs.terms !== void 0 ? rhs : v2;
+    if (irr9(acc) || irr9(v2) || readLegacyShadowNumerator9(rhs) !== void 0) {
+      const vPick9 = readLegacyShadowNumerator9(rhs) !== void 0 ? rhs : v2;
       const taA9 = shadowViewIfNeeded9([acc, vPick9], acc, ctx);
       if (!Array.isArray(taA9)) return taA9;
       const tbA9 = shadowViewIfNeeded9([acc, vPick9], vPick9, ctx);
@@ -37004,14 +37245,13 @@ function addSummableInnerCore9(acc, v2, ctx, onEffectiveRhs9) {
       const merged9 = mergeTerms(taA9, tbA9, 1n, ctx.monthToDays === "30");
       if (merged9.length === 1 && !merged9[0].comps.some((c9) => c9.def.currency !== void 0)) {
         const t9 = merged9[0];
-        const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
-        return finishQ9(combineQuantities(one9, {
-          t: "q",
+        const one9 = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
+        return finishQ9(combineQuantities(one9, createQuantityRT9({
           ...qv(t9.x),
           dim: dimOfComps(t9.comps),
           symbol: compsSymbol(t9.comps),
           comps: t9.comps
-        }, "*", ctx));
+        }), "*", ctx));
       }
       return finishQ9(b1QValue9(acc, sumX9, { terms: merged9 }));
     }
@@ -37149,7 +37389,9 @@ function foldIrrationalResidue(rt2, thirty, ctx, site) {
     if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
     return publishCandFold9(candidateFold9(rt2, thirty === true), ctx, "fold", site);
   }
-  const out = legacyFold9(rt2, thirty);
+  const legacyInput9 = legacyRTView9(rt2);
+  const legacyOut9 = legacyFold9(legacyInput9, thirty);
+  const out = legacyOut9 === legacyInput9 ? rt2 : ownRuntimeRT9(legacyOut9);
   if (ctx?.__foldCounts9 !== void 0) ctx.__foldCounts9.legacy++;
   const ob9 = ctx?.__foldObserver9;
   if (ob9 !== void 0) {
@@ -37163,7 +37405,9 @@ function foldIrrationalResidueRaw(rt2, thirty, ctx, site) {
     if (ctx.__foldCounts9 !== void 0) ctx.__foldCounts9.cand++;
     return publishCandFold9(candidateFoldRaw9(rt2, thirty === true), ctx, "foldRaw", site);
   }
-  const out = legacyFoldRaw9(rt2, thirty);
+  const legacyInput9 = legacyRTView9(rt2);
+  const legacyOut9 = legacyFoldRaw9(legacyInput9, thirty);
+  const out = legacyOut9 === legacyInput9 ? rt2 : ownRuntimeRT9(legacyOut9);
   if (ctx?.__foldCounts9 !== void 0) ctx.__foldCounts9.legacy++;
   const ob9 = ctx?.__foldObserver9;
   if (ob9 !== void 0) {
@@ -37174,18 +37418,17 @@ function foldIrrationalResidueRaw(rt2, thirty, ctx, site) {
 }
 var dOf9 = (x2) => {
   const q9 = qv(x2);
-  return q9.vx !== void 0 ? { t: "d", v: q9.v, vx: q9.vx } : { t: "d", v: q9.v };
+  return q9.vx !== void 0 ? createDecimalRT9({ v: q9.v, vx: q9.vx }) : createDecimalRT9({ v: q9.v });
 };
 var dimlessQOf9 = (x9) => {
   const q9 = qv(x9);
-  return {
-    t: "q",
+  return createQuantityRT9({
     v: q9.v,
     ...q9.vx !== void 0 && { vx: q9.vx },
     dim: {},
     symbol: "",
     comps: []
-  };
+  });
 };
 var candFoldSeed9 = (rt2, thirty) => {
   const comps = compsOf(rt2) ?? [];
@@ -37215,7 +37458,7 @@ function candidateFoldRaw9(rt2, thirty) {
         return { kind: "ok", out: rt2, route: "scalar-opaque-kept", effects: [] };
       }
       if (r9.kind === "reduced") return { kind: "ok", out: dOf9(r9.x), route: "scalar-reduced", effects: [] };
-      if (r9.kind === "reduced-aux") return { kind: "ok", out: { ...dOf9(r9.x), capped: true }, route: "scalar-reduced-aux", effects: [] };
+      if (r9.kind === "reduced-aux") return { kind: "ok", out: editRuntimeCopy9(copyRuntimeRT9(dOf9(r9.x)), { capped: true }), route: "scalar-reduced-aux", effects: [] };
     }
   }
   const comps = compsOf(rt2);
@@ -37228,8 +37471,8 @@ function candidateFoldRaw9(rt2, thirty) {
   const slots9$ = foldSlotsVerbatim9(rt2);
   const hadShadow9 = slotsPresent9(slots9$);
   const foldOut9 = (v9) => {
-    if (!hadShadow9) return { t: "d", v: v9 };
-    const out9 = { t: "q", v: v9, dim: {}, symbol: "", comps: [] };
+    if (!hadShadow9) return createDecimalRT9({ v: v9 });
+    const out9 = createQuantityRT9({ v: v9, dim: {}, symbol: "", comps: [] });
     writeShadowSlots9(out9, slots9$);
     return out9;
   };
@@ -37237,7 +37480,7 @@ function candidateFoldRaw9(rt2, thirty) {
     if (out.t !== "q") return out;
     const oc = compsOf(out);
     const def0 = oc && oc.length === 1 && oc[0].exp === 1 ? oc[0].def : void 0;
-    const res9 = { ...out, ...def0 && { def: def0 } };
+    const res9 = editRuntimeCopy9(copyRuntimeRT9(out), { ...def0 && { def: def0 } });
     writeShadowSlots9(res9, slotsWithNum9(slots9$, terms0));
     return res9;
   };
@@ -37282,7 +37525,7 @@ function candidateFoldRaw9(rt2, thirty) {
       const rest0 = work.filter((c9) => c9.exp !== 0);
       const v0 = ratToDec(rMul(qx(rt2), rat0)).times(dec0);
       if (rest0.length === 0) return ok9(foldOut9(v0), "pairwise-full");
-      return ok9(withDef9({ t: "q", v: v0, dim: dimOfComps(rest0), symbol: compsSymbol(rest0), comps: rest0 }), "pairwise-partial");
+      return ok9(withDef9(createQuantityRT9({ v: v0, dim: dimOfComps(rest0), symbol: compsSymbol(rest0), comps: rest0 })), "pairwise-partial");
     }
     if (!dimIsEmpty(dimOfComps(comps)) || comps.some((c9) => !isPureLinear(c9.def) && c9.def.factorDec === void 0)) {
       return ok9(rt2, "beyond-12-unfoldable");
@@ -37321,7 +37564,7 @@ function candidateFoldRaw9(rt2, thirty) {
   });
   const v2 = ratToDec(rMul(qx(rt2), rat)).times(dec2);
   if (rest.length === 0) return ok9(foldOut9(v2), "subset-full");
-  return ok9(withDef9({ t: "q", v: v2, dim: dimOfComps(rest), symbol: compsSymbol(rest), comps: rest }), "subset-partial");
+  return ok9(withDef9(createQuantityRT9({ v: v2, dim: dimOfComps(rest), symbol: compsSymbol(rest), comps: rest })), "subset-partial");
 }
 function candidateFold9(rt2, thirty) {
   const raw9 = candidateFoldRaw9(rt2, thirty);
@@ -37337,10 +37580,10 @@ function candidateFold9(rt2, thirty) {
   };
   if (prov9 === void 0) {
     if (!wasCapped9) return raw9;
-    return ok9$({ ...out9 }, `${raw9.route}+capped-kept`);
+    return ok9$(copyRuntimeRT9(out9), `${raw9.route}+capped-kept`);
   }
   if (prov9.length === 0) {
-    const o9 = { ...out9 };
+    const o9 = copyRuntimeRT9(out9);
     o9.capF = [];
     return ok9$(o9, `${raw9.route}+capf-empty-kept`);
   }
@@ -37348,7 +37591,7 @@ function candidateFold9(rt2, thirty) {
   const xNew9 = out9.t === "q" ? qx(out9) : numRat(out9);
   if (xOld9.n !== 0n) {
     const sc9 = capFScale9(prov9, rDiv(xNew9, xOld9));
-    const o9 = { ...out9 };
+    const o9 = copyRuntimeRT9(out9);
     if (sc9.length === 0) {
       o9.capF = [];
       return ok9$(o9, `${raw9.route}+capf-cancelled`);
@@ -37358,12 +37601,12 @@ function candidateFold9(rt2, thirty) {
     return { kind: "ok", out: o9, route: `${raw9.route}+capf-scaled`, effects: raw9.effects };
   }
   if (xNew9.n === 0n) {
-    const o9 = { ...out9 };
+    const o9 = copyRuntimeRT9(out9);
     o9.capF = prov9;
     o9.capped = true;
     return { kind: "ok", out: o9, route: `${raw9.route}+capf-zero-kept`, effects: raw9.effects };
   }
-  const dropped9 = { ...out9 };
+  const dropped9 = copyRuntimeRT9(out9);
   dropped9.capped = true;
   return { kind: "ok", out: dropped9, route: `${raw9.route}+capf-zero-to-nonzero`, effects: raw9.effects };
 }
@@ -37372,13 +37615,13 @@ function candidateCarrierNum9(rt2, thirty) {
   const prov9 = capFOf9(rt2);
   const wasCapped9 = rt2.capped === true;
   const wrap9 = (out, route, effects, forceCapped) => {
-    const o9 = { ...out };
+    const o9 = copyRuntimeRT9(out);
     if (prov9 !== void 0) o9.capF = prov9;
     if (wasCapped9 || forceCapped) o9.capped = true;
     return { kind: "ok", out: o9, route, effects };
   };
   if (!hasShadowFromRT(rt2)) {
-    const plain9 = rt2.vx !== void 0 ? { t: "d", v: rt2.v, vx: rt2.vx } : { t: "d", v: rt2.v };
+    const plain9 = rt2.vx !== void 0 ? createDecimalRT9({ v: rt2.v, vx: rt2.vx }) : createDecimalRT9({ v: rt2.v });
     return wrap9(plain9, "plain", [], false);
   }
   const sf9 = shadowFromRT(rt2, thirty);
@@ -37392,7 +37635,7 @@ function candidateCarrierNum9(rt2, thirty) {
     if (r9.kind === "reduced") return wrap9(dOf9(r9.x), "reduced", [], false);
     if (r9.kind === "reduced-aux") return wrap9(dOf9(r9.x), "reduced-aux", [{ kind: "capNote", note: "carrier" }], true);
   }
-  return wrap9({ t: "d", v: rt2.v }, "irreducible", [{ kind: "capNote", note: "carrier" }], true);
+  return wrap9(createDecimalRT9({ v: rt2.v }), "irreducible", [{ kind: "capNote", note: "carrier" }], true);
 }
 function applyCandFold9(cand) {
   switch (cand.kind) {
@@ -37447,20 +37690,19 @@ function finalizeCurrencies(rt2, ctx) {
     ...net9 !== 0 ? [{ def: anchor.def, exp: net9 }] : [],
     ...comps.filter((c2) => !c2.def.currency).map((c2) => ({ ...c2 }))
   ];
-  const template = {
-    t: "q",
+  const template = createQuantityRT9({
     v: new DecC(1),
     dim: dimOfComps(targetComps),
     symbol: compsSymbol(targetComps),
     comps: targetComps
-  };
+  });
   const aligned = alignForAdd(template, rt2, ctx);
   if (aligned.t !== "q") return rt2;
-  const one = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+  const one = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
   const out9 = combineQuantities(one, aligned, "*", ctx);
-  const at9 = aligned.terms;
-  const ad9 = aligned.termsDen;
-  const final9 = out9.t === "q" && at9 !== void 0 ? { ...out9, terms: at9, ...ad9 && { termsDen: ad9 } } : out9;
+  const at9 = readLegacyShadowNumerator9(aligned);
+  const ad9 = readLegacyShadowDenominator9(aligned);
+  const final9 = out9.t === "q" && at9 !== void 0 ? editRuntimeCopy9(copyRuntimeRT9(out9), { terms: at9, ...ad9 && { termsDen: ad9 } }) : out9;
   if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
     ctx.__b1ValueTransport9(
       { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
@@ -37474,7 +37716,7 @@ function finalizeCurrencies(rt2, ctx) {
 var b1QValue9 = (base9, x9, edit9 = {}) => {
   const f9 = qv(x9);
   const { t: _t9, v: _v9, vx: _vx9, ...tail9 } = base9;
-  const out9 = f9.vx === void 0 ? { t: "q", v: f9.v, ...tail9 } : { t: "q", v: f9.v, vx: f9.vx, ...tail9 };
+  const out9 = f9.vx === void 0 ? rebuildQuantityRT9({ v: f9.v, ...tail9 }) : rebuildQuantityRT9({ v: f9.v, vx: f9.vx, ...tail9 });
   return editShadowSlots9(out9, edit9);
 };
 var b1CopyRat9 = (x9) => Object.freeze({ n: x9.n, d: x9.d });
@@ -37613,8 +37855,7 @@ var b1CaptureOperand9 = (source9, thirty9, pool9 = createUnitDefSnapshotPool9())
         return Object.freeze({ kind: "unavailable", stage: "envelope", reason: "invalid-unit-envelope" });
       }
       const chosen9 = source9.chosen;
-      const out9 = {
-        t: "q",
+      const out9 = createQuantityRT9({
         v: v9,
         dim: dim9,
         symbol: symbol9,
@@ -37622,7 +37863,7 @@ var b1CaptureOperand9 = (source9, thirty9, pool9 = createUnitDefSnapshotPool9())
         ...chosen9 !== void 0 && { chosen: chosen9 },
         ...capped92 !== void 0 && { capped: capped92 },
         ...env9.selected
-      };
+      });
       return Object.freeze({
         kind: "ok",
         rt: common9(out9),
@@ -37643,7 +37884,7 @@ var b1CaptureOperand9 = (source9, thirty9, pool9 = createUnitDefSnapshotPool9())
       if (vx9 === void 0 && sourceLexical9 === null) throw new Error("B1 capture: unsealed decimal carrier");
       const exact9 = vx9 ?? sourceLexical9.exactRead;
       const base9 = t9 === "d" ? source9.base : void 0;
-      const out9 = t9 === "d" ? { t: "d", v: v9, ...base9 !== void 0 && { base: base9 }, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } } : { t: "p", v: v9, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } };
+      const out9 = t9 === "d" ? createDecimalRT9({ v: v9, ...base9 !== void 0 && { base: base9 }, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } }) : createPercentageRT9({ v: v9, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } });
       const capturedRT9 = common9(out9);
       return Object.freeze({
         kind: "ok",
@@ -37661,7 +37902,7 @@ var b1CaptureOperand9 = (source9, thirty9, pool9 = createUnitDefSnapshotPool9())
       const d9 = source9.d;
       const origin9 = source9.origin;
       if (typeof n9 !== "bigint" || typeof d9 !== "bigint" || origin9 !== "literal" && origin9 !== "derived") throw new Error("B1 capture: malformed fraction");
-      const out9 = { t: "f", n: n9, d: d9, origin: origin9, ...capped92 !== void 0 && { capped: capped92 } };
+      const out9 = captureFractionRT9({ n: n9, d: d9, origin: origin9, ...capped92 !== void 0 && { capped: capped92 } });
       const capturedRT9 = common9(out9);
       return Object.freeze({
         kind: "ok",
@@ -37698,7 +37939,7 @@ var materializeB1CapturedQuantityForConversion9 = (captured9) => {
   if (materialized9?.t !== "q" || captured9.kind !== "ok" || captured9.envelope === null) return null;
   const env9 = captured9.envelope;
   const simpleDef9 = env9.denComps === null && env9.numComps.length === 1 && env9.numComps[0].exp === 1 ? env9.numComps[0].def : void 0;
-  return simpleDef9 === void 0 || materialized9.def !== void 0 ? materialized9 : { ...materialized9, def: simpleDef9 };
+  return simpleDef9 === void 0 || materialized9.def !== void 0 ? materialized9 : editRuntimeCopy9(copyRuntimeRT9(materialized9), { def: simpleDef9 });
 };
 var b1OperationCaptureInPool9 = (left9, right9, thirty9, pool9) => {
   const leftCaptured9 = b1CaptureOperand9(left9, thirty9, pool9);
@@ -38172,15 +38413,15 @@ var classifyB1ScalarOwner9 = (op9, capture9, options9 = {}) => {
       return makeFrac(norm9.n, norm9.d, "derived");
     }
     const decimal9 = qv(norm9);
-    return { t: "d", v: decimal9.v, vx: decimal9.vx };
+    return createDecimalRT9({ v: decimal9.v, vx: decimal9.vx });
   })();
   if (shell9.t === "d" && !isRepresentable(shell9.v)) return { kind: "unrepresentable" };
   if (ownsCertifiedBound9 || ownsAuthenticatedReserve9 && (op9 === "+" || op9 === "-")) {
     const gate9 = capAddGate9(left9, right9, norm9, op9 === "+" ? 1n : -1n);
     if (gate9.err !== void 0) return { kind: "pre-site-refusal" };
-    shell9 = capStamp9({ ...shell9, capped: true }, gate9);
+    shell9 = capStamp9(editRuntimeCopy9(copyRuntimeRT9(shell9), { capped: true }), gate9);
   } else if (ownsAuthenticatedReserve9 && op9 === "*") {
-    shell9 = capProdTransport9({ ...shell9, capped: true }, [left9, right9], "b1:bounded:*");
+    shell9 = capProdTransport9(editRuntimeCopy9(copyRuntimeRT9(shell9), { capped: true }), [left9, right9], "b1:bounded:*");
   }
   return { kind: "owned", exactRead: norm9, shell: shell9 };
 };
@@ -38273,7 +38514,7 @@ var b1PercentagePrepared9 = (capture9, op9, nativeOperandReads9 = false) => {
   const exact9 = op9 === "+" ? rAdd(lx9, rx9) : op9 === "-" ? rSub(lx9, rx9) : op9 === "*" ? rMul(lx9, rx9) : projectedZeroInverse9 ? { n: 0n, d: 1n } : rDiv(lx9, rx9);
   const outputPct9 = leftPct9 && rightPct9 && op9 !== "/" || leftPct9 && rightScalar9;
   const shown9 = qv(exact9);
-  const shell9 = outputPct9 ? { t: "p", v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } } : { t: "d", v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } };
+  const shell9 = outputPct9 ? createPercentageRT9({ v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } }) : createDecimalRT9({ v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } });
   const rightInput9 = nativeOperandReads9 && right9.causalScale !== void 0 ? Object.freeze({ ...right9, exactRead: capture9.right.exactRead }) : right9;
   return Object.freeze({
     kind: "prepared",
@@ -38365,15 +38606,15 @@ function evalAst(ast, env, ctx = {}) {
     }
     return finishBinaryOutput9(out9);
   }
-  return out9;
+  return ownRuntimeRT9(out9);
 }
 function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperands9, alignedRight9) {
   switch (ast.k) {
     case "num":
-      return ast.auth === void 0 ? { t: "d", v: ast.dec } : stampAuth9({ t: "d", v: ast.dec }, ast.auth ? AUTH9 : AUX9);
+      return ast.auth === void 0 ? createDecimalRT9({ v: ast.dec }) : stampAuth9(createDecimalRT9({ v: ast.dec }), ast.auth ? AUTH9 : AUX9);
     case "mathConst": {
       const piDec$ = new DecC(PI_ATOM.factorDec);
-      return stampAuth9({ t: "d", v: ast.name === "pi" ? piDec$ : piDec$.times(2) }, AUX9);
+      return stampAuth9(createDecimalRT9({ v: ast.name === "pi" ? piDec$ : piDec$.times(2) }), AUX9);
     }
     case "frac": {
       const f0 = makeFrac(ast.num, ast.den, "literal");
@@ -38412,15 +38653,14 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const v9 = values[k9];
           if (isCarrier(v9) || v9.t !== "d" && v9.t !== "f") continue;
           const x9 = numRat(v9);
-          values[k9] = {
-            t: "q",
+          values[k9] = rebuildQuantityRT9({
             ...qv(x9),
             dim: {},
             symbol: "",
             comps: [],
             terms: [{ x: x9, comps: [], aux: rnorm(x9).d !== 1n }],
             ...v9.capped === true && { capped: true }
-          };
+          });
         }
       }
       const agg9 = (() => {
@@ -38432,7 +38672,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             break;
           }
         }
-        if (ast.fn === "count") return { t: "d", v: new DecC(values.length) };
+        if (ast.fn === "count") return createDecimalRT9({ v: new DecC(values.length) });
         if (ast.fn === "median") {
           if (values.length === 0) return err("not-understood", "nothing to take a median of in this section");
           if (values.some((v9) => v9.capped === true)) {
@@ -38560,7 +38800,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             if (scal9.length % 2 === 1) {
               const f0 = values[0];
               const midSrc9 = scal9[mid9].rt;
-              if (midSrc9.def?.affine !== void 0 && (midSrc9.terms !== void 0 || midSrc9.termsDen !== void 0)) {
+              if (midSrc9.def?.affine !== void 0 && (readLegacyShadowNumerator9(midSrc9) !== void 0 || readLegacyShadowDenominator9(midSrc9) !== void 0)) {
                 const midFv9 = shadowFracViewIfNeeded9([midSrc9], midSrc9, ctx);
                 if (midFv9.kind === "refuse") return midFv9.err;
                 const convM9 = convertQuantity(midSrc9, lookupUnit("K"), ctx);
@@ -38571,12 +38811,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               const midTermsV9 = midSrc9.def?.affine === void 0 ? shadowViewIfNeeded9([midSrc9], midSrc9, ctx) : void 0;
               if (midTermsV9 !== void 0 && !Array.isArray(midTermsV9)) return midTermsV9;
               const midTerms9 = midTermsV9;
-              const midK = { ...mkQ(scal9[mid9].x, lookupUnit("K")), ...midTerms9 && { terms: midTerms9 }, ...midTerms9 && midSrc9.termsDen && { termsDen: midSrc9.termsDen } };
+              const midK = editRuntimeCopy9(copyRuntimeRT9(mkQ(scal9[mid9].x, lookupUnit("K"))), { ...midTerms9 && { terms: midTerms9 }, ...midTerms9 && readLegacyShadowDenominator9(midSrc9) && { termsDen: readLegacyShadowDenominator9(midSrc9) } });
               return f0.def !== void 0 && f0.def.id !== "kelvin" && (f0.def.affine !== void 0 || f0.def.factor !== void 0) ? convertQuantity(midK, f0.def, ctx) : midK;
             }
             const toK8 = (s8, x8) => {
               if (s8.def?.affine === void 0) return s8;
-              if (s8.terms !== void 0 || s8.termsDen !== void 0) return convertQuantity(s8, K9, ctx);
+              if (readLegacyShadowNumerator9(s8) !== void 0 || readLegacyShadowDenominator9(s8) !== void 0) return convertQuantity(s8, K9, ctx);
               const k8 = mkQ(x8, K9);
               return convOut9(ctx, s8, k8);
             };
@@ -38603,9 +38843,9 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               ctx
             );
             if (!Array.isArray(thi8)) return thi8;
-            const a8 = distributeTerms(tlo8, hi8.termsDen ?? ONE_TERMS(), t30m);
-            const b8 = distributeTerms(thi8, lo8.termsDen ?? ONE_TERMS(), t30m);
-            const d8 = distributeTerms(lo8.termsDen ?? ONE_TERMS(), hi8.termsDen ?? ONE_TERMS(), t30m);
+            const a8 = distributeTerms(tlo8, readLegacyShadowDenominator9(hi8) ?? ONE_TERMS(), t30m);
+            const b8 = distributeTerms(thi8, readLegacyShadowDenominator9(lo8) ?? ONE_TERMS(), t30m);
+            const d8 = distributeTerms(readLegacyShadowDenominator9(lo8) ?? ONE_TERMS(), readLegacyShadowDenominator9(hi8) ?? ONE_TERMS(), t30m);
             if (a8 === null || b8 === null || d8 === null) ctx.capNotes?.push("sum");
             else {
               const merged8 = mergeTerms(a8, b8, 1n, t30m);
@@ -38694,7 +38934,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             const lo92 = items[mid - 1].rt;
             const hi92 = items[mid].rt;
             const sum9 = addSummable(lo92, hi92, ctx);
-            if (sum9.t !== "q") return sum9.t === "e" ? sum9 : { ...lo92, ...qv(meanX), terms: void 0 };
+            if (sum9.t !== "q") return sum9.t === "e" ? sum9 : editRuntimeCopy9(copyRuntimeRT9(lo92), { ...qv(meanX), terms: void 0 });
             const half9 = { n: 1n, d: 2n };
             return routeScale9(ctx, "evenMedian", sum9, half9, ctx.monthToDays === "30", { m: "uniform" }, false, F_EXACT9, () => ({ ...sum9, ...qv(rMul(qx(sum9), half9)), ...scaleTerms(sum9, half9) }));
           }
@@ -38790,7 +39030,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (ast.fn === "total" && acc !== null && acc.t === "q" && dimEquals(acc.dim, { temperature: 1 })) {
           return err("unit-mismatch", "totalling absolute temperatures is undefined \u2014 use \u0394\xB0C/\u0394K for offsets");
         }
-        if (ast.fn === "total") return acc ?? { t: "d", v: new DecC(0) };
+        if (ast.fn === "total") return acc ?? createDecimalRT9({ v: new DecC(0) });
         if (acc === null) return err("not-understood", "nothing to average in this section");
         if (tempAvg) {
           const K9 = lookupUnit("K");
@@ -38801,7 +39041,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           let fdrop9 = false;
           let sumCapF9 = [];
           let causalSum9 = null;
-          const anyShadow9 = values.some((v9) => v9.terms !== void 0 || v9.termsDen !== void 0);
+          const anyShadow9 = values.some((v9) => readLegacyShadowNumerator9(v9) !== void 0 || readLegacyShadowDenominator9(v9) !== void 0);
           for (const val of values) {
             const q9 = val;
             const cK = q9.def && (q9.def.affine || q9.def.factor) ? convertQuantity(q9, K9, ctx) : alignForAdd(mkQ({ n: 1n, d: 1n }, K9), q9, ctx);
@@ -38811,7 +39051,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             sumCapF9 = capFAdd9(sumCapF9, capFOf9(cKq9) ?? [], 1n);
             const src9 = q9.def?.affine !== void 0 ? cK : q9;
             if (!fdrop9) {
-              const fd9 = src9.termsDen ?? ONE_TERMS();
+              const fd9 = readLegacyShadowDenominator9(src9) ?? ONE_TERMS();
               const a9 = distributeTerms(fnum9, fd9, t30a);
               const tsrc9 = anyShadow9 ? shadowAggregateView9(values, q9, src9, ctx) : shadowViewIfNeeded9([], src9, ctx);
               if (!Array.isArray(tsrc9)) return tsrc9;
@@ -38909,9 +39149,9 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (acc.t === "f") {
           const avf9 = makeFrac(mean.n, mean.d, "derived");
           if (avf9.t !== "e" && meanF9.length > 0) avf9.capF = meanF9;
-          return acc.capped === true && avf9.t !== "e" ? { ...avf9, capped: true } : avf9;
+          return acc.capped === true && avf9.t !== "e" ? editRuntimeCopy9(copyRuntimeRT9(avf9), { capped: true }) : avf9;
         }
-        const avd9 = { t: "d", ...qv(mean), ...acc.capped === true && { capped: true } };
+        const avd9 = createDecimalRT9({ ...qv(mean), ...acc.capped === true && { capped: true } });
         if (meanF9.length > 0) avd9.capF = meanF9;
         return avd9;
       })();
@@ -38924,7 +39164,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         }
         return false;
       })();
-      const aggOut9 = aggCapAll9 && agg9.capped !== true ? { ...agg9, capped: true } : agg9;
+      const aggOut9 = aggCapAll9 && agg9.capped !== true ? editRuntimeCopy9(copyRuntimeRT9(agg9), { capped: true }) : agg9;
       const publishedAggregate9 = capCoarse9(aggOut9, values, `agg:${ast.fn}`);
       if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
         const attempt9 = { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt };
@@ -38957,7 +39197,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       if (e.t !== "d" || numRat(e).d !== 1n) {
         return err("unsupported-pair", "only whole numbers convert to hex/binary/octal");
       }
-      return { t: "d", v: e.v, ...e.vx && { vx: e.vx }, base: ast.base, ...e.capped === true && { capped: true } };
+      return createDecimalRT9({ v: e.v, ...e.vx && { vx: e.vx }, base: ast.base, ...e.capped === true && { capped: true } });
     }
     case "clock":
       return { t: "ct", mins: ast.mins };
@@ -39094,7 +39334,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       }
       let amtD9 = amount;
       if (amount.t === "f") {
-        amtD9 = { t: "d", ...qv(numRat(amount)), ...amount.capped === true && { capped: true } };
+        amtD9 = createDecimalRT9({ ...qv(numRat(amount)), ...amount.capped === true && { capped: true } });
         const af9 = capFOf9(amount);
         if (af9 !== void 0) amtD9.capF = af9;
       }
@@ -39144,8 +39384,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         ...(denComps ?? [{ def: den, exp: 1 }]).map((c2) => ({ def: c2.def, exp: -c2.exp }))
       ];
       const unitTargetRead9 = qv({ n: 1n, d: 1n });
-      const unitTarget9 = {
-        t: "q",
+      const unitTarget9 = createQuantityRT9({
         v: unitTargetRead9.v,
         ...unitTargetRead9.vx !== void 0 && { vx: unitTargetRead9.vx },
         dim,
@@ -39153,7 +39392,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         def,
         rate: { num, den },
         comps: comps.map((comp9) => ({ ...comp9 }))
-      };
+      });
       if (ctx.__b1ProductionCausal9 !== void 0) {
         const target92 = b1CaptureOperand9(stampAuth9(unitTarget9, AUTH9), ctx.monthToDays === "30");
         return b1TransformProduction9(ctx, {
@@ -39179,14 +39418,14 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           return false;
         })();
         if (cc9.length !== comps.length || dimIsEmpty(dim) && !num.currency && !den.currency || hasZeroSubset9) {
-          const raw9 = { t: "q", ...qv(x2), dim, symbol: def.symbol, comps };
-          const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+          const raw9 = createQuantityRT9({ ...qv(x2), dim, symbol: def.symbol, comps });
+          const one9 = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
           {
             const uc9 = combineQuantities(one9, raw9, "*", ctx);
-            return capUC9 && uc9.capped !== true && uc9.t !== "e" ? { ...uc9, capped: true } : uc9;
+            return capUC9 && uc9.capped !== true && uc9.t !== "e" ? editRuntimeCopy9(copyRuntimeRT9(uc9), { capped: true }) : uc9;
           }
         }
-        return { t: "q", ...qv(x2), dim, symbol: def.symbol, def, rate: { num, den }, comps, ...capUC9 && { capped: true } };
+        return createQuantityRT9({ ...qv(x2), dim, symbol: def.symbol, def, rate: { num, den }, comps, ...capUC9 && { capped: true } });
       })();
       if (res$9.t === "e") return res$9;
       const publicOut9 = capScaleByValue9(res$9, e);
@@ -39240,7 +39479,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const kOff9 = rDiv(rSub({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
           const ff9 = pctFactorFrac(p2, "off", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), kOff9), ff9, ctx, p2.capped === true || base.capped === true);
-          return { t: "d", ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+          return createDecimalRT9({ ...qv(rMul(numRat(base), kOff9)), ...(p2.capped === true || base.capped === true) && { capped: true } });
         }
       })();
       const pctOut9 = capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOff", ctx.reemitObserver, ctx.__candidateReemitObserver9), base, p2, -1);
@@ -39254,7 +39493,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         ownerCtx9,
         candidateNegate9(source92, ownerCtx9.monthToDays === "30"),
         [source92],
-        () => ({ site: "unaryNeg", out: legacyNegate9(source92) })
+        () => ({ site: "unaryNeg", out: legacyNegate9(legacyRTView9(source92)) })
       );
       if (ctx.__b1CausalUnary9 !== true || ctx.__b1Transform9 === void 0 && ctx.__b1ProductionCausal9 === void 0) return negate9(e);
       const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
@@ -39305,13 +39544,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         const f9 = foldIrrationalResidue(e, ctx.monthToDays === "30", ctx, "bnMio");
         if (f9.t === "d" || f9.t === "f") e = f9;
         else if (f9.t === "q" && dimIsEmpty(f9.dim) && (compsOf(f9) ?? []).length === 0) {
-          const eSc9 = {
-            t: "d",
+          const eSc9 = rebuildDecimalRT9({
             ...qv(qx(f9)),
-            ...f9.terms && { terms: f9.terms },
-            ...f9.termsDen && { termsDen: f9.termsDen },
+            ...readLegacyShadowNumerator9(f9) && { terms: readLegacyShadowNumerator9(f9) },
+            ...readLegacyShadowDenominator9(f9) && { termsDen: readLegacyShadowDenominator9(f9) },
             ...f9.capped === true && { capped: true }
-          };
+          });
           const ff9 = capFOf9(f9);
           if (ff9 !== void 0 && ff9.length > 0) {
             eSc9.capF = ff9;
@@ -39330,8 +39568,8 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       const scaled9 = routeScale9(ctx, "bnMioSuffix", eS9, sc9, ctx.monthToDays === "30", { m: "uniform" }, false, F_EXACT9, () => {
         const fields = {
           ...sv9,
-          ...eS9.terms && { terms: eS9.terms.map((t9) => ({ ...t9, x: rMul(t9.x, sc9) })) },
-          ...eS9.termsDen && { termsDen: eS9.termsDen }
+          ...readLegacyShadowNumerator9(eS9) && { terms: readLegacyShadowNumerator9(eS9).map((t9) => ({ ...t9, x: rMul(t9.x, sc9) })) },
+          ...readLegacyShadowDenominator9(eS9) && { termsDen: readLegacyShadowDenominator9(eS9) }
         };
         const scRes9 = eS9.t === "p" ? { t: "p", ...fields, ...eS9.capped === true && { capped: true } } : { t: "d", ...fields, ...eS9.capped === true && { capped: true } };
         const scF9 = capFScale9(capFOf9(eS9), sc9);
@@ -39355,20 +39593,19 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         return emitB1PercentageOutput9(ctx, [pctSource9, e], stamped9);
       };
       if (isCarrier(e)) {
-        return pctOut9(reemitFromShadow9(capCopy9({
-          t: "p",
+        return pctOut9(reemitFromShadow9(capCopy9(rebuildPercentageRT9({
           v: e.v,
           ...e.vx !== void 0 && { vx: e.vx },
-          ...e.terms && { terms: e.terms },
-          ...e.termsDen && { termsDen: e.termsDen },
+          ...readLegacyShadowNumerator9(e) && { terms: readLegacyShadowNumerator9(e) },
+          ...readLegacyShadowDenominator9(e) && { termsDen: readLegacyShadowDenominator9(e) },
           ...e.capped === true && { capped: true }
-        }, e), ctx.monthToDays === "30", "pType", ctx.reemitObserver, ctx.__candidateReemitObserver9));
+        }), e), ctx.monthToDays === "30", "pType", ctx.reemitObserver, ctx.__candidateReemitObserver9));
       }
       if (e.t !== "d" && e.t !== "f") return err("unsupported-pair");
       const px = numRat(e);
       const shownPct9 = qv(px);
       const pctValue9 = e.t === "d" ? { v: e.v, ...e.vx !== void 0 && { vx: e.vx } } : { v: shownPct9.v, ...shownPct9.vx !== void 0 && { vx: shownPct9.vx } };
-      return pctOut9(capCopy9({ t: "p", ...pctValue9, ...e.capped === true && { capped: true } }, e));
+      return pctOut9(capCopy9(createPercentageRT9({ ...pctValue9, ...e.capped === true && { capped: true } }), e));
     }
     case "pctOf": {
       const p2 = evalAst(ast.pct, env, ctx);
@@ -39381,20 +39618,20 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (base.t === "p") {
           const xP6 = rMul(base.vx ?? decToRat(base.v), pf);
           const capP6 = p2.capped === true || base.capped === true;
-          if (p2.terms !== void 0 || p2.termsDen !== void 0 || base.terms !== void 0 || base.termsDen !== void 0) {
+          if (readLegacyShadowNumerator9(p2) !== void 0 || readLegacyShadowDenominator9(p2) !== void 0 || readLegacyShadowNumerator9(base) !== void 0 || readLegacyShadowDenominator9(base) !== void 0) {
             const t30p6 = ctx.monthToDays === "30";
-            const fb6 = { num: base.terms ?? [{ x: base.vx ?? decToRat(base.v), comps: [], aux: rnorm(base.vx ?? decToRat(base.v)).d !== 1n }], den: base.termsDen ?? ONE_TERMS() };
+            const fb6 = { num: readLegacyShadowNumerator9(base) ?? [{ x: base.vx ?? decToRat(base.v), comps: [], aux: rnorm(base.vx ?? decToRat(base.v)).d !== 1n }], den: readLegacyShadowDenominator9(base) ?? ONE_TERMS() };
             const ff6 = pctFactorFrac(p2, "of", t30p6) ?? { num: [{ x: pf, comps: [], aux: rnorm(pf).d !== 1n }], den: ONE_TERMS() };
             const n6 = distributeTerms(fb6.num, ff6.num, t30p6);
             const d6 = distributeTerms(fb6.den, ff6.den, t30p6);
             if (n6 === null || d6 === null) {
               ctx.capNotes?.push("product");
-              return { t: "p", ...qv(xP6), capped: true };
+              return createPercentageRT9({ ...qv(xP6), capped: true });
             }
-            const q6 = attachFrac({ t: "q", ...qv(xP6), dim: {}, symbol: "", comps: [] }, n6, d6);
-            return { t: "p", ...qv(xP6), ...q6.terms && { terms: q6.terms }, ...q6.termsDen && { termsDen: q6.termsDen }, ...capP6 && { capped: true } };
+            const q6 = attachFrac(createQuantityRT9({ ...qv(xP6), dim: {}, symbol: "", comps: [] }), n6, d6);
+            return rebuildPercentageRT9({ ...qv(xP6), ...readLegacyShadowNumerator9(q6) && { terms: readLegacyShadowNumerator9(q6) }, ...readLegacyShadowDenominator9(q6) && { termsDen: readLegacyShadowDenominator9(q6) }, ...capP6 && { capped: true } });
           }
-          return { t: "p", ...qv(xP6), ...capP6 && { capped: true } };
+          return createPercentageRT9({ ...qv(xP6), ...capP6 && { capped: true } });
         }
         if (base.t === "q" && isOffsetScale(base)) {
           return err("unit-mismatch", "percentages of offset temperatures (\xB0C/\xB0F) are undefined \u2014 convert to K first");
@@ -39420,7 +39657,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const ff9 = pctFactorFrac(p2, "of", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), pf), ff9, ctx, p2.capped === true || base.capped === true);
         }
-        return { t: "d", ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+        return createDecimalRT9({ ...qv(rMul(numRat(base), pf)), ...(p2.capped === true || base.capped === true) && { capped: true } });
       })();
       const pctOut9 = capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOf", ctx.reemitObserver, ctx.__candidateReemitObserver9), [p2, base], "pctOf");
       return emitB1PercentageOutput9(ctx, [p2, base, res$9], pctOut9);
@@ -39457,7 +39694,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const kOn9 = rDiv(rAdd({ n: 100n, d: 1n }, p2.vx ?? decToRat(p2.v)), { n: 100n, d: 1n });
           const ff9 = pctFactorFrac(p2, "on", ctx.monthToDays === "30");
           if (ff9 !== null) return applyFracFactor(base, rMul(numRat(base), kOn9), ff9, ctx, p2.capped === true || base.capped === true);
-          return { t: "d", ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } };
+          return createDecimalRT9({ ...qv(rMul(numRat(base), kOn9)), ...(p2.capped === true || base.capped === true) && { capped: true } });
         }
       })();
       const pctOut9 = capPctOnOff9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctOn", ctx.reemitObserver, ctx.__candidateReemitObserver9), base, p2, 1);
@@ -39480,12 +39717,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         }
         const pvr = p2.t === "p" ? p2.vx ?? decToRat(p2.v) : numRat(p2);
         if (pvr.n === 0n) {
-          if (p2.t !== "p" || p2.terms === void 0 && p2.termsDen === void 0) return err("division-by-zero");
+          if (p2.t !== "p" || readLegacyShadowNumerator9(p2) === void 0 && readLegacyShadowDenominator9(p2) === void 0) return err("division-by-zero");
           const t30z0 = ctx.monthToDays === "30";
-          const fbz9 = { num: p2.terms ?? [{ x: pvr, comps: [], aux: rnorm(pvr).d !== 1n }], den: p2.termsDen ?? ONE_TERMS() };
+          const fbz9 = { num: readLegacyShadowNumerator9(p2) ?? [{ x: pvr, comps: [], aux: rnorm(pvr).d !== 1n }], den: readLegacyShadowDenominator9(p2) ?? ONE_TERMS() };
           const vz9 = value.t === "ts" || isCarrier(value) ? { n: 1n, d: 1n } : numRat(value);
           let fVz9 = value.t === "q" ? fracOf(value) : { num: [{ x: vz9, comps: [], aux: rnorm(vz9).d !== 1n }], den: ONE_TERMS() };
-          if (ctx.__convAuth9 === true && value.t === "q" && (value.terms !== void 0 || value.termsDen !== void 0)) {
+          if (ctx.__convAuth9 === true && value.t === "q" && (readLegacyShadowNumerator9(value) !== void 0 || readLegacyShadowDenominator9(value) !== void 0)) {
             const fvz9 = shadowFracA9(value, ctx);
             if (fvz9.kind === "refuse") return fvz9.err;
             fVz9 = fvz9;
@@ -39517,7 +39754,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             const valQ9 = value;
             return routeScale9(ctx, "isPctOfWhat", valQ9, k9, ctx.monthToDays === "30", { m: "copy" }, p2.capped === true || valQ9.capped === true, F_EXACT9, () => ({ ...valQ9, ...qv(rMul(qx(valQ9), k9)), ...scaleTerms(valQ9, k9), ...(p2.capped === true || valQ9.capped === true) && { capped: true } }));
           }
-          return { t: "d", ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } };
+          return createDecimalRT9({ ...qv(x9), ...(p2.capped === true || value.capped === true) && { capped: true } });
         }
       })();
       return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "isPctOfWhat", ctx.reemitObserver, ctx.__candidateReemitObserver9), [value], "isPctOfWhat");
@@ -39532,7 +39769,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (base.t === "ts" && part.t === "ts") {
           const r9 = tsRatio(part, base, ctx);
           if (r9.t !== "d") return r9;
-          return routeScale9(ctx, "whatPctOfX100", { t: "p", ...qv(r9.vx ?? decToRat(r9.v)) }, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(r9.vx ?? decToRat(r9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
+          return routeScale9(ctx, "whatPctOfX100", createPercentageRT9(qv(r9.vx ?? decToRat(r9.v))), { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(r9.vx ?? decToRat(r9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
         }
         if ((isCarrier(base) || isCarrier(part)) && (isCarrier(base) || base.t === "d" || base.t === "f") && (isCarrier(part) || part.t === "d" || part.t === "f")) {
           if (base.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
@@ -39559,7 +39796,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             const z9 = divProjZero(n0, d0, base, ctx);
             if (z9.t === "d") {
               const zd9 = z9;
-              return routeScale9(ctx, "whatPctOfX100", { t: "p", ...qv(zd9.vx ?? decToRat(zd9.v)) }, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(zd9.vx ?? decToRat(zd9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
+              return routeScale9(ctx, "whatPctOfX100", createPercentageRT9(qv(zd9.vx ?? decToRat(zd9.v))), { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(zd9.vx ?? decToRat(zd9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
             }
             return z9;
           }
@@ -39568,21 +39805,21 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const d9 = distributeTerms(fP9.den, fB9.num, t30w);
           if (n9 === null || d9 === null) {
             ctx.capNotes?.push("product");
-            return { t: "p", ...qv(rMul(rDiv(px9, bx9), { n: 100n, d: 1n })), capped: true };
+            return createPercentageRT9({ ...qv(rMul(rDiv(px9, bx9), { n: 100n, d: 1n })), capped: true });
           }
           const nP9 = termsProject(n9, t30w);
           const dP9 = termsProject(d9, t30w);
           const ratio9 = nP9 !== null && dP9 !== null && dP9.n !== 0n ? rDiv(nP9, dP9) : rDiv(px9, bx9);
           const x9 = rMul(ratio9, { n: 100n, d: 1n });
-          const q9 = attachFrac({ t: "q", ...qv(ratio9), dim: {}, symbol: "", comps: [] }, n9, d9);
-          const ratioP9$ = { t: "p", ...qv(ratio9) };
+          const q9 = attachFrac(createQuantityRT9({ ...qv(ratio9), dim: {}, symbol: "", comps: [] }), n9, d9);
+          const ratioP9$ = createPercentageRT9(qv(ratio9));
           const rr9$ = scaleShadowFromRT(q9, { n: 1n, d: 1n }, ctx.monthToDays === "30");
           if (rr9$.kind === "ok") writeShadowSlots9(ratioP9$, rr9$.slots);
           return routeScale9(ctx, "whatPctOfX100", ratioP9$, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "copy" }, capW9, F_EXACT9, () => ({
             t: "p",
             ...qv(x9),
-            ...q9.terms && { terms: q9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps, aux: false })) },
-            ...q9.termsDen && { termsDen: q9.termsDen },
+            ...readLegacyShadowNumerator9(q9) && { terms: readLegacyShadowNumerator9(q9).map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps, aux: false })) },
+            ...readLegacyShadowDenominator9(q9) && { termsDen: readLegacyShadowDenominator9(q9) },
             ...capW9 && { capped: true }
           }));
         }
@@ -39696,29 +39933,29 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             const z9 = ownedZ9.rt;
             if (z9.t === "d") {
               const zq9 = z9;
-              return routeScale9(ctx, "whatPctOfX100", { t: "p", ...qv(zq9.vx ?? decToRat(zq9.v)) }, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(zq9.vx ?? decToRat(zq9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
+              return routeScale9(ctx, "whatPctOfX100", createPercentageRT9(qv(zq9.vx ?? decToRat(zq9.v))), { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(zq9.vx ?? decToRat(zq9.v), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
             }
-            if (z9.t === "q" && qx(z9).n === 0n) return { t: "p", ...qv({ n: 0n, d: 1n }), ...capW9 && { capped: true } };
+            if (z9.t === "q" && qx(z9).n === 0n) return createPercentageRT9({ ...qv({ n: 0n, d: 1n }), ...capW9 && { capped: true } });
             if (z9.t === "q" && (compsOf(z9)?.length ?? 0) > 0) {
               return err("inexact", "this ratio leaves a residual unit the engine cannot reduce to a percentage");
             }
             if (z9.t === "q" && dimsCompatible(z9.dim, {}, ctx)) {
-              const ratioPz9$ = { t: "p", ...qv(qx(z9)) };
+              const ratioPz9$ = createPercentageRT9(qv(qx(z9)));
               const rz9$ = scaleShadowFromRT(z9, { n: 1n, d: 1n }, ctx.monthToDays === "30");
               if (rz9$.kind === "ok") writeShadowSlots9(ratioPz9$, rz9$.slots);
               const zc9 = z9;
               return routeScale9(ctx, "whatPctOfX100", ratioPz9$, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "copy" }, capW9, F_EXACT9, () => ({
                 t: "p",
                 ...qv(rMul(qx(zc9), { n: 100n, d: 1n })),
-                ...zc9.terms && { terms: zc9.terms.map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps, aux: false })) },
-                ...zc9.termsDen && { termsDen: zc9.termsDen },
+                ...readLegacyShadowNumerator9(zc9) && { terms: readLegacyShadowNumerator9(zc9).map((t9) => ({ x: rMul(t9.x, { n: 100n, d: 1n }), comps: t9.comps, aux: false })) },
+                ...readLegacyShadowDenominator9(zc9) && { termsDen: readLegacyShadowDenominator9(zc9) },
                 ...capW9 && { capped: true }
               }));
             }
             return z9;
           }
           const x9 = rMul(rDiv(qx(aligned9), bq9), { n: 100n, d: 1n });
-          if (part.capped === true) return { t: "p", ...qv(x9), capped: true };
+          if (part.capped === true) return createPercentageRT9({ ...qv(x9), capped: true });
           const fA9v9 = shadowFracViewIfNeeded9([base, part, aligned9], aligned9, ctx);
           if (fA9v9.kind === "refuse") return fA9v9.err;
           const fA9 = fA9v9;
@@ -39726,12 +39963,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const d9 = distributeTerms(fA9.den, fB9.num, t30w9);
           if (n9 === null || d9 === null) {
             ctx.capNotes?.push("product");
-            return { t: "p", ...qv(x9), capped: true };
+            return createPercentageRT9({ ...qv(x9), capped: true });
           }
-          const redQ9 = fracReduce({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [], terms: n9, termsDen: d9 }, t30w9);
+          const redQ9 = fracReduce(rebuildQuantityRT9({ ...qv(x9), dim: {}, symbol: "", comps: [], terms: n9, termsDen: d9 }), t30w9);
           const xv9 = redQ9 !== null ? rMul(redQ9, { n: 100n, d: 1n }) : x9;
           const makeRatioP9 = () => {
-            const ratioP9 = { t: "p", ...qv(redQ9 !== null ? redQ9 : rDiv(qx(aligned9), bq9)) };
+            const ratioP9 = createPercentageRT9(qv(redQ9 !== null ? redQ9 : rDiv(qx(aligned9), bq9)));
             writeShadowSlots9(ratioP9, slots9(n9, d9));
             return ratioP9;
           };
@@ -39751,7 +39988,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (base.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
         const br2 = numRat(base);
         if (br2.n === 0n) return err("division-by-zero");
-        return routeScale9(ctx, "whatPctOfX100", { t: "p", ...qv(rDiv(numRat(part), br2)) }, { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(rDiv(numRat(part), br2), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
+        return routeScale9(ctx, "whatPctOfX100", createPercentageRT9(qv(rDiv(numRat(part), br2))), { n: 100n, d: 1n }, ctx.monthToDays === "30", { m: "none" }, capW9, F_EXACT9, () => ({ t: "p", ...qv(rMul(rDiv(numRat(part), br2), { n: 100n, d: 1n })), ...capW9 && { capped: true } }));
       })();
       return capCoarse9(reemitFromShadow9(wpRes$9, ctx.monthToDays === "30", "whatPctOf", ctx.reemitObserver, ctx.__candidateReemitObserver9), [base, part], "whatPctOf");
     }
@@ -39808,12 +40045,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const t30m0 = ctx.monthToDays === "30";
           const vm9 = value.t === "d" || value.t === "f" ? numRat(value) : value.t === "q" ? qx(value) : { n: 1n, d: 1n };
           let fV9 = value.t === "q" ? fracOf(value) : { num: [{ x: vm9, comps: [], aux: rnorm(vm9).d !== 1n }], den: ONE_TERMS() };
-          if (ctx.__convAuth9 === true && value.t === "q" && (value.terms !== void 0 || value.termsDen !== void 0)) {
+          if (ctx.__convAuth9 === true && value.t === "q" && (readLegacyShadowNumerator9(value) !== void 0 || readLegacyShadowDenominator9(value) !== void 0)) {
             const fvm9 = shadowFracA9(value, ctx);
             if (fvm9.kind === "refuse") return fvm9.err;
             fV9 = fvm9;
           }
-          const synth9 = { t: "q", v: new DecC(0), vx: { n: 0n, d: 1n }, dim: {}, symbol: "", comps: [], terms: ffm9.den };
+          const synth9 = rebuildQuantityRT9({ v: new DecC(0), vx: { n: 0n, d: 1n }, dim: {}, symbol: "", comps: [], terms: ffm9.den });
           const nM0 = distributeTerms(fV9.num, ffm9.num, t30m0);
           const dM0 = distributeTerms(fV9.den, ffm9.den, t30m0);
           return divProjZero(
@@ -39860,7 +40097,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             return applyFracFactor(value, rMul(numRat(value), factor), ff9, ctx, p2.capped === true || value.capped === true);
           }
         }
-        return { t: "d", ...qv(rMul(numRat(value), factor)), ...(p2.capped === true || value.capped === true) && { capped: true } };
+        return createDecimalRT9({ ...qv(rMul(numRat(value), factor)), ...(p2.capped === true || value.capped === true) && { capped: true } });
       })();
       return capProdTransport9(reemitFromShadow9(res$9, ctx.monthToDays === "30", "pctMoreWhat", ctx.reemitObserver, ctx.__candidateReemitObserver9), [value], "pctMoreWhat");
     }
@@ -39957,7 +40194,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const vc0 = isCarrier(vx0) ? vx0 : foldIrrationalResidue(vx0, ctx.monthToDays === "30", ctx, "logExact");
           if (vc0.t !== "q" || !isCarrier(vc0)) continue;
           const e0 = (capFOf9(vx0)?.length ?? 0) > 0 ? null : engineExactRat(vc0, ctx.monthToDays === "30");
-          if (e0 !== null) evaluated9[ax9] = { t: "d", ...qv(e0) };
+          if (e0 !== null) evaluated9[ax9] = createDecimalRT9(qv(e0));
         }
       }
       const b1FunctionInputs9 = b1RawFunctionInputs9 === null ? null : [.../* @__PURE__ */ new Set([...b1RawFunctionInputs9, ...evaluated9])];
@@ -39991,7 +40228,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         const fn$ = ast.fn;
         const t30$ = ctx.monthToDays === "30";
         const res$ = fn$ === "abs" ? candidateAbs9(evaluated9[0], t30$, ctx) : candidateOrder9(evaluated9, fn$, t30$, ctx);
-        return finishB1FunctionOutput9(routeOrder9(ctx, res$, evaluated9, () => legacyOrderFn9(fn$, evaluated9, t30$)));
+        return finishB1FunctionOutput9(routeOrder9(ctx, res$, evaluated9, () => legacyOrderFn9(fn$, evaluated9.map((value9) => legacyRTView9(value9)), t30$)));
       }
       if (["sqrt", "racine", "log", "ln", "lb", "lg", "log10", "log2", "asin", "acos", "acosh", "atanh", "tan"].includes(ast.fn) && evaluated9.some((v9) => v9.capped === true)) {
         return finishB1FunctionOutput9(err("inexact", "the domain cannot be decided from a capped value \u2014 exactness was dropped upstream"));
@@ -40010,26 +40247,25 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             return finishB1FunctionOutput9(err("inexact", `${ast.fn} needs a positive argument`));
           }
           if (ast.fn === "asin" || ast.fn === "acos") {
-            evaluated9[0] = { t: "d", ...qv(dqe0) };
+            evaluated9[0] = createDecimalRT9(qv(dqe0));
           }
-        } else if (dq0 !== null && dq0.t === "q" && isCarrier(dq0) && (dq0.terms !== void 0 || dq0.termsDen !== void 0)) {
+        } else if (dq0 !== null && dq0.t === "q" && isCarrier(dq0) && (readLegacyShadowNumerator9(dq0) !== void 0 || readLegacyShadowDenominator9(dq0) !== void 0)) {
           const lift0 = (x0) => {
             const read0 = qv(x0);
-            return {
-              t: "q",
+            return rebuildQuantityRT9({
               v: read0.v,
               ...read0.vx !== void 0 && { vx: read0.vx },
               dim: {},
               symbol: "",
               comps: [],
               terms: [{ x: x0, comps: [], aux: rnorm(x0).d !== 1n }]
-            };
+            });
           };
           const t30d = ctx.monthToDays === "30";
           const cmp0 = (b0) => fracCmpRT(dq0, lift0(b0), t30d);
           const structSign0 = (() => {
-            const num0 = dq0.terms ?? [];
-            const den0 = dq0.termsDen;
+            const num0 = readLegacyShadowNumerator9(dq0) ?? [];
+            const den0 = readLegacyShadowDenominator9(dq0);
             if (num0.length === 0) return null;
             const denPos0 = den0 === void 0 || den0.length > 0 && den0.every((t9) => t9.x.n > 0n);
             if (!denPos0) return null;
@@ -40039,9 +40275,9 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           })();
           if (ast.fn === "asin" || ast.fn === "acos") {
             const structBound0 = (b0) => {
-              const den0 = dq0.termsDen ?? ONE_TERMS();
+              const den0 = readLegacyShadowDenominator9(dq0) ?? ONE_TERMS();
               if (!(den0.length > 0 && den0.every((t9) => t9.x.n > 0n))) return null;
-              const num0 = dq0.terms ?? [{ x: dq0.vx ?? decToRat(dq0.v), comps: [], aux: rnorm(dq0.vx ?? decToRat(dq0.v)).d !== 1n }];
+              const num0 = readLegacyShadowNumerator9(dq0) ?? [{ x: dq0.vx ?? decToRat(dq0.v), comps: [], aux: rnorm(dq0.vx ?? decToRat(dq0.v)).d !== 1n }];
               const diff0 = mergeTerms(num0, den0.map((t9) => ({ ...t9, x: rMul(t9.x, { n: b0, d: 1n }) })), -1n, t30d);
               if (diff0.length === 0) return 0;
               if (diff0.every((t9) => t9.x.n > 0n)) return 1;
@@ -40078,10 +40314,10 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           if (vFold9.t === "q" && isCarrier(vFold9)) {
             const exV9 = engineExactRat(vFold9, t30v9);
             if (exV9 !== null) {
-              const trivial9 = fracReduce(vFold9, t30v9) !== null || [...vFold9.terms ?? [], ...vFold9.termsDen ?? []].every((t9) => t9.comps.length === 0 || t9.x.n === 0n);
+              const trivial9 = fracReduce(vFold9, t30v9) !== null || [...readLegacyShadowNumerator9(vFold9) ?? [], ...readLegacyShadowDenominator9(vFold9) ?? []].every((t9) => t9.comps.length === 0 || t9.x.n === 0n);
               const prov$9 = capFOf9(v2);
               const xOld$9 = qx(v2);
-              v2 = { t: "d", ...qv(exV9), ...!trivial9 && { capped: true } };
+              v2 = createDecimalRT9({ ...qv(exV9), ...!trivial9 && { capped: true } });
               if (!trivial9 && prov$9 !== void 0 && prov$9.length > 0 && xOld$9.n !== 0n) {
                 const sc$9 = capFScale9(prov$9, rDiv(exV9, xOld$9));
                 if (sc$9.length > 0) {
@@ -40194,12 +40430,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         };
         let hi9;
         try {
-          hi9 = tanhSat9 ? { t: "d", v: new DecC(toDec(rts[0]).isNegative() ? -1 : 1) } : applyFunction(ast.fn, rts.map(toHiP9));
+          hi9 = tanhSat9 ? createDecimalRT9({ v: new DecC(toDec(rts[0]).isNegative() ? -1 : 1) }) : applyFunction(ast.fn, rts.map(toHiP9));
         } catch {
           return finishB1FunctionOutput9(err("inexact", "this argument is too large to place against \u03C0 at the engine\u2019s certified precision"));
         }
         if (hi9.t === "d" && isRepresentable(hi9.v)) {
-          res9 = { t: "d", v: new DecC(hi9.v.toSignificantDigits(40).toString()), vx: decToRat(hi9.v), capped: true };
+          res9 = createDecimalRT9({ v: new DecC(hi9.v.toSignificantDigits(40).toString()), vx: decToRat(hi9.v), capped: true });
           const inF9 = capCompose9(ast.fn, rts);
           if (!Array.isArray(inF9)) return finishB1FunctionOutput9(inF9);
           res9.capF = capFNorm9([
@@ -40218,7 +40454,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       let fnOut9 = res9;
       if (fnCapped9 && (res9.t === "d" || res9.t === "f" || res9.t === "q" || res9.t === "p")) {
         const fnCert9 = authPreserve9(res9.foldA9);
-        const fnCap9 = { ...res9, capped: true };
+        const fnCap9 = editRuntimeCopy9(copyRuntimeRT9(res9), { capped: true });
         fnOut9 = fnCert9 !== void 0 ? stampAuth9(fnCap9, fnCert9) : fnCap9;
       }
       return finishB1FunctionOutput9(fnOut9);
@@ -40244,7 +40480,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           }
           const bridged = (d9) => rMul(ratOfFactor(d9.factor), rPowInt({ n: 30n, d: 1n }, d9.dim["calmonths"] ?? 0));
           const ratio = rDiv(bridged(target), bridged(den));
-          const termsConv = e.terms?.map((t9) => {
+          const termsConv = readLegacyShadowNumerator9(e)?.map((t9) => {
             const cal9 = t9.comps.find((c9) => c9.def.dim["calmonths"] !== void 0 || c9.def.dim["caldays"] !== void 0);
             if (!cal9) return { ...t9, x: rMul(t9.x, ratio) };
             const k9 = rPowInt(rDiv(bridged(target), bridged(cal9.def)), -cal9.exp);
@@ -40266,8 +40502,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               factor: { n: num.factor.n * target.factor.d, d: num.factor.d * target.factor.n }
             }
           };
-          return {
-            t: "q",
+          return rebuildQuantityRT9({
             ...qv(rMul(qx(e), ratio)),
             dim,
             symbol: def.symbol,
@@ -40277,9 +40512,9 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             ...termsConv && { terms: termsConv },
             // the DENOMINATOR polynomial rides through the period change
             // untouched (audit AX)
-            ...e.termsDen && { termsDen: e.termsDen },
+            ...readLegacyShadowDenominator9(e) && { termsDen: readLegacyShadowDenominator9(e) },
             ...e.capped === true && { capped: true }
-          };
+          });
         }
         if (e.t === "q") {
           const ecomps8 = compsOf(e) ?? [];
@@ -40291,23 +40526,22 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             }
             const bridged8 = (d9) => rMul(ratOfFactor(d9.factor), rPowInt({ n: 30n, d: 1n }, d9.dim["calmonths"] ?? 0));
             const ratio8 = rDiv(bridged8(target8), bridged8(cal8.def));
-            const termsConv8 = e.terms?.map((t9) => {
+            const termsConv8 = readLegacyShadowNumerator9(e)?.map((t9) => {
               const c8 = t9.comps.find((c9) => c9.def.dim["calmonths"] !== void 0 || c9.def.dim["caldays"] !== void 0);
               if (!c8) return { ...t9, x: rMul(t9.x, ratio8) };
               const k9 = rPowInt(rDiv(bridged8(target8), bridged8(c8.def)), -c8.exp);
               return { ...t9, x: rMul(t9.x, k9), comps: t9.comps.map((c9) => c9 === c8 ? { def: target8, exp: c8.exp } : c9) };
             });
             const comps8 = ecomps8.map((c9) => c9 === cal8 ? { def: target8, exp: cal8.exp } : { ...c9 });
-            return {
-              t: "q",
+            return rebuildQuantityRT9({
               ...qv(rMul(qx(e), ratio8)),
               dim: dimOfComps(comps8),
               symbol: compsSymbol(comps8),
               comps: comps8,
               ...termsConv8 && { terms: termsConv8 },
-              ...e.termsDen && { termsDen: e.termsDen },
+              ...readLegacyShadowDenominator9(e) && { termsDen: readLegacyShadowDenominator9(e) },
               ...e.capped === true && { capped: true }
-            };
+            });
           }
         }
         if (e.t !== "ts") return err("unsupported-pair", "only a timespan converts to calendar units");
@@ -40345,10 +40579,9 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
         const capturedInput9 = materializeB1CapturedOperand9(captured9);
         if (capturedInput9 !== null) transportB1TransformOutput9(ctx, e, capturedInput9);
-        const unitOne9 = stampAuth9({
-          ...mkQ({ n: 1n, d: 1n }, def),
+        const unitOne9 = stampAuth9(editRuntimeCopy9(copyRuntimeRT9(mkQ({ n: 1n, d: 1n }, def)), {
           comps: unitComps(ast.word) ?? [{ def, exp: 1 }]
-        }, AUTH9);
+        }), AUTH9);
         const target9 = b1CaptureOperand9(unitOne9, ctx.monthToDays === "30");
         if (def.affine !== void 0 && def.affine.b !== 0n) {
           const scale9 = rnorm({ n: def.affine.a, d: def.affine.c });
@@ -40378,17 +40611,17 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         const comps = unitComps(ast.word) ?? [{ def, exp: 1 }];
         const capU9 = e.capped === true;
         if (comps.length !== 1 || comps[0].exp !== 1 || dimIsEmpty(def.dim)) {
-          const raw = { t: "q", ...qv(x2), dim: def.dim, symbol: def.symbol, def, comps };
-          const one = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+          const raw = createQuantityRT9({ ...qv(x2), dim: def.dim, symbol: def.symbol, def, comps });
+          const one = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
           const uq9 = combineQuantities(one, raw, "*", ctx);
-          const uq8 = capU9 && uq9.capped !== true && uq9.t !== "e" ? { ...uq9, capped: true } : uq9;
+          const uq8 = capU9 && uq9.capped !== true && uq9.t !== "e" ? editRuntimeCopy9(copyRuntimeRT9(uq9), { capped: true }) : uq9;
           const rawAttach9 = uq8.t === "e" ? uq8 : capCopy9(uq8, e);
           if (ctx.__b1Transform9 === void 0 || rawAttach9.t === "e") return rawAttach9;
           const structuredAuthority9 = authPreserve9(e.foldA9);
           const candidateAttach9 = structuredAuthority9 !== void 0 && !hasShadowFromRT(rawAttach9) ? stampAuth9(rawAttach9, structuredAuthority9) : rawAttach9;
           ctx.__b1Capture9?.("transform");
           const captured92 = b1CaptureOperand9(e, ctx.monthToDays === "30");
-          const unitOne92 = stampAuth9({ ...raw, ...qv({ n: 1n, d: 1n }) }, AUTH9);
+          const unitOne92 = stampAuth9(editRuntimeCopy9(copyRuntimeRT9(raw), { ...qv({ n: 1n, d: 1n }) }), AUTH9);
           const target92 = b1CaptureOperand9(unitOne92, ctx.monthToDays === "30");
           const attachedCandidate9 = b1Transform9(ctx, {
             site: "attachUnit",
@@ -40403,13 +40636,13 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         const uA9 = authPreserve9(e.foldA9);
         const shownUnit9 = qv(x2);
         const unitValue9 = e.t === "d" ? { v: e.v, ...e.vx !== void 0 && { vx: e.vx } } : { v: shownUnit9.v, ...shownUnit9.vx !== void 0 && { vx: shownUnit9.vx } };
-        const uOut9 = { t: "q", ...unitValue9, dim: def.dim, symbol: def.symbol, def, comps, ...capU9 && { capped: true } };
+        const uOut9 = createQuantityRT9({ ...unitValue9, dim: def.dim, symbol: def.symbol, def, comps, ...capU9 && { capped: true } });
         const legacyOut9 = capCopy9(uA9 !== void 0 ? stampAuth9(uOut9, uA9) : uOut9, e);
         if (ctx.__b1Transform9 === void 0) return legacyOut9;
         ctx.__b1Capture9?.("transform");
         const captured9 = b1CaptureOperand9(e, ctx.monthToDays === "30");
         const { vx: _unitVx9, ...unitShell9 } = uOut9;
-        const unitOne9 = stampAuth9({ ...unitShell9, v: new DecC(1) }, AUTH9);
+        const unitOne9 = stampAuth9(editRuntimeCopy9(copyRuntimeRT9(unitShell9), { v: new DecC(1) }), AUTH9);
         const target9 = b1CaptureOperand9(unitOne9, ctx.monthToDays === "30");
         if (def.affine === void 0 || def.affine.b === 0n) {
           return transportB1TransformOutput9(ctx, e, b1Transform9(ctx, {
@@ -40433,7 +40666,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         }));
       }
       if (e.t === "q" && dimIsEmpty(e.dim)) {
-        if (def.affine !== void 0 && def.affine.b !== 0n && (e.terms !== void 0 || e.termsDen !== void 0)) {
+        if (def.affine !== void 0 && def.affine.b !== 0n && (readLegacyShadowNumerator9(e) !== void 0 || readLegacyShadowDenominator9(e) !== void 0)) {
           const { a: aAff9, b: bAff9, c: cAff9 } = def.affine;
           const t30a9 = ctx.monthToDays === "30";
           const fev9 = shadowFracA9(e, ctx);
@@ -40459,10 +40692,10 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             meta: { kind: "affine-attach", scale: scale9, offset: offset9 }
           });
         }
-        const uq9 = { t: "q", v: new DecC(1), dim: def.dim, symbol: def.symbol, def, comps: unitComps(ast.word) ?? [{ def, exp: 1 }] };
+        const uq9 = createQuantityRT9({ v: new DecC(1), dim: def.dim, symbol: def.symbol, def, comps: unitComps(ast.word) ?? [{ def, exp: 1 }] });
         const att9 = combineQuantities(e, uq9, "*", ctx);
         if (att9.t === "e") return att9;
-        const att8 = e.capped === true && att9.capped !== true ? { ...att9, capped: true } : att9;
+        const att8 = e.capped === true && att9.capped !== true ? editRuntimeCopy9(copyRuntimeRT9(att9), { capped: true }) : att9;
         const ownedAtt9 = capCopy9(att8, e);
         const finishAttachUnit9 = (legacyOut9) => {
           if (ctx.__b1Transform9 === void 0) return legacyOut9;
@@ -40479,7 +40712,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             meta: { kind: "reframe" }
           });
         };
-        if (att8.t === "q" && (e.terms !== void 0 || e.termsDen !== void 0)) {
+        if (att8.t === "q" && (readLegacyShadowNumerator9(e) !== void 0 || readLegacyShadowDenominator9(e) !== void 0)) {
           const t30u9 = ctx.monthToDays === "30";
           const feu9 = shadowFracA9(e, ctx);
           if (feu9.kind === "refuse") return feu9.err;
@@ -40529,21 +40762,20 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (e.t !== "q") return err("unit-mismatch", `only a quantity can be converted to ${symbol}`);
         const dim = dimOfComps(tComps);
         if (!dimsCompatible(dim, e.dim, ctx)) return err("unit-mismatch", `cannot convert ${e.symbol} to ${symbol}`);
-        const template = {
-          t: "q",
+        const template = createQuantityRT9({
           v: new DecC(1),
           dim,
           symbol,
           ...def && { def },
           ...rate && { rate },
           comps: tComps
-        };
+        });
         if (e.symbol === symbol) {
-          return convOut9(ctx, e, { ...template, v: e.v, ...e.vx && { vx: e.vx }, ...e.terms && { terms: e.terms }, ...e.termsDen && { termsDen: e.termsDen }, chosen: true, ...e.capped === true && { capped: true } });
+          return convOut9(ctx, e, editRuntimeCopy9(copyRuntimeRT9(template), { v: e.v, ...e.vx && { vx: e.vx }, ...readLegacyShadowNumerator9(e) && { terms: readLegacyShadowNumerator9(e) }, ...readLegacyShadowDenominator9(e) && { termsDen: readLegacyShadowDenominator9(e) }, chosen: true, ...e.capped === true && { capped: true } }));
         }
         const aligned = alignForAdd(template, e, ctx);
         if (aligned.t === "e") return aligned;
-        return convOut9(ctx, aligned, { ...aligned, chosen: true, ...e.capped === true && { capped: true } });
+        return convOut9(ctx, aligned, editRuntimeCopy9(copyRuntimeRT9(aligned), { chosen: true, ...e.capped === true && { capped: true } }));
       })();
       return convOut9(ctx, res$9, capCoarse9(res$9, [e], "convert"));
     }
@@ -40756,7 +40988,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           return err("inexact", "this exponent\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
         }
         if (rE9 !== null) {
-          r3 = { t: "d", ...qv(rE9) };
+          r3 = createDecimalRT9(qv(rE9));
         } else {
           const rF9 = carrierNum(rQ9.t === "q" ? rQ9 : r3, ctx, "exponent");
           if (rF9.t === "e") return rF9;
@@ -40777,7 +41009,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           return err("inexact", "this base\u2019s shadow cancels beyond its projection\u2019s faithfulness \u2014 not computable at the engine\u2019s precision");
         }
         if (lE9 !== null) {
-          l2 = { t: "d", ...qv(lE9) };
+          l2 = createDecimalRT9(qv(lE9));
         } else {
           const lF9 = carrierNum(lQ9.t === "q" ? lQ9 : l2, ctx, "fracPowBase");
           if (lF9.t === "e") return lF9;
@@ -40851,7 +41083,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                   if (ffQ9 === null) return err("division-by-zero");
                   const t30z = ctx.monthToDays === "30";
                   let fl0 = fracOf(l2);
-                  if (ctx.__convAuth9 === true && (l2.terms !== void 0 || l2.termsDen !== void 0)) {
+                  if (ctx.__convAuth9 === true && (readLegacyShadowNumerator9(l2) !== void 0 || readLegacyShadowDenominator9(l2) !== void 0)) {
                     const flz9 = shadowFracA9(l2, ctx);
                     if (flz9.kind === "refuse") return flz9.err;
                     fl0 = flz9;
@@ -40871,11 +41103,11 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           if (l2.t === "p" && r3.t === "q" && (ast.op === "*" || ast.op === "/") && isCarrier(r3)) {
             const lp9 = l2.vx ?? decToRat(l2.v);
             const t30c = ctx.monthToDays === "30";
-            const fa9 = { num: l2.terms ?? [{ x: lp9, comps: [], aux: rnorm(lp9).d !== 1n }], den: l2.termsDen ?? ONE_TERMS() };
+            const fa9 = { num: readLegacyShadowNumerator9(l2) ?? [{ x: lp9, comps: [], aux: rnorm(lp9).d !== 1n }], den: readLegacyShadowDenominator9(l2) ?? ONE_TERMS() };
             const fbv9 = shadowFracA9(r3, ctx);
             if (fbv9.kind === "refuse") return fbv9.err;
             const fb9 = fbv9;
-            const sh9 = l2.terms !== void 0 || l2.termsDen !== void 0 || r3.terms !== void 0 || r3.termsDen !== void 0;
+            const sh9 = readLegacyShadowNumerator9(l2) !== void 0 || readLegacyShadowDenominator9(l2) !== void 0 || readLegacyShadowNumerator9(r3) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0;
             const cap9 = l2.capped === true || r3.capped === true;
             if (ast.op === "/" && qx(r3).n === 0n) {
               const n0 = distributeTerms(fa9.num, fb9.den, t30c);
@@ -40883,16 +41115,16 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               return divProjZero(n0, d0, r3, ctx, l2);
             }
             const x9 = ast.op === "*" ? rMul(lp9, qx(r3)) : rDiv(lp9, qx(r3));
-            const base9 = { t: "p", ...qv(x9), ...cap9 && { capped: true } };
+            const base9 = createPercentageRT9({ ...qv(x9), ...cap9 && { capped: true } });
             if (!sh9) return base9;
             const n9 = distributeTerms(fa9.num, ast.op === "*" ? fb9.num : fb9.den, t30c);
             const d9 = distributeTerms(fa9.den, ast.op === "*" ? fb9.den : fb9.num, t30c);
             if (n9 === null || d9 === null) {
               ctx.capNotes?.push("product");
-              return { t: "p", ...qv(x9), capped: true };
+              return createPercentageRT9({ ...qv(x9), capped: true });
             }
-            const q9 = attachFrac({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [] }, n9, d9);
-            return { t: "p", ...qv(x9), ...q9.terms && { terms: q9.terms }, ...q9.termsDen && { termsDen: q9.termsDen }, ...cap9 && { capped: true } };
+            const q9 = attachFrac(createQuantityRT9({ ...qv(x9), dim: {}, symbol: "", comps: [] }), n9, d9);
+            return rebuildPercentageRT9({ ...qv(x9), ...readLegacyShadowNumerator9(q9) && { terms: readLegacyShadowNumerator9(q9) }, ...readLegacyShadowDenominator9(q9) && { termsDen: readLegacyShadowDenominator9(q9) }, ...cap9 && { capped: true } });
           }
           if (l2.t === "p" && r3.t === "q" && ast.op === "*") {
             if (isOffsetScale(r3)) {
@@ -40952,9 +41184,9 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               };
               const lT = canonTemp(l2);
               const rT = canonTemp(r3);
-              const irrT = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+              const irrT = (q9) => readLegacyShadowNumerator9(q9) !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               const kelvinTerms = (q9) => {
-                if (q9.terms !== void 0 || q9.def?.affine === void 0) return shadowTermsA9(q9, ctx);
+                if (readLegacyShadowNumerator9(q9) !== void 0 || q9.def?.affine === void 0) return shadowTermsA9(q9, ctx);
                 const cv9 = convertQuantityInner9(q9, lookupUnit("K"), ctx, null);
                 if (cv9.t !== "q") return shadowTermsA9(q9, ctx);
                 if (ctx.__convAuth9 === true) {
@@ -40973,15 +41205,15 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 return mergeTerms(kl9, kr9, sign9);
               };
               const tempFrac9 = (sign9) => {
-                if (l2.termsDen === void 0 && r3.termsDen === void 0) return null;
+                if (readLegacyShadowDenominator9(l2) === void 0 && readLegacyShadowDenominator9(r3) === void 0) return null;
                 const t30 = ctx.monthToDays === "30";
                 const kfl9 = kelvinTerms(l2);
                 if (!Array.isArray(kfl9)) return kfl9;
                 const kfr9 = kelvinTerms(r3);
                 if (!Array.isArray(kfr9)) return kfr9;
-                const a9 = distributeTerms(kfl9, r3.termsDen ?? ONE_TERMS(), t30);
-                const b9 = distributeTerms(kfr9, l2.termsDen ?? ONE_TERMS(), t30);
-                const dd9 = distributeTerms(l2.termsDen ?? ONE_TERMS(), r3.termsDen ?? ONE_TERMS(), t30);
+                const a9 = distributeTerms(kfl9, readLegacyShadowDenominator9(r3) ?? ONE_TERMS(), t30);
+                const b9 = distributeTerms(kfr9, readLegacyShadowDenominator9(l2) ?? ONE_TERMS(), t30);
+                const dd9 = distributeTerms(readLegacyShadowDenominator9(l2) ?? ONE_TERMS(), readLegacyShadowDenominator9(r3) ?? ONE_TERMS(), t30);
                 if (a9 === null || b9 === null || dd9 === null) {
                   ctx.capNotes?.push("sum");
                   return "dropped";
@@ -40992,7 +41224,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               const tempStamp9 = (out9, f9) => {
                 if (out9.t !== "q" || f9.length === 0) return out9;
                 const q9 = out9;
-                if (q9.terms === void 0 && q9.termsDen === void 0) {
+                if (readLegacyShadowNumerator9(q9) === void 0 && readLegacyShadowDenominator9(q9) === void 0) {
                   const ov9 = qx(q9);
                   if (ov9.n === 0n || rCmp(rMul(capFBound9(f9), R10P41), rAbs9M(ov9)) > 0) return err("inexact", CAP_CANCEL_MSG);
                 }
@@ -41029,14 +41261,14 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 const fs9 = tempFrac9(-1n);
                 if (fs9 !== null && typeof fs9 === "object" && "t" in fs9) return fs9;
                 if (fs9 === "dropped") return finishTemp9(tempStamp9(base9, fAA9));
-                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAA9));
+                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? editRuntimeCopy9(copyRuntimeRT9(base9), { ...qv({ n: 0n, d: 1n }) }) : editRuntimeCopy9(copyRuntimeRT9(base9), { terms: readLegacyShadowNumerator9(fs9), termsDen: readLegacyShadowDenominator9(fs9) }), fAA9));
                 const sh9 = tempShadow(-1n);
                 if (sh9 !== null && !Array.isArray(sh9)) return sh9;
                 if (sh9 !== null && sh9.length === 0) {
                   const { vx: _baseVx9, ...zeroBase9 } = base9;
-                  return finishTemp9(tempStamp9({ ...zeroBase9, v: new DecC(0) }, fAA9));
+                  return finishTemp9(tempStamp9(editRuntimeCopy9(copyRuntimeRT9(zeroBase9), { v: new DecC(0) }), fAA9));
                 }
-                return finishTemp9(tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAA9));
+                return finishTemp9(tempStamp9(sh9 === null ? base9 : editRuntimeCopy9(copyRuntimeRT9(base9), { terms: sh9 }), fAA9));
               }
               if (isDeltaTemp(lT) && isAbsTemp(rT) && lT.def && rT.def) {
                 if (ast.op !== "+") {
@@ -41044,32 +41276,32 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 }
                 const dK = rMul(qx(lT), ratOfFactor(lT.def.factor));
                 const tri = rT.def.affine ?? { a: rT.def.factor.n, b: 0n, c: rT.def.factor.d };
-                const base9 = { ...rT, ...qv(rAdd(qx(rT), rMul(dK, { n: tri.c, d: tri.a }))) };
+                const base9 = editRuntimeCopy9(copyRuntimeRT9(rT), { ...qv(rAdd(qx(rT), rMul(dK, { n: tri.c, d: tri.a }))) });
                 const jacDA9 = rMul(ratOfFactor(lT.def.factor), { n: tri.c, d: tri.a });
                 const fDA9 = capFAdd9(capFOf9(rT) ?? [], capFScale9(capFOf9(lT), jacDA9), 1n);
                 const fs9 = tempFrac9(1n);
                 if (fs9 !== null && typeof fs9 === "object" && "t" in fs9) return fs9;
                 if (fs9 === "dropped") return finishTemp9(tempStamp9(base9, fDA9));
-                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fDA9));
+                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? editRuntimeCopy9(copyRuntimeRT9(base9), { ...qv({ n: 0n, d: 1n }) }) : editRuntimeCopy9(copyRuntimeRT9(base9), { terms: readLegacyShadowNumerator9(fs9), termsDen: readLegacyShadowDenominator9(fs9) }), fDA9));
                 const sh9 = tempShadow(1n);
                 if (sh9 !== null && !Array.isArray(sh9)) return sh9;
-                return finishTemp9(tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fDA9));
+                return finishTemp9(tempStamp9(sh9 === null ? base9 : editRuntimeCopy9(copyRuntimeRT9(base9), { terms: sh9 }), fDA9));
               }
               if (isAbsTemp(lT) && isDeltaTemp(rT) && lT.def && rT.def) {
                 const dK = rMul(qx(rT), ratOfFactor(rT.def.factor));
                 const tri = lT.def.affine ?? { a: lT.def.factor.n, b: 0n, c: lT.def.factor.d };
                 const inUnit = rMul(dK, { n: tri.c, d: tri.a });
                 const x2 = ast.op === "+" ? rAdd(qx(lT), inUnit) : rSub(qx(lT), inUnit);
-                const base9 = { ...lT, ...qv(x2) };
+                const base9 = editRuntimeCopy9(copyRuntimeRT9(lT), { ...qv(x2) });
                 const jacAD9 = rMul(ratOfFactor(rT.def.factor), { n: tri.c, d: tri.a });
                 const fAD9 = capFAdd9(capFOf9(lT) ?? [], capFScale9(capFOf9(rT), jacAD9), ast.op === "+" ? 1n : -1n);
                 const fs9 = tempFrac9(ast.op === "+" ? 1n : -1n);
                 if (fs9 !== null && typeof fs9 === "object" && "t" in fs9) return fs9;
                 if (fs9 === "dropped") return finishTemp9(tempStamp9(base9, fAD9));
-                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? { ...base9, ...qv({ n: 0n, d: 1n }) } : { ...base9, terms: fs9.terms, termsDen: fs9.termsDen }, fAD9));
+                if (fs9 !== null) return finishTemp9(tempStamp9(fs9.z ? editRuntimeCopy9(copyRuntimeRT9(base9), { ...qv({ n: 0n, d: 1n }) }) : editRuntimeCopy9(copyRuntimeRT9(base9), { terms: readLegacyShadowNumerator9(fs9), termsDen: readLegacyShadowDenominator9(fs9) }), fAD9));
                 const sh9 = tempShadow(ast.op === "+" ? 1n : -1n);
                 if (sh9 !== null && !Array.isArray(sh9)) return sh9;
-                return finishTemp9(tempStamp9(sh9 === null ? base9 : { ...base9, terms: sh9 }, fAD9));
+                return finishTemp9(tempStamp9(sh9 === null ? base9 : editRuntimeCopy9(copyRuntimeRT9(base9), { terms: sh9 }), fAD9));
               }
               if (!dimsCompatible(l2.dim, r3.dim, ctx)) {
                 return err("unit-mismatch", `cannot ${ast.op === "+" ? "add" : "subtract"} ${r3.symbol} and ${l2.symbol}`);
@@ -41080,7 +41312,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               const xr = qx(rhsQ9);
               const addOp9 = ast.op;
               const addX9 = addOp9 === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
-              const addOwnerSite9 = l2.termsDen !== void 0 || r3.termsDen !== void 0 || rhsQ9.termsDen !== void 0 ? "evalAst-addfrac" : "evalAst-add";
+              const addOwnerSite9 = readLegacyShadowDenominator9(l2) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0 || readLegacyShadowDenominator9(rhsQ9) !== void 0 ? "evalAst-addfrac" : "evalAst-add";
               const addFrame9 = (capture9) => {
                 if (capture9.left.rt.t !== "q") {
                   return { kind: "unavailable", reason: "non-numeric-mechanism" };
@@ -41105,7 +41337,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 );
                 if (gate9.err?.t === "e") return { ...frame9, preSiteRefusal: gate9.err };
                 if (capture9.left.rt.capped === true || capture9.right.rt.capped === true) {
-                  const boundedShell9 = capStamp9({ ...frame9.shell, capped: true }, gate9);
+                  const boundedShell9 = capStamp9(editRuntimeCopy9(copyRuntimeRT9(frame9.shell), { capped: true }), gate9);
                   return { ...frame9, shell: boundedShell9, certifiedBoundedScalarAdd: true };
                 }
                 return frame9;
@@ -41139,10 +41371,10 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 );
               };
               const finishAddRefusal9 = (site9, refusal9) => addPreOwned9 === null ? refusal9 : finishAdd9(site9, refusal9);
-              const irr = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-              if (l2.termsDen !== void 0 || r3.termsDen !== void 0 || rhs.termsDen !== void 0) {
+              const irr = (q9) => readLegacyShadowNumerator9(q9) !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+              if (readLegacyShadowDenominator9(l2) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0 || readLegacyShadowDenominator9(rhs) !== void 0) {
                 const t30 = addMechanismCtx9.monthToDays === "30";
-                const rr9 = rhs.terms !== void 0 || rhs.termsDen !== void 0 ? rhs : r3;
+                const rr9 = readLegacyShadowNumerator9(rhs) !== void 0 || readLegacyShadowDenominator9(rhs) !== void 0 ? rhs : r3;
                 const flv9 = shadowFracA9(l2, addMechanismCtx9);
                 if (flv9.kind === "refuse") return finishAddRefusal9("evalAst-addfrac", flv9.err);
                 const frv9 = shadowFracA9(rr9, addMechanismCtx9);
@@ -41161,35 +41393,34 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                   }
                   const xr9 = qx(rhs);
                   const dec9 = ast.op === "+" ? rAdd(qx(l2), xr9) : rSub(qx(l2), xr9);
-                  return finishAdd9("evalAst-addfrac", attachFrac({ ...l2, ...qv(dec9) }, nn9, dd9));
+                  return finishAdd9("evalAst-addfrac", attachFrac(editRuntimeCopy9(copyRuntimeRT9(l2), { ...qv(dec9) }), nn9, dd9));
                 }
                 addMechanismCtx9.capNotes?.push("sum");
                 const xr8 = qx(rhs);
                 return finishAdd9("evalAst-addfrac", b1QValue9(l2, ast.op === "+" ? rAdd(qx(l2), xr8) : rSub(qx(l2), xr8), { terms: null, termsDen: null }));
               }
-              if (irr(l2) || irr(r3) || rhs.terms !== void 0) {
-                const rPick9 = rhs.terms !== void 0 ? rhs : r3;
+              if (irr(l2) || irr(r3) || readLegacyShadowNumerator9(rhs) !== void 0) {
+                const rPick9 = readLegacyShadowNumerator9(rhs) !== void 0 ? rhs : r3;
                 const ltA9 = shadowViewIfNeeded9([l2, rPick9], l2, addMechanismCtx9);
                 if (!Array.isArray(ltA9)) return finishAddRefusal9("evalAst-add", ltA9);
                 const rtA9 = shadowViewIfNeeded9([l2, rPick9], rPick9, addMechanismCtx9);
                 if (!Array.isArray(rtA9)) return finishAddRefusal9("evalAst-add", rtA9);
                 const merged = mergeTerms(ltA9, rtA9, ast.op === "+" ? 1n : -1n, addMechanismCtx9.monthToDays === "30");
                 if (merged.length === 0) {
-                  const rSide9 = rhs.terms !== void 0 ? rhs : r3;
+                  const rSide9 = readLegacyShadowNumerator9(rhs) !== void 0 ? rhs : r3;
                   const gz9 = capAddGate9(l2, rSide9, { n: 0n, d: 1n }, ast.op === "+" ? 1n : -1n);
                   if (gz9.err !== void 0) return finishAddRefusal9("evalAst-add", gz9.err);
                   return finishAdd9("evalAst-add", b1QValue9(l2, { n: 0n, d: 1n }, { terms: null }));
                 }
                 if (merged.length === 1 && !merged[0].comps.some((c9) => c9.def.currency !== void 0)) {
                   const t9 = merged[0];
-                  const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
-                  const raw9 = {
-                    t: "q",
+                  const one9 = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
+                  const raw9 = createQuantityRT9({
                     ...qv(t9.x),
                     dim: dimOfComps(t9.comps),
                     symbol: compsSymbol(t9.comps),
                     comps: t9.comps
-                  };
+                  });
                   return finishAdd9("evalAst-add", combineQuantities(one9, raw9, "*", addMechanismCtx9));
                 }
                 const dec9 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
@@ -41202,12 +41433,11 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 if (g8.err) return finishAddRefusal9("evalAst-add", g8.err);
                 return finishAdd9(
                   "evalAst-add",
-                  capStamp9({
-                    ...l2,
+                  capStamp9(editRuntimeCopy9(copyRuntimeRT9(l2), {
                     ...qv(dec8),
                     terms: void 0,
                     ...(r3.capped === true || l2.capped === true) && { capped: true }
-                  }, g8),
+                  }), g8),
                   // The historical spread owns both undefined slots. The frame
                   // records that raw presence independently instead of reading
                   // the already-built legacy output.
@@ -41224,7 +41454,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 const t30z = ctx.monthToDays === "30";
                 let fl0 = fracOf(l2);
                 let fr0 = fracOf(r3);
-                if (ctx.__convAuth9 === true && (r3.terms !== void 0 || r3.termsDen !== void 0)) {
+                if (ctx.__convAuth9 === true && (readLegacyShadowNumerator9(r3) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0)) {
                   const flv0 = shadowFracA9(l2, ctx);
                   if (flv0.kind === "refuse") return flv0.err;
                   const frv0 = shadowFracA9(r3, ctx);
@@ -41241,7 +41471,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               const frame9 = (capture9) => {
                 const raw9 = b1MulDivFrame9(capture9.left, capture9.right, mulOp9, ctx);
                 if (raw9.kind !== "numeric") return raw9;
-                const shell9 = { ...raw9.shell };
+                const shell9 = copyRuntimeRT9(raw9.shell);
                 const leftRT9 = capture9.left.rt;
                 const rightRT9 = capture9.right.rt;
                 if (leftRT9.capped === true || rightRT9.capped === true) shell9.capped = true;
@@ -41267,7 +41497,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               };
               const shadowMechanism9 = (q9) => hasShadowFromRT(q9) || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
               const preOwner9 = shadowMechanism9(l2) || shadowMechanism9(r3) ? { site: "evalAst-frac", host: "finishQ9", op: ast.op } : { site: "combineQuantities", host: "finishQ9", op: ast.op };
-              const directZeroMechanism9 = ast.op === "/" && qx(r3).n === 0n && r3.terms === void 0 && r3.termsDen === void 0;
+              const directZeroMechanism9 = ast.op === "/" && qx(r3).n === 0n && readLegacyShadowNumerator9(r3) === void 0 && readLegacyShadowDenominator9(r3) === void 0;
               const preOwned9 = directZeroMechanism9 ? null : b1PreOwn9(
                 ctx,
                 preOwner9,
@@ -41283,7 +41513,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 const t30z = legacyCtx9.monthToDays === "30";
                 let fl0 = fracOf(l2);
                 let fr0 = fracOf(r3);
-                if (legacyCtx9.__convAuth9 === true && (r3.terms !== void 0 || r3.termsDen !== void 0)) {
+                if (legacyCtx9.__convAuth9 === true && (readLegacyShadowNumerator9(r3) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0)) {
                   const flv0 = shadowFracA9(l2, legacyCtx9);
                   if (flv0.kind === "refuse") return finishPre9(flv0.err);
                   const frv0 = shadowFracA9(r3, legacyCtx9);
@@ -41299,8 +41529,8 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               let prod9 = mechanicalProd9;
               let fracOwned9 = false;
               {
-                const sh9 = (q9) => q9.terms !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-                if ((prod9.t === "q" || prod9.t === "d") && (sh9(l2) || sh9(r3) || l2.termsDen !== void 0 || r3.termsDen !== void 0)) {
+                const sh9 = (q9) => readLegacyShadowNumerator9(q9) !== void 0 || (compsOf(q9)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+                if ((prod9.t === "q" || prod9.t === "d") && (sh9(l2) || sh9(r3) || readLegacyShadowDenominator9(l2) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0)) {
                   const t30 = legacyCtx9.monthToDays === "30";
                   fracOwned9 = true;
                   const flv9 = shadowFracA9(l2, legacyCtx9);
@@ -41318,31 +41548,30 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                     const quot9 = fracQuotient(num9, den9, t30);
                     if (quot9 !== null && termCanon(quot9, t30).key === "|") {
                       const kx9 = termCanon(quot9, t30).canonX;
-                      if (prod9.t === "d") prod9 = { t: "d", ...qv(kx9) };
-                      else prod9 = { ...prod9, terms: [quot9], termsDen: void 0 };
+                      if (prod9.t === "d") prod9 = createDecimalRT9(qv(kx9));
+                      else prod9 = editRuntimeCopy9(copyRuntimeRT9(prod9), { terms: [quot9], termsDen: void 0 });
                     } else if (quot9 !== null) {
                       if (prod9.t === "q") {
-                        prod9 = { ...prod9, terms: [quot9], termsDen: void 0 };
+                        prod9 = editRuntimeCopy9(copyRuntimeRT9(prod9), { terms: [quot9], termsDen: void 0 });
                       } else if (dimIsEmpty(dimOfComps(quot9.comps))) {
-                        prod9 = {
-                          t: "q",
+                        prod9 = rebuildQuantityRT9({
                           ...qv(quot9.x),
                           dim: dimOfComps(quot9.comps),
                           symbol: compsSymbol(quot9.comps),
                           comps: quot9.comps.map((c9) => ({ ...c9 })),
                           terms: [quot9]
-                        };
+                        });
                       }
                     } else if (prod9.t === "q") {
                       prod9 = attachFrac(prod9, num9, den9);
                     } else {
-                      prod9 = attachFrac({ t: "q", ...qv(numRat(prod9)), dim: {}, symbol: "", comps: [] }, num9, den9);
+                      prod9 = attachFrac(createQuantityRT9({ ...qv(numRat(prod9)), dim: {}, symbol: "", comps: [] }), num9, den9);
                     }
                   }
                 }
               }
               if ((l2.capped === true || r3.capped === true) && prod9.t !== "e") {
-                prod9 = { ...prod9, capped: true };
+                prod9 = editRuntimeCopy9(copyRuntimeRT9(prod9), { capped: true });
               }
               if ((prod9.t === "q" || prod9.t === "d" || prod9.t === "f") && ((capFOf9(l2)?.length ?? 0) > 0 || (capFOf9(r3)?.length ?? 0) > 0)) {
                 try {
@@ -41366,7 +41595,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               }
               const owner9 = fracOwned9 ? { site: "evalAst-frac", host: "finishQ9", op: ast.op } : { site: "combineQuantities", host: "finishQ9", op: ast.op };
               if (prod9.t === "q" && (l2.chosen && !hasCur9(r3) && !overlap9(l2, r3) || r3.chosen && !hasCur9(l2) && !overlap9(r3, l2))) {
-                prod9 = { ...prod9, chosen: true };
+                prod9 = editRuntimeCopy9(copyRuntimeRT9(prod9), { chosen: true });
               }
               return preOwned9 === null ? b1Own9(ctx, owner9, l2, r3, frame9, prod9) : b1FinishPreOwn9(ctx, preOwned9, prod9);
             }
@@ -41382,7 +41611,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               const q0 = rDiv(a9, b9);
               const t0 = q0.n / q0.d;
               const capped92 = lN9.capped === true || rN9.capped === true;
-              return { t: "d", ...qv(rSub(a9, rMul(b9, { n: t0, d: 1n }))), ...capped92 && { capped: true } };
+              return createDecimalRT9({ ...qv(rSub(a9, rMul(b9, { n: t0, d: 1n }))), ...capped92 && { capped: true } });
             }
           }
           if (l2.t === "q" && (r3.t === "d" || r3.t === "f")) {
@@ -41436,13 +41665,13 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               if (isOffsetScale(l2)) return err("unit-mismatch", "raising offset temperatures (\xB0C/\xB0F) is undefined \u2014 convert to K first");
               const e0 = Number(n2.n);
               if (Math.abs(e0) > 1e6) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
-              if (e0 === 0) return { t: "d", v: new DecC(1) };
+              if (e0 === 0) return createDecimalRT9({ v: new DecC(1) });
               if (e0 === 1) return l2;
               if (e0 < 0 && l2.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (e0 < 0 && qx(l2).n === 0n) {
                 const t30z = ctx.monthToDays === "30";
                 let fl0 = fracOf(l2);
-                if (ctx.__convAuth9 === true && (l2.terms !== void 0 || l2.termsDen !== void 0)) {
+                if (ctx.__convAuth9 === true && (readLegacyShadowNumerator9(l2) !== void 0 || readLegacyShadowDenominator9(l2) !== void 0)) {
                   const flz9 = shadowFracA9(l2, ctx);
                   if (flz9.kind === "refuse") return flz9.err;
                   fl0 = flz9;
@@ -41452,22 +41681,21 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               if (e0 === -1 && l2.rate) {
                 const invComps = (compsOf(l2) ?? []).map((c2) => ({ def: c2.def, exp: -c2.exp }));
                 const inv = { num: l2.rate.den, den: l2.rate.num };
-                const sh9 = l2.terms !== void 0 || l2.termsDen !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-                const base9 = {
-                  t: "q",
+                const sh9 = readLegacyShadowNumerator9(l2) !== void 0 || readLegacyShadowDenominator9(l2) !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+                const base9 = createQuantityRT9({
                   ...qv(rDiv({ n: 1n, d: 1n }, qx(l2))),
                   dim: dimOfComps(invComps),
                   symbol: compsSymbol(invComps),
                   rate: inv,
                   comps: invComps,
                   ...l2.chosen && { chosen: true }
-                };
+                });
                 if (!sh9) return base9;
                 const fv9 = shadowFracViewIfNeeded9([l2], l2, ctx);
                 if (fv9.kind === "refuse") return fv9.err;
                 const f9 = fv9;
-                if (f9.num.length === 1 && l2.termsDen === void 0) {
-                  return { ...base9, terms: [{ x: rDiv({ n: 1n, d: 1n }, f9.num[0].x), comps: f9.num[0].comps.map((c9) => ({ def: c9.def, exp: -c9.exp })), aux: f9.num[0].aux }] };
+                if (f9.num.length === 1 && readLegacyShadowDenominator9(l2) === void 0) {
+                  return editRuntimeCopy9(copyRuntimeRT9(base9), { terms: [{ x: rDiv({ n: 1n, d: 1n }, f9.num[0].x), comps: f9.num[0].comps.map((c9) => ({ def: c9.def, exp: -c9.exp })), aux: f9.num[0].aux }] });
                 }
                 return attachFrac(base9, f9.den, f9.num);
               }
@@ -41475,25 +41703,24 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               if (!lc9) return err("unsupported-pair", `cannot raise ${l2.symbol}`);
               const scaled = lc9.map((c2) => ({ def: c2.def, exp: c2.exp * e0 }));
               if (scaled.some((c2) => Math.abs(c2.exp) > 1e6)) return err("unsupported-pair", "unit exponents beyond \xB1999 are not supported");
-              const raw9 = {
-                t: "q",
+              const raw9 = createQuantityRT9({
                 ...qv(rPowInt(qx(l2), e0)),
                 dim: dimOfComps(scaled),
                 symbol: compsSymbol(scaled),
                 comps: scaled
-              };
-              const one9 = { t: "q", v: new DecC(1), dim: {}, symbol: "", comps: [] };
+              });
+              const one9 = createQuantityRT9({ v: new DecC(1), dim: {}, symbol: "", comps: [] });
               let pow9 = combineQuantities(one9, raw9, "*", ctx);
               const ltv9 = shadowViewIfNeeded9([l2], l2, ctx);
               if (!Array.isArray(ltv9)) return ltv9;
               const lt9 = ltv9;
-              const shadowed9 = l2.terms !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
-              if (pow9.t === "d" && (shadowed9 || l2.termsDen !== void 0)) {
-                pow9 = { t: "q", ...qv(numRat(pow9)), dim: {}, symbol: "", comps: [] };
+              const shadowed9 = readLegacyShadowNumerator9(l2) !== void 0 || (compsOf(l2)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+              if (pow9.t === "d" && (shadowed9 || readLegacyShadowDenominator9(l2) !== void 0)) {
+                pow9 = createQuantityRT9({ ...qv(numRat(pow9)), dim: {}, symbol: "", comps: [] });
               }
-              if (pow9.t === "q" && (shadowed9 || l2.termsDen !== void 0)) {
-                if (lt9.length === 1 && l2.termsDen === void 0) {
-                  pow9 = { ...pow9, terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))), aux: lt9[0].aux }] };
+              if (pow9.t === "q" && (shadowed9 || readLegacyShadowDenominator9(l2) !== void 0)) {
+                if (lt9.length === 1 && readLegacyShadowDenominator9(l2) === void 0) {
+                  pow9 = editRuntimeCopy9(copyRuntimeRT9(pow9), { terms: [{ x: rPowInt(lt9[0].x, e0), comps: canonComps(lt9[0].comps.map((c9) => ({ def: c9.def, exp: c9.exp * e0 }))), aux: lt9[0].aux }] });
                 } else {
                   const t30 = ctx.monthToDays === "30";
                   const fpv9 = shadowFracViewIfNeeded9([l2], l2, ctx);
@@ -41513,7 +41740,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                   pow9 = attachFrac(pow9, pn9, pd9);
                 }
               }
-              return l2.chosen && pow9.t === "q" ? { ...pow9, chosen: true } : pow9;
+              return l2.chosen && pow9.t === "q" ? editRuntimeCopy9(copyRuntimeRT9(pow9), { chosen: true }) : pow9;
             }
             if ((ast.op === "+" || ast.op === "-") && (isCarrier(l2) || dimIsEmpty(l2.dim) && isCarrier(foldIrrationalResidue(l2, ctx.monthToDays === "30", ctx, "qPlusNLeftProbe")))) {
               const addOp9 = ast.op;
@@ -41655,13 +41882,12 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             if (r3.capped === true) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
             if (qx(r3).n === 0n) {
               const inverseComps9 = (compsOf(r3) ?? []).map((c9) => ({ def: c9.def, exp: -c9.exp }));
-              const inverseShell9 = {
-                t: "q",
+              const inverseShell9 = createQuantityRT9({
                 v: new DecC(0),
                 dim: dimOfComps(inverseComps9),
                 symbol: compsSymbol(inverseComps9),
                 comps: inverseComps9
-              };
+              });
               const inversePre92 = b1PreOwn9(
                 ctx,
                 { site: "evalAst-inverse", host: "evalAst", op: "/" },
@@ -41676,7 +41902,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               if (inversePre92?.kind === "production") return inversePre92.published;
               const t30z = ctx.monthToDays === "30";
               let fr0 = fracOf(r3);
-              if (ctx.__convAuth9 === true && (r3.terms !== void 0 || r3.termsDen !== void 0)) {
+              if (ctx.__convAuth9 === true && (readLegacyShadowNumerator9(r3) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0)) {
                 const frz9 = shadowFracA9(r3, ctx);
                 if (frz9.kind === "refuse") return inversePre92 === null ? frz9.err : b1FinishPreOwn9(ctx, inversePre92, frz9.err);
                 fr0 = frz9;
@@ -41691,20 +41917,20 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               r3,
               (capture9) => {
                 const frame9 = b1MulDivFrame9(capture9.left, capture9.right, "/", ctx);
-                return frame9.kind === "numeric" && frame9.shell.t === "q" && capture9.right.rt.t === "q" && capture9.right.rt.chosen === true ? { ...frame9, shell: { ...frame9.shell, chosen: true } } : frame9;
+                return frame9.kind === "numeric" && frame9.shell.t === "q" && capture9.right.rt.t === "q" && capture9.right.rt.chosen === true ? { ...frame9, shell: editRuntimeCopy9(copyRuntimeRT9(frame9.shell), { chosen: true }) } : frame9;
               },
               (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, [l2, r3])
             ) : null;
             if (inversePre9?.kind === "production") return inversePre9.published;
-            const lq = { t: "q", ...qv(b3), dim: {}, symbol: "", comps: [] };
+            const lq = createQuantityRT9({ ...qv(b3), dim: {}, symbol: "", comps: [] });
             let invRes = combineQuantities(lq, r3, "/", ctx);
-            const shInv9 = r3.terms !== void 0 || r3.termsDen !== void 0 || (compsOf(r3)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
+            const shInv9 = readLegacyShadowNumerator9(r3) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0 || (compsOf(r3)?.some((c9) => c9.def.factorDec !== void 0) ?? false);
             if (shInv9 && (invRes.t === "q" || invRes.t === "d")) {
               const fiv9 = shadowFracA9(r3, ctx);
               if (fiv9.kind === "refuse") return inversePre9 === null ? fiv9.err : b1FinishPreOwn9(ctx, inversePre9, fiv9.err);
               const f9 = fiv9;
               const num9 = f9.den.map((t9) => ({ ...t9, x: rMul(t9.x, b3) }));
-              const base9 = invRes.t === "q" ? invRes : { t: "q", ...qv(numRat(invRes)), dim: {}, symbol: "", comps: [] };
+              const base9 = invRes.t === "q" ? invRes : createQuantityRT9({ ...qv(numRat(invRes)), dim: {}, symbol: "", comps: [] });
               invRes = attachFrac(base9, num9, f9.num);
             }
             const legacyInverse9 = r3.chosen && invRes.t === "q" ? { ...invRes, chosen: true } : invRes;
@@ -41785,20 +42011,20 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 return finishCalendarQuantity9({ t: "ts", c: { ...tsSide.c }, ...qSide.capped === true && { capped: true } });
               }
               {
-                const qF8 = isCarrier(qSide) ? qSide : dimIsEmpty(qSide.dim) && (qSide.terms !== void 0 || qSide.termsDen !== void 0) ? {
+                const qF8 = isCarrier(qSide) ? qSide : dimIsEmpty(qSide.dim) && (readLegacyShadowNumerator9(qSide) !== void 0 || readLegacyShadowDenominator9(qSide) !== void 0) ? {
                   t: "q",
                   v: qSide.v,
                   ...qSide.vx && { vx: qSide.vx },
                   dim: {},
                   symbol: "",
                   comps: [],
-                  ...qSide.terms && { terms: qSide.terms },
-                  ...qSide.termsDen && { termsDen: qSide.termsDen }
+                  ...readLegacyShadowNumerator9(qSide) && { terms: readLegacyShadowNumerator9(qSide) },
+                  ...readLegacyShadowDenominator9(qSide) && { termsDen: readLegacyShadowDenominator9(qSide) }
                 } : qSide;
-                if (isCarrier(qF8) && dimIsEmpty(qF8.dim) && (compsOf(qF8) ?? []).every((c9) => c9.def.currency === void 0) && [...qF8.terms ?? [], ...qF8.termsDen ?? []].every((t9) => t9.comps.every((c9) => c9.def.currency === void 0)) && (ast.op === "*" || l2.t === "ts")) {
+                if (isCarrier(qF8) && dimIsEmpty(qF8.dim) && (compsOf(qF8) ?? []).every((c9) => c9.def.currency === void 0) && [...readLegacyShadowNumerator9(qF8) ?? [], ...readLegacyShadowDenominator9(qF8) ?? []].every((t9) => t9.comps.every((c9) => c9.def.currency === void 0)) && (ast.op === "*" || l2.t === "ts")) {
                   if (qF8.capped === true || qSide.capped === true) return finishCalendarRefusal9("capped-factor", "inexact", TS_IRR_MSG);
-                  const zero8 = qx(qF8).n === 0n && (qF8.terms === void 0 || qF8.terms.every((t9) => t9.x.n === 0n));
-                  const k8 = (zero8 ? { n: 0n, d: 1n } : null) ?? fracReduce(qF8, ctx.monthToDays === "30") ?? (qF8.terms === void 0 && qF8.termsDen === void 0 && (compsOf(qF8) ?? []).every((c9) => c9.def.factorDec === void 0) ? qx(qF8) : null);
+                  const zero8 = qx(qF8).n === 0n && (readLegacyShadowNumerator9(qF8) === void 0 || readLegacyShadowNumerator9(qF8).every((t9) => t9.x.n === 0n));
+                  const k8 = (zero8 ? { n: 0n, d: 1n } : null) ?? fracReduce(qF8, ctx.monthToDays === "30") ?? (readLegacyShadowNumerator9(qF8) === void 0 && readLegacyShadowDenominator9(qF8) === void 0 && (compsOf(qF8) ?? []).every((c9) => c9.def.factorDec === void 0) ? qx(qF8) : null);
                   if (k8 === null) return finishCalendarRefusal9(
                     "irrational-factor",
                     "inexact",
@@ -41815,11 +42041,11 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 const calComp = qc.find((c0) => c0.def.dim["calmonths"] !== void 0 || c0.def.dim["caldays"] !== void 0);
                 const written = "years" in tsSide.c ? CAL_RATE_DEFS.year : "months" in tsSide.c ? CAL_RATE_DEFS.month : "weeks" in tsSide.c ? CAL_RATE_DEFS.week : "days" in tsSide.c ? CAL_RATE_DEFS.day : void 0;
                 const zeroDef = written ?? (calComp && calComp.exp < 0 ? calComp.def : CAL_RATE_DEFS.day);
-                const zq = { t: "q", v: new DecC(0), dim: zeroDef.dim, symbol: zeroDef.symbol, def: zeroDef, comps: [{ def: zeroDef, exp: 1 }] };
+                const zq = createQuantityRT9({ v: new DecC(0), dim: zeroDef.dim, symbol: zeroDef.symbol, def: zeroDef, comps: [{ def: zeroDef, exp: 1 }] });
                 if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(quantityComposePlan9(zq));
                 const zres = combineQuantities(qSide, zq, "*", ctx);
                 return finishCalendarQuantity9(
-                  qSide.chosen && zres.t === "q" ? { ...zres, chosen: true } : zres,
+                  qSide.chosen && zres.t === "q" ? editRuntimeCopy9(copyRuntimeRT9(zres), { chosen: true }) : zres,
                   quantityComposePlan9(zq)
                 );
               }
@@ -41827,17 +42053,17 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               if ("t" in den) return den;
               const count = spanInCalUnit(tsSide.c, den, ctx);
               if (isErr(count)) return count;
-              const tq = { t: "q", ...qv(count), dim: den.dim, symbol: den.symbol, def: den, comps: [{ def: den, exp: 1 }] };
+              const tq = createQuantityRT9({ ...qv(count), dim: den.dim, symbol: den.symbol, def: den, comps: [{ def: den, exp: 1 }] });
               const lq = l2.t === "ts" ? tq : l2;
               const rq = r3.t === "ts" ? tq : r3;
               if (ast.op === "/" && qx(rq).n === 0n) return err("division-by-zero");
               if (ctx.__b1ProductionCausal9 !== void 0) return publishCalendar9(quantityComposePlan9(tq));
               let tres = combineQuantities(lq, rq, ast.op, ctx);
-              if ((tres.t === "d" || tres.t === "f") && (qSide.terms !== void 0 || qSide.termsDen !== void 0)) {
+              if ((tres.t === "d" || tres.t === "f") && (readLegacyShadowNumerator9(qSide) !== void 0 || readLegacyShadowDenominator9(qSide) !== void 0)) {
                 const x8 = tres.t === "d" ? tres.vx ?? decToRat(tres.v) : numRat(tres);
-                tres = { t: "q", ...qv(x8), dim: {}, symbol: "", comps: [] };
+                tres = createQuantityRT9({ ...qv(x8), dim: {}, symbol: "", comps: [] });
               }
-              if (tres.t === "q" && (qSide.terms !== void 0 || qSide.termsDen !== void 0)) {
+              if (tres.t === "q" && (readLegacyShadowNumerator9(qSide) !== void 0 || readLegacyShadowDenominator9(qSide) !== void 0)) {
                 const bridged0 = (d0) => rMul(ratOfFactor(d0.factor), rPowInt({ n: 30n, d: 1n }, d0.dim["calmonths"] ?? 0));
                 const applyCal0 = (t0, k0, dExp) => {
                   const comps0 = t0.comps.map((c9) => ({ ...c9 }));
@@ -41866,7 +42092,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                   tres = attachFrac(tres, f9.den.map((t0) => applyCal0(t0, count, 1)), f9.num);
                 }
               }
-              if (tres.t === "ts" && (qSide.terms !== void 0 || qSide.termsDen !== void 0) && fracReduce(qSide, ctx.monthToDays === "30") === null) {
+              if (tres.t === "ts" && (readLegacyShadowNumerator9(qSide) !== void 0 || readLegacyShadowDenominator9(qSide) !== void 0) && fracReduce(qSide, ctx.monthToDays === "30") === null) {
                 return finishCalendarRefusal9(
                   "irreducible-count",
                   "inexact",
@@ -41874,7 +42100,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 );
               }
               return finishCalendarQuantity9(
-                qSide.chosen && tres.t === "q" ? { ...tres, chosen: true } : tres,
+                qSide.chosen && tres.t === "q" ? editRuntimeCopy9(copyRuntimeRT9(tres), { chosen: true }) : tres,
                 quantityComposePlan9(tq)
               );
             }
@@ -41894,7 +42120,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               return err("inexact", "a clock time cannot move by a capped duration \u2014 exactness was dropped upstream");
             }
             const dirtyCt9 = (list9) => (list9 ?? []).some((t9) => t9.comps.some((c9) => c9.exp !== 1 || (c9.def.dim["time"] ?? 0) !== 1 || Object.keys(c9.def.dim).filter((k9) => c9.def.dim[k9] !== 0).length !== 1));
-            if (dirtyCt9(other.terms) || other.termsDen !== void 0) {
+            if (dirtyCt9(readLegacyShadowNumerator9(other)) || readLegacyShadowDenominator9(other) !== void 0) {
               return err("inexact", "moving a clock time by this duration is not exact \u2014 the factor carries an irreducible shadow");
             }
             const mins = quantityToMinutes(other);
@@ -42003,10 +42229,10 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         }
         if (l2.t === "p" || r3.t === "p") {
           const capP9 = l2.capped === true || r3.capped === true;
-          const shP9 = l2.terms !== void 0 || l2.termsDen !== void 0 || r3.terms !== void 0 || r3.termsDen !== void 0;
+          const shP9 = readLegacyShadowNumerator9(l2) !== void 0 || readLegacyShadowDenominator9(l2) !== void 0 || readLegacyShadowNumerator9(r3) !== void 0 || readLegacyShadowDenominator9(r3) !== void 0;
           const fOf9 = (x9) => {
-            const t9 = x9.terms;
-            const d9 = x9.termsDen;
+            const t9 = readLegacyShadowNumerator9(x9);
+            const d9 = readLegacyShadowDenominator9(x9);
             const x0 = x9.t === "p" ? x9.vx ?? decToRat(x9.v) : numRat(x9);
             return { num: t9 ?? [{ x: x0, comps: [], aux: rnorm(x0).d !== 1n }], den: d9 ?? ONE_TERMS() };
           };
@@ -42014,14 +42240,14 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const t30p = ctx.monthToDays === "30";
           const out9 = (kind9, x9, num9, den9) => {
             const base9 = kind9 === "p" ? { t: "p", ...qv(x9) } : { t: "d", ...qv(x9) };
-            if (!shP9) return capP9 ? { ...base9, capped: true } : base9;
+            if (!shP9) return capP9 ? editRuntimeCopy9(copyRuntimeRT9(base9), { capped: true }) : base9;
             if (num9 === null || den9 === null) {
               ctx.capNotes?.push("sum");
-              return { ...base9, capped: true };
+              return editRuntimeCopy9(copyRuntimeRT9(base9), { capped: true });
             }
-            const q9 = attachFrac({ t: "q", ...qv(x9), dim: {}, symbol: "", comps: [] }, num9, den9);
-            if (kind9 === "d") return capP9 ? { ...q9, capped: true } : q9;
-            return { ...base9, ...q9.terms && { terms: q9.terms }, ...q9.termsDen && { termsDen: q9.termsDen }, ...capP9 && { capped: true } };
+            const q9 = attachFrac(createQuantityRT9({ ...qv(x9), dim: {}, symbol: "", comps: [] }), num9, den9);
+            if (kind9 === "d") return capP9 ? editRuntimeCopy9(copyRuntimeRT9(q9), { capped: true }) : q9;
+            return editRuntimeCopy9(copyRuntimeRT9(base9), { ...readLegacyShadowNumerator9(q9) && { terms: readLegacyShadowNumerator9(q9) }, ...readLegacyShadowDenominator9(q9) && { termsDen: readLegacyShadowDenominator9(q9) }, ...capP9 && { capped: true } });
           };
           if (l2.t === "p" && r3.t === "p") {
             const a3 = l2.vx ?? decToRat(l2.v);
@@ -42131,7 +42357,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             const aip9 = toDecP9(l2, Pip9);
             const rip9 = aip9.pow(k9);
             if (rip9.isNaN() || !isRepresentable(rip9)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
-            const powIP9 = { t: "d", v: new DecC(rip9.toSignificantDigits(40).toString()), vx: decToRat(rip9), capped: true };
+            const powIP9 = createDecimalRT9({ v: new DecC(rip9.toSignificantDigits(40).toString()), vx: decToRat(rip9), capped: true });
             const fLip9 = capFOf9(l2);
             const powK9 = `powK(${capArgKey9([l2])};${k9})`;
             let accIP9 = [{ s: powK9, x: { n: 1n, d: 1n }, b: rPowInt({ n: 10n, d: 1n }, (rip9.e ?? 0) + 1 - Pip9) }];
@@ -42255,33 +42481,33 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             if (g9.err) return g9.err;
             if (l2.t === "f" || r3.t === "f") {
               const fr9 = makeFrac(out.n, out.d, "derived");
-              if (capA9 && fr9.t !== "e") return capStamp9({ ...fr9, capped: true }, g9);
+              if (capA9 && fr9.t !== "e") return capStamp9(editRuntimeCopy9(copyRuntimeRT9(fr9), { capped: true }), g9);
               return fr9;
             }
             const fields = ast.op === "^" ? qvPre9(out) : qv(out);
             if (!isRepresentable(fields.v)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
-            return capStamp9({ t: "d", ...fields, ...capA9 && { capped: true } }, g9);
+            return capStamp9(createDecimalRT9({ ...fields, ...capA9 && { capped: true } }), g9);
           }
         }
         const a2 = toDec(l2);
         const b2 = toDec(r3);
         const capD9 = l2.capped === true || r3.capped === true;
-        const capOut9 = (x9) => capD9 && x9.t === "d" ? { ...x9, capped: true } : x9;
+        const capOut9 = (x9) => capD9 && x9.t === "d" ? editRuntimeCopy9(copyRuntimeRT9(x9), { capped: true }) : x9;
         try {
           switch (ast.op) {
             case "+":
-              return capOut9({ t: "d", v: a2.plus(b2) });
+              return capOut9(createDecimalRT9({ v: a2.plus(b2) }));
             case "-":
-              return capOut9({ t: "d", v: a2.minus(b2) });
+              return capOut9(createDecimalRT9({ v: a2.minus(b2) }));
             case "*":
-              return capOut9({ t: "d", v: a2.times(b2) });
+              return capOut9(createDecimalRT9({ v: a2.times(b2) }));
             case "/":
               if (b2.isZero()) return err("division-by-zero");
-              return capOut9({ t: "d", v: a2.div(b2) });
+              return capOut9(createDecimalRT9({ v: a2.div(b2) }));
             case "mod":
               if (capD9) return err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream");
               if (b2.isZero()) return err("division-by-zero");
-              return { t: "d", v: a2.mod(b2) };
+              return createDecimalRT9({ v: a2.mod(b2) });
             case "^": {
               {
                 const rE0 = r3.t === "d" || r3.t === "f" ? numRat(r3) : null;
@@ -42291,7 +42517,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                     return err("inexact", "a negative base with an even-root exponent is undefined");
                   }
                   const neg1 = aP0.n < 0n && (rE0.n < 0n ? -rE0.n : rE0.n) % 2n === 1n;
-                  return capOut9({ t: "d", ...qv({ n: neg1 ? -1n : 1n, d: 1n }) });
+                  return capOut9(createDecimalRT9(qv({ n: neg1 ? -1n : 1n, d: 1n })));
                 }
               }
               if (b2.abs().gt(MAX_POW_EXPONENT)) return err("inexact", "exponent magnitude too large");
@@ -42301,7 +42527,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                   const aP9 = numRat(l2);
                   if (aP9.d === (aP9.n < 0n ? -aP9.n : aP9.n)) {
                     const neg1 = aP9.n < 0n && (rExact.n < 0n ? -rExact.n : rExact.n) % 2n === 1n;
-                    return capOut9({ t: "d", ...qv({ n: neg1 ? -1n : 1n, d: 1n }) });
+                    return capOut9(createDecimalRT9(qv({ n: neg1 ? -1n : 1n, d: 1n })));
                   }
                 }
                 return err("inexact", "integer exponents above 10000 exceed exact arithmetic");
@@ -42315,7 +42541,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 const pAbs9 = rExact.n < 0n ? -rExact.n : rExact.n;
                 if (aR9.n === 0n) {
                   if (rExact.n < 0n) return err("division-by-zero");
-                  return capOut9({ t: "d", ...qv({ n: 0n, d: 1n }) });
+                  return capOut9(createDecimalRT9(qv({ n: 0n, d: 1n })));
                 }
                 const neg9 = aR9.n < 0n;
                 if (neg9 && q9 % 2n === 0n) {
@@ -42323,14 +42549,14 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 }
                 const sign9 = neg9 && rExact.n % 2n !== 0n ? -1n : 1n;
                 if (aR9.d === (neg9 ? -aR9.n : aR9.n)) {
-                  return capOut9({ t: "d", ...qv({ n: sign9, d: 1n }) });
+                  return capOut9(createDecimalRT9(qv({ n: sign9, d: 1n })));
                 }
                 const rootN9 = perfectRoot(neg9 ? -aR9.n : aR9.n, q9);
                 const rootD9 = rootN9 === null ? null : perfectRoot(aR9.d, q9);
                 if (rootN9 !== null && rootD9 !== null && pAbs9 <= 10000n) {
                   const powed9 = rPowInt({ n: rootN9, d: rootD9 }, Number(pAbs9));
                   const out9 = rExact.n < 0n ? rDiv({ n: sign9, d: 1n }, powed9) : rMul({ n: sign9, d: 1n }, powed9);
-                  return capOut9({ t: "d", ...qv(out9) });
+                  return capOut9(createDecimalRT9(qv(out9)));
                 }
                 const sigP9 = (x9) => {
                   let s9 = x9 < 0n ? -x9 : x9;
@@ -42346,7 +42572,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                 const rH9 = aH9.pow(bH9).times(sign9 === -1n ? -1 : 1);
                 if (rH9.isNaN() || !isRepresentable(rH9)) return err("inexact", "result is not a representable number");
                 ctx.capNotes?.push("function");
-                const powRes9 = { t: "d", v: new DecC(rH9.toSignificantDigits(40).toString()), vx: decToRat(rH9), capped: true };
+                const powRes9 = createDecimalRT9({ v: new DecC(rH9.toSignificantDigits(40).toString()), vx: decToRat(rH9), capped: true });
                 const remKey9L9 = `rempowA(${capArgKey9([l2, r3])})@${precP9}`;
                 const remKey9R9 = `rempowB(${capArgKey9([l2, r3])})@${precP9}`;
                 const powF9 = [{ s: `pow(${capArgKey9([l2, r3])})@${precP9}`, x: { n: 1n, d: 1n }, b: rPowInt({ n: 10n, d: 1n }, (rH9.e ?? 0) + 1 - precP9) }];
@@ -42389,7 +42615,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               const res = a2.pow(b2);
               if (res.isNaN() || !isRepresentable(res)) return err("inexact", "result is not a representable number");
               ctx.capNotes?.push("function");
-              const powFb9 = { t: "d", v: res, capped: true };
+              const powFb9 = createDecimalRT9({ v: res, capped: true });
               powFb9.capF = [{ s: `pow40(${a2.toString()};${b2.toString()})`, x: { n: 1n, d: 1n }, b: rPowInt({ n: 10n, d: 1n }, (res.e ?? 0) - 39) }];
               return powFb9;
             }
@@ -42402,7 +42628,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       let binJ9 = bin9;
       if ((l2.capped === true || r3.capped === true) && bin9.capped !== true) {
         if (ctx.__b1Compose9 !== void 0) bin9.capped = true;
-        else binJ9 = { ...bin9, capped: true };
+        else binJ9 = editRuntimeCopy9(copyRuntimeRT9(bin9), { capped: true });
       }
       const rf$9 = capFOf9(binJ9);
       if ((binJ9.t === "d" || binJ9.t === "f" || binJ9.t === "q" || binJ9.t === "p") && ((capFOf9(l2)?.length ?? 0) > 0 || (capFOf9(r3)?.length ?? 0) > 0) && // the []-sentinel means « transported and exactly cancelled »
@@ -42430,7 +42656,7 @@ function formatRT(rt2, prefs) {
   if (rt2.t === "e") return null;
   if (rt2.t === "f") return `${rt2.n}/${rt2.d}`;
   if (rt2.t === "p") {
-    const inner = formatRT({ t: "d", v: rt2.v }, prefs);
+    const inner = formatRT(createDecimalRT9({ v: rt2.v }), prefs);
     return inner === null ? null : `${inner}%`;
   }
   if (rt2.t === "ds") {
@@ -42443,7 +42669,7 @@ function formatRT(rt2, prefs) {
   if (rt2.t === "q") {
     const isMoney = rt2.def?.currency !== void 0 || rt2.rate?.num.currency !== void 0;
     const qPrefs = prefs?.decimalPlaces !== void 0 || !isMoney ? prefs : { ...prefs, decimalPlaces: 2 };
-    const inner = formatRT({ t: "d", v: rt2.v }, qPrefs);
+    const inner = formatRT(createDecimalRT9({ v: rt2.v }), qPrefs);
     return inner === null ? null : rt2.symbol === "" ? inner : `${inner} ${rt2.symbol}`;
   }
   if (rt2.t === "ts") {
@@ -45467,8 +45693,8 @@ function bindResidue9(sf, c2) {
   const thirty9 = sf.thirty9();
   if (thirty9 !== c2.thirty) return { ok: false, reason: "calendar-mismatch" };
   const slots92 = sf.writeLegacy();
-  if (!facesEqual9(projFree9(c2.num), canonFace9(slots92.terms, thirty9))) return { ok: false, reason: "face-mismatch" };
-  if (!facesEqual9(projFree9(c2.den), canonFace9(slots92.termsDen ?? ONE_TERMS(), thirty9))) return { ok: false, reason: "face-mismatch" };
+  if (!facesEqual9(projFree9(c2.num), canonFace9(readLegacyShadowNumerator9(slots92), thirty9))) return { ok: false, reason: "face-mismatch" };
+  if (!facesEqual9(projFree9(c2.den), canonFace9(readLegacyShadowDenominator9(slots92) ?? ONE_TERMS(), thirty9))) return { ok: false, reason: "face-mismatch" };
   return { ok: true, residue: residueOfContribution9(c2) };
 }
 function resCombine9(op, a2, b2, thirty) {
@@ -45499,9 +45725,9 @@ function liftFractionResidue9(sf) {
     }
     return acc9;
   };
-  const num9 = polyOf9(slots92.terms);
+  const num9 = polyOf9(readLegacyShadowNumerator9(slots92));
   if (!num9.ok) return { ok: false, reason: num9.reason };
-  const den9 = slots92.termsDen === void 0 ? { ok: true, value: polyUnit9(thirty9) } : polyOf9(slots92.termsDen);
+  const den9 = readLegacyShadowDenominator9(slots92) === void 0 ? { ok: true, value: polyUnit9(thirty9) } : polyOf9(readLegacyShadowDenominator9(slots92));
   if (!den9.ok) return { ok: false, reason: den9.reason };
   const c9 = contribOf9(num9.value, den9.value);
   if (!c9.ok) return { ok: false, reason: c9.reason === "non-integer-exponent" ? "undecidable" : c9.reason };
@@ -46514,15 +46740,14 @@ var causalUnaryTransform9 = (call9, candidateShell9, thirty9, inspected9, expose
     const value9 = ratToDec(exact9);
     const back9 = decToRat(value9);
     const norm9 = rnorm(exact9);
-    const carrier9 = {
-      t: "q",
+    const carrier9 = createQuantityRT9({
       v: value9,
       ...back9.n === norm9.n && back9.d === norm9.d ? {} : { vx: norm9 },
       dim: {},
       symbol: "",
       comps: [],
       ...publicShell9.capped === true && { capped: true }
-    };
+    });
     const capF9 = publicShell9.capF;
     if (capF9 !== void 0) carrier9.capF = capF9;
     publicShell9 = carrier9;
@@ -46920,7 +47145,7 @@ function applyB1Compose9(res, frame) {
   const rawShell9 = stripShadowFromRT9(publicShell9);
   const shadowless9 = rawShell9;
   const { foldA9: _consumedAuthority9, ...bare9 } = shadowless9;
-  const seed9 = bare9.t === "f" ? bare9 : { ...bare9, v: v9 };
+  const seed9 = bare9.t === "f" ? bare9 : editRuntimeCopy9(copyRuntimeRT9(bare9), { v: v9 });
   if (seed9.t !== "f") {
     if (!exactDec9) seed9.vx = exact9;
   }
@@ -47093,13 +47318,13 @@ var materializeCleanFrame9 = (frame9, joined9) => {
   }
   const exact9 = rnorm(frame9.exactRead);
   if (frame9.shell.t === "f") {
-    const out9 = exact9.d === 1n ? { t: "d", v: ratToDec(exact9) } : { t: "f", n: exact9.n, d: exact9.d, origin: frame9.shell.origin };
+    const out9 = exact9.d === 1n ? createDecimalRT9({ v: ratToDec(exact9) }) : captureFractionRT9({ n: exact9.n, d: exact9.d, origin: frame9.shell.origin });
     return { rt: stampJoinedAuthority9(out9, joined9) };
   }
   const reading9 = ratToDec(exact9);
   const back9 = decToRat(reading9);
   const bare9 = stripShadowFromRT9(frame9.shell);
-  const seed9 = { ...bare9, v: reading9 };
+  const seed9 = editRuntimeCopy9(copyRuntimeRT9(bare9), { v: reading9 });
   if (frame9.undefinedSlots?.includes("vx")) seed9.vx = void 0;
   else if (Object.prototype.hasOwnProperty.call(bare9, "vx")) seed9.vx = exact9;
   else if (back9.n === exact9.n && back9.d === exact9.d) delete seed9.vx;
@@ -47745,8 +47970,8 @@ var composeWithShadowDetailed9 = (op, a2, b2, options9 = {}) => {
     if (op !== "/" || options9.allowProviderProportionalQuotient !== true || inA9.dec === null || inB9.dec !== null || aRes9 === null || bRes9 !== null) return null;
     const aSlots9 = a2.writeLegacy();
     const bSlots9 = b2.writeLegacy();
-    const num9 = distributeTerms(aSlots9.terms, bSlots9.termsDen ?? ONE_TERMS(), thirty9, 1, true);
-    const den9 = distributeTerms(aSlots9.termsDen ?? ONE_TERMS(), bSlots9.terms, thirty9, 1, true);
+    const num9 = distributeTerms(readLegacyShadowNumerator9(aSlots9), readLegacyShadowDenominator9(bSlots9) ?? ONE_TERMS(), thirty9, 1, true);
+    const den9 = distributeTerms(readLegacyShadowDenominator9(aSlots9) ?? ONE_TERMS(), readLegacyShadowNumerator9(bSlots9), thirty9, 1, true);
     if (num9 === null || den9 === null) return null;
     const quotient9 = ShadowFraction.fromLegacy(num9, den9, thirty9);
     if (quotient9.kind !== "ok") return null;
@@ -49268,17 +49493,16 @@ function toPublicValue(rt2) {
       return rt2.detail === void 0 ? { kind: "error", code: rt2.code } : { kind: "error", code: rt2.code, detail: rt2.detail.replace(/⁣/gu, "") };
   }
 }
-var asCarrierQ = (p9) => ({
-  t: "q",
+var asCarrierQ = (p9) => legacyRTView9(rebuildQuantityRT9({
   v: p9.v,
   ...p9.vx && { vx: p9.vx },
   dim: {},
   symbol: "",
   comps: [],
-  ...p9.terms && { terms: p9.terms },
-  ...p9.termsDen && { termsDen: p9.termsDen },
+  ...readLegacyShadowNumerator9(p9) && { terms: readLegacyShadowNumerator9(p9) },
+  ...readLegacyShadowDenominator9(p9) && { termsDen: readLegacyShadowDenominator9(p9) },
   ...p9.capped === true && { capped: true }
-});
+}));
 function legacyExactSame9(a2, b2, thirty) {
   if (legacyExactSemantic9(a2, thirty) === legacyExactSemantic9(b2, thirty)) return true;
   return legacyAlgebraicSame9(a2, b2, thirty);
@@ -49368,7 +49592,7 @@ function candidateSemantic9(rt2, thirty) {
   return JSON.stringify(["cand1", outer, k2]);
 }
 function preAuthorityExactSemantic9(rt2, thirty) {
-  return candidateSemantic9(rt2, thirty) ?? legacyExactSemantic9(rt2, thirty);
+  return candidateSemantic9(rt2, thirty) ?? legacyExactSemantic9(legacyRTView9(rt2), thirty);
 }
 function authoritySemantic9(rt2, thirty) {
   if (rt2 === null) return null;
@@ -49398,7 +49622,7 @@ function preAuthorityExactSame9(a2, b2, thirty) {
   const ca = candidateSemantic9(a2, thirty);
   const cb = candidateSemantic9(b2, thirty);
   if (ca !== null && ca === cb) return true;
-  return legacyExactSame9(a2, b2, thirty);
+  return legacyExactSame9(legacyRTView9(a2), legacyRTView9(b2), thirty);
 }
 var IDENTITY_SITE_POLICY9 = {
   ambiguitySemantic: "public",
@@ -49464,7 +49688,7 @@ var serialize = (rt2) => {
   const cap = captureTag9 + boundedTag9 + (rt2.capped === true ? ":C" + capFDigest9(rt2.capF) : "");
   switch (rt2.t) {
     case "d": {
-      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${serializeAuth9(rt2.foldA9)}${cap}`;
+      return `d:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.base ?? ""}:${legacyFingerprint(readLegacyShadowNumerator9(rt2), readLegacyShadowDenominator9(rt2))}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
     case "f": {
       const shadow9 = fingerprintFromRT(rt2);
@@ -49472,7 +49696,7 @@ var serialize = (rt2) => {
       return `f:${rt2.n}/${rt2.d}:${rt2.origin}${shadowTag9}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
     case "p": {
-      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${serializeAuth9(rt2.foldA9)}${cap}`;
+      return `p:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${legacyFingerprint(readLegacyShadowNumerator9(rt2), readLegacyShadowDenominator9(rt2))}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
     case "ds":
       return `ds:${rt2.pd.toString()}:${rt2.precision}${cap}`;
@@ -49485,7 +49709,7 @@ var serialize = (rt2) => {
     case "q": {
       const comps = (rt2.comps ?? []).map((c2) => `${c2.def.id}^${c2.exp}`).join("\xB7");
       const rate = rt2.rate ? `${rt2.rate.num.id}/${rt2.rate.den.id}` : "";
-      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${legacyFingerprint(rt2.terms, rt2.termsDen)}${serializeAuth9(rt2.foldA9)}${cap}`;
+      return `q:${canonDec(rt2.v)}:${rt2.vx ? `${rt2.vx.n}/${rt2.vx.d}` : ""}:${rt2.symbol}:${rt2.def?.id ?? ""}:${comps}:${rate}:${rt2.chosen ? "c" : ""}:${legacyFingerprint(readLegacyShadowNumerator9(rt2), readLegacyShadowDenominator9(rt2))}${serializeAuth9(rt2.foldA9)}${cap}`;
     }
     case "e":
       return `e:${rt2.code}:${JSON.stringify(rt2.detail ?? "")}${cap}`;
@@ -49710,7 +49934,7 @@ function evaluateLine(line, sourceLineIndex9, captureLineageObserver9, env, rts,
     if (financialCurrency !== null) ast = monetize(ast, financialCurrency);
     rt2 = evalAst(ast, env, ctx);
     const preFinalizeCurrencies9 = rt2;
-    rt2 = finalizeCurrencies(rt2, ctx);
+    rt2 = ownRuntimeRT9(finalizeCurrencies(rt2, ctx));
     if (ctx.__b1ValueTransport9 !== void 0 && ctx.__b1Attempt9 !== void 0) {
       ctx.__b1ValueTransport9(
         { run: ctx.__b1Attempt9.run, attempt: ctx.__b1Attempt9.attempt },
@@ -49719,7 +49943,7 @@ function evaluateLine(line, sourceLineIndex9, captureLineageObserver9, env, rts,
         rt2
       );
     }
-    rt2 = reemitFromShadow9(rt2, ctx.monthToDays === "30", "lineFinal", ctx.reemitObserver, ctx.__candidateReemitObserver9);
+    rt2 = ownRuntimeRT9(reemitFromShadow9(rt2, ctx.monthToDays === "30", "lineFinal", ctx.reemitObserver, ctx.__candidateReemitObserver9));
     if (ast.k === "finance" && ast.fn === "interest" && rt2.t !== "e" && !/(compound(ed|ing)?|compos[ée]e?s?|capitalis[ée]e?s?)/iu.test(line)) {
       rawAssume.push({ code: "interest-convention", level: 2, impact: "money", data: {} });
     }
@@ -49763,7 +49987,7 @@ function evaluateLine(line, sourceLineIndex9, captureLineageObserver9, env, rts,
         data: capNotes.includes("function") ? { src: "function" } : {}
       });
       const disclosureSource9 = rt2;
-      const disclosureOut9 = { ...rt2, capped: true };
+      const disclosureOut9 = editRuntimeCopy9(copyRuntimeRT9(rt2), { capped: true });
       const boundedDisclosure9 = copyCaptureBoundedReserve9(disclosureSource9, disclosureOut9);
       if (!boundedDisclosure9.ok) {
         throw new Error(`invalid-bounded-reserve: ${boundedDisclosure9.reason}`);
@@ -50423,7 +50647,8 @@ function runSheet(text, context, cache2, initialCfg, probe) {
       if (probe?.b1Commit9 !== void 0 && entry !== cached2) {
         const commitsPreStrict9 = entry.rt?.t === "e" && entry.rt.code === "ambiguous" && entry.preStrictRt !== null;
         const commitRt9 = commitsPreStrict9 ? entry.preStrictRt : entry.rt;
-        const nrt9 = probe.b1Commit9(i2, commitRt9, b1Attempt9);
+        const recipe9 = probe.b1Commit9(i2, commitRt9, b1Attempt9);
+        const nrt9 = recipe9 === null ? null : ownRuntimeRT9(recipe9);
         if (nrt9 !== null && nrt9 !== commitRt9) {
           entry = commitsPreStrict9 ? { ...entry, preStrictRt: nrt9 } : { ...entry, rt: nrt9 };
         }
