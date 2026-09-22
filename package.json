@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "build": "tsup",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:pi": "node scripts/smoke-pi.mjs"
   },
   "license": "MIT",
   "repository": {

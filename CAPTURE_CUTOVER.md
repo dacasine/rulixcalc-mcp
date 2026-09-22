@@ -1,6 +1,41 @@
-# Livraison CaptureAtom causal — 2026-09-15
+# Livraisons du moteur — CaptureAtom, stockage opaque et Π
 
-## Livraison courante — stockage opaque obligatoire (2026-09-22)
+## Livraison courante — Π exact (2026-09-22)
+
+Core embarqué : `5db636606a63b9f36f4b343e8f55c2a541b3baa0`.
+CI du core : [35764857667](https://github.com/dacasine/rulixcalc/actions/runs/35764857667), succès.
+Le bundle a été reconstruit après ce verdict, depuis le checkout propre de
+ce SHA exact, sans modification du moteur pendant les gates.
+
+SHA-256 de `dist/server.js` :
+`4f07070394844d62f3823bdd9dd8f8623a831b3db0242cabc63cf63c08645c4c`.
+
+Π est désormais embarqué. La racine historique
+`(90° in rad) - (pi/2)*1 rad` donne zéro exact, y compris après multiplication
+par `1e40`, via variable et via `line(1)`. Son inverse refuse avec
+`division-by-zero`. Les identités trigonométriques et les annulations avec
+`tau` et le rapport radian/degré sont vérifiées sans confondre des dimensions
+physiques incompatibles. Le cutover causal et le stockage opaque sont
+conservés ; AJ1 reste en place et le compteur reste à 0/3.
+
+Portes locales : 134 tests ciblés, 34 ratchets, trois typechecks sans
+diagnostic (baseline globale 0/0), normale 4036 verts et deep final 4035 verts,
+zéro échec (12 min 32 s). Tous les catalogues sont verts ; E0 couvre
+2821 feuilles, 16827 occurrences et 5065 écarts locaux classés, sans nouvelle
+divergence publique non arbitrée. Les baselines sémantiques sont inchangées.
+Deux dépassements d'horloge pendant les catalogues, causés par des mises en
+veille manuelles constatées, ont nécessité uniquement la reprise du test
+concerné ; aucun deep ×3 ni réduction de corpus. Le deep final a passé d'un
+seul tenant. La CI distante confirme tests, conformité, sweep et builds.
+
+`npm run smoke:pi` : 17/17 appels JSON-RPC réels verts contre le bundle,
+taux réseau désactivés. Les attentes numériques non triviales utilisent un
+oracle Decimal indépendant à 360 chiffres. Le script accepte aussi le
+chemin d'un serveur installé pour vérifier exactement le fichier livré.
+Le plugin déjà chargé conserve son ancien processus jusqu'au prochain
+rechargement ou à la prochaine session.
+
+## Livraison précédente — stockage opaque obligatoire (2026-09-22)
 
 Core runtime validé : `d23842718d56bfab86bcba1a0c9772fa665762a0`.
 CI du core : [35663971841](https://github.com/dacasine/rulixcalc/actions/runs/35663971841), succès.

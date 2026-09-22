@@ -23293,6 +23293,868 @@ function canonDec(d2) {
   return s2 === "-0" ? "0" : s2;
 }
 
+// ../textual-calculator/core/packages/engine/src/units.ts
+var r = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
+var PI_ATOM = {
+  id: "const:pi",
+  symbol: "\u03A0",
+  dim: {},
+  constSym: "\u03A0",
+  factorDec: "3.141592653589793238462643383279502884197"
+};
+var DEFS = [
+  // length (base m)
+  { id: "m", symbol: "m", dim: { length: 1 }, factor: r(1) },
+  { id: "km", symbol: "km", dim: { length: 1 }, factor: r(1e3) },
+  { id: "cm", symbol: "cm", dim: { length: 1 }, factor: r(1, 100) },
+  { id: "mm", symbol: "mm", dim: { length: 1 }, factor: r(1, 1e3) },
+  { id: "mi", symbol: "mi", dim: { length: 1 }, factor: r(1609344, 1e3) },
+  { id: "ft", symbol: "ft", dim: { length: 1 }, factor: r(3048, 1e4) },
+  { id: "inch", symbol: "in", dim: { length: 1 }, factor: r(254, 1e4) },
+  { id: "yard", symbol: "yd", dim: { length: 1 }, factor: r(9144, 1e4) },
+  // mass (base kg)
+  { id: "kg", symbol: "kg", dim: { mass: 1 }, factor: r(1) },
+  { id: "g", symbol: "g", dim: { mass: 1 }, factor: r(1, 1e3) },
+  { id: "mg", symbol: "mg", dim: { mass: 1 }, factor: r(1, 1e6) },
+  { id: "tonne", symbol: "t", dim: { mass: 1 }, factor: r(1e3) },
+  { id: "lb", symbol: "lb", dim: { mass: 1 }, factor: r(45359237, 1e8) },
+  { id: "oz", symbol: "oz", dim: { mass: 1 }, factor: r(28349523125n, 1000000000000n) },
+  // temperature (base K) — K and R are LINEAR (zero offset: true ratio
+  // scales); °C/°F carry affine triples K = (a·v + b)/c and refuse ×/÷
+  { id: "kelvin", symbol: "K", dim: { temperature: 1 }, factor: r(1) },
+  { id: "celsius", symbol: "\xB0C", dim: { temperature: 1 }, affine: { a: 100n, b: 27315n, c: 100n } },
+  { id: "fahrenheit", symbol: "\xB0F", dim: { temperature: 1 }, affine: { a: 500n, b: 229835n, c: 900n } },
+  { id: "rankine", symbol: "R", dim: { temperature: 1 }, factor: r(5, 9) },
+  // temperature DELTAS (auditor: absolute temperatures and thermal offsets
+  // must not share a type) — own dimension, linear, base ΔK
+  { id: "deltaK", symbol: "\u0394K", dim: { tempdelta: 1 }, factor: r(1) },
+  { id: "deltaC", symbol: "\u0394\xB0C", dim: { tempdelta: 1 }, factor: r(1) },
+  { id: "deltaF", symbol: "\u0394\xB0F", dim: { tempdelta: 1 }, factor: r(5, 9) },
+  // information (base B, SI decimal multiples)
+  { id: "B", symbol: "B", dim: { information: 1 }, factor: r(1) },
+  { id: "KB", symbol: "KB", dim: { information: 1 }, factor: r(1e3) },
+  { id: "MB", symbol: "MB", dim: { information: 1 }, factor: r(1e6) },
+  { id: "GB", symbol: "GB", dim: { information: 1 }, factor: r(1e9) },
+  { id: "TB", symbol: "TB", dim: { information: 1 }, factor: r(1000000000000n) },
+  { id: "bit", symbol: "bit", dim: { information: 1 }, factor: r(1, 8) },
+  { id: "Mb", symbol: "Mb", dim: { information: 1 }, factor: r(125e3) },
+  // time (base s) — h/min/s are UNITS; day/week/month/year stay CALENDAR timespans
+  { id: "second", symbol: "s", dim: { time: 1 }, factor: r(1) },
+  { id: "minute", symbol: "min", dim: { time: 1 }, factor: r(60) },
+  { id: "hour", symbol: "h", dim: { time: 1 }, factor: r(3600) },
+  // volume (base m³, consistent with length³ exponent lookup)
+  { id: "litre", symbol: "l", dim: { length: 3 }, factor: r(1, 1e3) },
+  { id: "microgram", symbol: "\xB5g", dim: { mass: 1 }, factor: r(1, 1e9) },
+  { id: "micrometre", symbol: "\xB5m", dim: { length: 1 }, factor: r(1, 1e6) },
+  { id: "microlitre", symbol: "\xB5l", dim: { length: 3 }, factor: r(1, 1e9) },
+  { id: "microsecond", symbol: "\xB5s", dim: { time: 1 }, factor: r(1, 1e6) },
+  { id: "nanosecond", symbol: "ns", dim: { time: 1 }, factor: r(1, 1e9) },
+  { id: "hertz", symbol: "Hz", dim: { time: -1 }, factor: r(1, 1) },
+  { id: "kilohertz", symbol: "kHz", dim: { time: -1 }, factor: r(1e3, 1) },
+  { id: "megahertz", symbol: "MHz", dim: { time: -1 }, factor: r(1e6, 1) },
+  { id: "gigahertz", symbol: "GHz", dim: { time: -1 }, factor: r(1e9, 1) },
+  { id: "terahertz", symbol: "THz", dim: { time: -1 }, factor: r(1e12, 1) },
+  { id: "millisecond", symbol: "ms", dim: { time: 1 }, factor: r(1, 1e3) },
+  { id: "nanometre", symbol: "nm", dim: { length: 1 }, factor: r(1, 1e9) },
+  { id: "newton", symbol: "N", dim: { mass: 1, length: 1, time: -2 }, factor: r(1, 1) },
+  { id: "pascal", symbol: "Pa", dim: { mass: 1, length: -1, time: -2 }, factor: r(1, 1) },
+  { id: "kilopascal", symbol: "kPa", dim: { mass: 1, length: -1, time: -2 }, factor: r(1e3, 1) },
+  { id: "bar", symbol: "bar", dim: { mass: 1, length: -1, time: -2 }, factor: r(1e5, 1) },
+  { id: "ampere", symbol: "A", dim: { current: 1 }, factor: r(1, 1) },
+  { id: "milliampere", symbol: "mA", dim: { current: 1 }, factor: r(1, 1e3) },
+  { id: "microampere", symbol: "\xB5A", dim: { current: 1 }, factor: r(1, 1e6) },
+  { id: "kiloampere", symbol: "kA", dim: { current: 1 }, factor: r(1e3, 1) },
+  { id: "volt", symbol: "V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r(1, 1) },
+  { id: "kilovolt", symbol: "kV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r(1e3, 1) },
+  { id: "microvolt", symbol: "\xB5V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r(1, 1e6) },
+  { id: "picowatt", symbol: "pW", dim: { mass: 1, length: 2, time: -3 }, factor: r(1, 1000000000000n) },
+  { id: "farad", symbol: "F", dim: { mass: -1, length: -2, time: 4, current: 2 }, factor: r(1, 1) },
+  { id: "picofarad", symbol: "pF", dim: { mass: -1, length: -2, time: 4, current: 2 }, factor: r(1, 1000000000000n) },
+  { id: "millivolt", symbol: "mV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r(1, 1e3) },
+  { id: "picovolt", symbol: "pV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r(1, 1000000000000n) },
+  { id: "milliwatt", symbol: "mW", dim: { mass: 1, length: 2, time: -3 }, factor: r(1, 1e3) },
+  { id: "ohm", symbol: "\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r(1, 1) },
+  { id: "kilohm", symbol: "k\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r(1e3, 1) },
+  { id: "megohm", symbol: "M\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r(1e6, 1) },
+  { id: "mole", symbol: "mol", dim: { amount: 1 }, factor: r(1, 1) },
+  // pH — the ㏗ ligature maps here; a registered atom, never silent prose
+  { id: "pH", symbol: "pH", dim: { acidity: 1 }, factor: r(1, 1) },
+  { id: "ml", symbol: "ml", dim: { length: 3 }, factor: r(1, 1e6) },
+  { id: "cl", symbol: "cl", dim: { length: 3 }, factor: r(1, 1e5) },
+  { id: "dl", symbol: "dl", dim: { length: 3 }, factor: r(1, 1e4) },
+  { id: "gallon", symbol: "gal", dim: { length: 3 }, factor: r(3785411784n, 1000000000000n) },
+  // area extras (m²/km²/… come from the exponent lookup)
+  { id: "hectare", symbol: "ha", dim: { length: 2 }, factor: r(1e4) },
+  { id: "acre", symbol: "acre", dim: { length: 2 }, factor: r(40468564224n, 10000000n) },
+  // energy (base J)
+  { id: "joule", symbol: "J", dim: { mass: 1, length: 2, time: -2 }, factor: r(1) },
+  { id: "kJ", symbol: "kJ", dim: { mass: 1, length: 2, time: -2 }, factor: r(1e3) },
+  { id: "MJ", symbol: "MJ", dim: { mass: 1, length: 2, time: -2 }, factor: r(1e6) },
+  { id: "cal", symbol: "cal", dim: { mass: 1, length: 2, time: -2 }, factor: r(4184, 1e3) },
+  { id: "kcal", symbol: "kcal", dim: { mass: 1, length: 2, time: -2 }, factor: r(4184) },
+  { id: "Wh", symbol: "Wh", dim: { mass: 1, length: 2, time: -2 }, factor: r(3600) },
+  { id: "kWh", symbol: "kWh", dim: { mass: 1, length: 2, time: -2 }, factor: r(36e5) },
+  // power (base W)
+  { id: "watt", symbol: "W", dim: { mass: 1, length: 2, time: -3 }, factor: r(1) },
+  { id: "kW", symbol: "kW", dim: { mass: 1, length: 2, time: -3 }, factor: r(1e3) },
+  { id: "MW", symbol: "MW", dim: { mass: 1, length: 2, time: -3 }, factor: r(1e6) },
+  // pressure (base Pa)
+  { id: "pascal", symbol: "Pa", dim: { mass: 1, length: -1, time: -2 }, factor: r(1) },
+  { id: "hPa", symbol: "hPa", dim: { mass: 1, length: -1, time: -2 }, factor: r(100) },
+  { id: "mbar", symbol: "mbar", dim: { mass: 1, length: -1, time: -2 }, factor: r(100) },
+  { id: "bar", symbol: "bar", dim: { mass: 1, length: -1, time: -2 }, factor: r(1e5) },
+  { id: "psi", symbol: "psi", dim: { mass: 1, length: -1, time: -2 }, factor: r(44482216152605n * 100000000n, 64516n * 10000000000000n) },
+  // angle (base degree; radian is irrational → decimal factor)
+  { id: "degree", symbol: "\xB0", dim: { angle: 1 }, factor: r(1) },
+  { id: "radian", symbol: "rad", dim: { angle: 1 }, factorPi: { n: 180n, d: 1n, exp: -1 }, factorDec: "57.29577951308232087679815481410517033241" },
+  { id: "turn", symbol: "tr", dim: { angle: 1 }, factor: r(360) },
+  // speed
+  { id: "mph", symbol: "mph", dim: { length: 1, time: -1 }, factor: r(1609344, 36e5) },
+  { id: "knot", symbol: "kn", dim: { length: 1, time: -1 }, factor: r(1852, 3600) },
+  // currency (one shared dimension; conversion only via RateProvider)
+  ...[
+    "CHF",
+    "EUR",
+    "USD",
+    "GBP",
+    "JPY",
+    "AED",
+    "AUD",
+    "BGN",
+    "BRL",
+    "CAD",
+    "CNY",
+    "CZK",
+    "DKK",
+    "HKD",
+    "HUF",
+    "IDR",
+    "ILS",
+    "INR",
+    "ISK",
+    "KRW",
+    "MXN",
+    "MYR",
+    "NOK",
+    "NZD",
+    "PHP",
+    "PLN",
+    "RON",
+    "RSD",
+    "RUB",
+    "SAR",
+    "SEK",
+    "SGD",
+    "THB",
+    "TRY",
+    "TWD",
+    "ZAR",
+    "BTC",
+    "ETH"
+  ].map((code) => ({ id: code, symbol: code, dim: { currency: 1 }, currency: code }))
+];
+var ALIASES = [
+  { alias: "m", unit: "m" },
+  // lowercase only: 'M' is the million scalar
+  { alias: "metre", unit: "m", caseSensitive: false },
+  { alias: "metres", unit: "m", caseSensitive: false },
+  { alias: "meter", unit: "m", caseSensitive: false },
+  { alias: "meters", unit: "m", caseSensitive: false },
+  { alias: "m\xE8tre", unit: "m", caseSensitive: false },
+  { alias: "m\xE8tres", unit: "m", caseSensitive: false },
+  { alias: "km", unit: "km", caseSensitive: false },
+  { alias: "kilom\xE8tre", unit: "km", caseSensitive: false },
+  { alias: "kilom\xE8tres", unit: "km", caseSensitive: false },
+  { alias: "kilometer", unit: "km", caseSensitive: false },
+  { alias: "kilometers", unit: "km", caseSensitive: false },
+  { alias: "cm", unit: "cm", caseSensitive: false },
+  { alias: "centim\xE8tre", unit: "cm", caseSensitive: false },
+  { alias: "centim\xE8tres", unit: "cm", caseSensitive: false },
+  { alias: "centimetre", unit: "cm", caseSensitive: false },
+  { alias: "centimetres", unit: "cm", caseSensitive: false },
+  { alias: "centimeter", unit: "cm", caseSensitive: false },
+  { alias: "centimeters", unit: "cm", caseSensitive: false },
+  { alias: "mm", unit: "mm" },
+  { alias: "millim\xE8tre", unit: "mm", caseSensitive: false },
+  { alias: "millim\xE8tres", unit: "mm", caseSensitive: false },
+  { alias: "millimetre", unit: "mm", caseSensitive: false },
+  { alias: "millimetres", unit: "mm", caseSensitive: false },
+  { alias: "millimeter", unit: "mm", caseSensitive: false },
+  { alias: "millimeters", unit: "mm", caseSensitive: false },
+  { alias: "mi", unit: "mi" },
+  { alias: "mile", unit: "mi", caseSensitive: false },
+  { alias: "miles", unit: "mi", caseSensitive: false },
+  { alias: "yd", unit: "yard", caseSensitive: false },
+  { alias: "yard", unit: "yard", caseSensitive: false },
+  { alias: "yards", unit: "yard", caseSensitive: false },
+  { alias: "ft", unit: "ft", caseSensitive: false },
+  { alias: "foot", unit: "ft", caseSensitive: false },
+  { alias: "feet", unit: "ft", caseSensitive: false },
+  { alias: "pied", unit: "ft", caseSensitive: false },
+  { alias: "pieds", unit: "ft", caseSensitive: false },
+  { alias: "inch", unit: "inch", caseSensitive: false },
+  { alias: "inches", unit: "inch", caseSensitive: false },
+  { alias: "in", unit: "inch" },
+  // emitted symbol — the parser gives conversion "in <unit>" precedence
+  { alias: "pouce", unit: "inch", caseSensitive: false },
+  { alias: "pouces", unit: "inch", caseSensitive: false },
+  { alias: "kg", unit: "kg", caseSensitive: false },
+  { alias: "kilo", unit: "kg", caseSensitive: false },
+  { alias: "kilos", unit: "kg", caseSensitive: false },
+  { alias: "kilogramme", unit: "kg", caseSensitive: false },
+  { alias: "kilogrammes", unit: "kg", caseSensitive: false },
+  { alias: "kilogram", unit: "kg", caseSensitive: false },
+  { alias: "kilograms", unit: "kg", caseSensitive: false },
+  { alias: "g", unit: "g" },
+  { alias: "gramme", unit: "g", caseSensitive: false },
+  { alias: "grammes", unit: "g", caseSensitive: false },
+  { alias: "gram", unit: "g", caseSensitive: false },
+  { alias: "grams", unit: "g", caseSensitive: false },
+  { alias: "mg", unit: "mg" },
+  { alias: "tonne", unit: "tonne", caseSensitive: false },
+  { alias: "tonnes", unit: "tonne", caseSensitive: false },
+  { alias: "ton", unit: "tonne", caseSensitive: false },
+  { alias: "t", unit: "tonne" },
+  // lowercase exact: the engine EMITS "t" — every emitted symbol must re-lex
+  { alias: "lb", unit: "lb", caseSensitive: false },
+  { alias: "lbs", unit: "lb", caseSensitive: false },
+  { alias: "livre", unit: "lb", caseSensitive: false },
+  { alias: "livres", unit: "lb", caseSensitive: false },
+  { alias: "oz", unit: "oz", caseSensitive: false },
+  { alias: "K", unit: "kelvin" },
+  { alias: "kelvin", unit: "kelvin", caseSensitive: false },
+  { alias: "\xB0C", unit: "celsius" },
+  { alias: "celsius", unit: "celsius", caseSensitive: false },
+  { alias: "\xB0F", unit: "fahrenheit" },
+  { alias: "fahrenheit", unit: "fahrenheit", caseSensitive: false },
+  { alias: "R", unit: "rankine" },
+  { alias: "rankine", unit: "rankine", caseSensitive: false },
+  { alias: "\u0394K", unit: "deltaK" },
+  { alias: "\u0394\xB0C", unit: "deltaC" },
+  { alias: "\u0394\xB0F", unit: "deltaF" },
+  { alias: "deltaK", unit: "deltaK", caseSensitive: false },
+  { alias: "deltaC", unit: "deltaC", caseSensitive: false },
+  { alias: "deltaF", unit: "deltaF", caseSensitive: false },
+  { alias: "B", unit: "B" },
+  { alias: "byte", unit: "B", caseSensitive: false },
+  { alias: "bytes", unit: "B", caseSensitive: false },
+  { alias: "octet", unit: "B", caseSensitive: false },
+  { alias: "octets", unit: "B", caseSensitive: false },
+  { alias: "KB", unit: "KB" },
+  { alias: "MB", unit: "MB" },
+  { alias: "GB", unit: "GB" },
+  { alias: "TB", unit: "TB" },
+  { alias: "Mb", unit: "Mb" },
+  { alias: "bit", unit: "bit", caseSensitive: false },
+  { alias: "bits", unit: "bit", caseSensitive: false },
+  // time
+  { alias: "s", unit: "second" },
+  { alias: "sec", unit: "second", caseSensitive: false },
+  { alias: "seconde", unit: "second", caseSensitive: false },
+  { alias: "secondes", unit: "second", caseSensitive: false },
+  { alias: "second", unit: "second", caseSensitive: false },
+  { alias: "seconds", unit: "second", caseSensitive: false },
+  { alias: "sekunde", unit: "second", caseSensitive: false },
+  { alias: "sekunden", unit: "second", caseSensitive: false },
+  { alias: "min", unit: "minute", caseSensitive: false },
+  { alias: "minute", unit: "minute", caseSensitive: false },
+  { alias: "minutes", unit: "minute", caseSensitive: false },
+  { alias: "minuten", unit: "minute", caseSensitive: false },
+  { alias: "h", unit: "hour" },
+  { alias: "hr", unit: "hour", caseSensitive: false },
+  { alias: "hrs", unit: "hour", caseSensitive: false },
+  { alias: "hour", unit: "hour", caseSensitive: false },
+  { alias: "hours", unit: "hour", caseSensitive: false },
+  { alias: "heure", unit: "hour", caseSensitive: false },
+  { alias: "heures", unit: "hour", caseSensitive: false },
+  { alias: "stunde", unit: "hour", caseSensitive: false },
+  { alias: "stunden", unit: "hour", caseSensitive: false },
+  // volume
+  { alias: "l", unit: "litre" },
+  { alias: "L", unit: "litre" },
+  { alias: "\xB5g", unit: "microgram" },
+  { alias: "\u03BCg", unit: "microgram" },
+  { alias: "\xB5m", unit: "micrometre" },
+  { alias: "\u03BCm", unit: "micrometre" },
+  { alias: "\xB5l", unit: "microlitre" },
+  { alias: "\u03BCl", unit: "microlitre" },
+  { alias: "\xB5s", unit: "microsecond" },
+  { alias: "\u03BCs", unit: "microsecond" },
+  { alias: "ns", unit: "nanosecond" },
+  { alias: "Hz", unit: "hertz" },
+  { alias: "hertz", unit: "hertz", caseSensitive: false },
+  { alias: "kHz", unit: "kilohertz" },
+  { alias: "MHz", unit: "megahertz" },
+  { alias: "GHz", unit: "gigahertz" },
+  { alias: "THz", unit: "terahertz" },
+  { alias: "ms", unit: "millisecond" },
+  { alias: "nm", unit: "nanometre" },
+  { alias: "N", unit: "newton" },
+  { alias: "Pa", unit: "pascal" },
+  { alias: "kPa", unit: "kilopascal" },
+  { alias: "bar", unit: "bar", caseSensitive: false },
+  { alias: "A", unit: "ampere" },
+  { alias: "mA", unit: "milliampere" },
+  { alias: "\xB5A", unit: "microampere" },
+  { alias: "\u03BCA", unit: "microampere" },
+  { alias: "kA", unit: "kiloampere" },
+  { alias: "V", unit: "volt" },
+  { alias: "kV", unit: "kilovolt" },
+  { alias: "\xB5V", unit: "microvolt" },
+  { alias: "\u03BCV", unit: "microvolt" },
+  { alias: "pW", unit: "picowatt" },
+  { alias: "F", unit: "farad" },
+  { alias: "pF", unit: "picofarad" },
+  { alias: "mV", unit: "millivolt" },
+  { alias: "pV", unit: "picovolt" },
+  { alias: "mW", unit: "milliwatt" },
+  { alias: "\u03A9", unit: "ohm" },
+  { alias: "ohm", unit: "ohm", caseSensitive: false },
+  { alias: "k\u03A9", unit: "kilohm" },
+  { alias: "M\u03A9", unit: "megohm" },
+  { alias: "mol", unit: "mole" },
+  { alias: "pH", unit: "pH" },
+  { alias: "litre", unit: "litre", caseSensitive: false },
+  { alias: "litres", unit: "litre", caseSensitive: false },
+  { alias: "liter", unit: "litre", caseSensitive: false },
+  { alias: "liters", unit: "litre", caseSensitive: false },
+  { alias: "ml", unit: "ml" },
+  { alias: "cl", unit: "cl" },
+  { alias: "dl", unit: "dl" },
+  { alias: "mL", unit: "ml" },
+  { alias: "cL", unit: "cl" },
+  { alias: "dL", unit: "dl" },
+  // SI capital-L variants
+  { alias: "gallon", unit: "gallon", caseSensitive: false },
+  { alias: "gallons", unit: "gallon", caseSensitive: false },
+  { alias: "gal", unit: "gallon", caseSensitive: false },
+  // emitted symbol
+  // area
+  { alias: "ha", unit: "hectare", caseSensitive: false },
+  { alias: "hectare", unit: "hectare", caseSensitive: false },
+  { alias: "hectares", unit: "hectare", caseSensitive: false },
+  { alias: "acre", unit: "acre", caseSensitive: false },
+  { alias: "acres", unit: "acre", caseSensitive: false },
+  // energy
+  { alias: "J", unit: "joule" },
+  { alias: "joule", unit: "joule", caseSensitive: false },
+  { alias: "joules", unit: "joule", caseSensitive: false },
+  { alias: "kJ", unit: "kJ" },
+  { alias: "kj", unit: "kJ" },
+  { alias: "MJ", unit: "MJ" },
+  { alias: "cal", unit: "cal", caseSensitive: false },
+  { alias: "calorie", unit: "cal", caseSensitive: false },
+  { alias: "calories", unit: "cal", caseSensitive: false },
+  { alias: "kcal", unit: "kcal", caseSensitive: false },
+  { alias: "Wh", unit: "Wh" },
+  { alias: "kWh", unit: "kWh" },
+  { alias: "kwh", unit: "kWh" },
+  // power
+  { alias: "W", unit: "watt" },
+  { alias: "watt", unit: "watt", caseSensitive: false },
+  { alias: "watts", unit: "watt", caseSensitive: false },
+  { alias: "kW", unit: "kW" },
+  { alias: "kw", unit: "kW" },
+  { alias: "MW", unit: "MW" },
+  // pressure
+  { alias: "Pa", unit: "pascal" },
+  { alias: "pascal", unit: "pascal", caseSensitive: false },
+  { alias: "pascals", unit: "pascal", caseSensitive: false },
+  { alias: "hPa", unit: "hPa" },
+  { alias: "hpa", unit: "hPa" },
+  { alias: "mbar", unit: "mbar", caseSensitive: false },
+  { alias: "bar", unit: "bar", caseSensitive: false },
+  { alias: "bars", unit: "bar", caseSensitive: false },
+  { alias: "psi", unit: "psi", caseSensitive: false },
+  // angle
+  { alias: "\xB0", unit: "degree" },
+  { alias: "deg", unit: "degree", caseSensitive: false },
+  { alias: "degree", unit: "degree", caseSensitive: false },
+  { alias: "degrees", unit: "degree", caseSensitive: false },
+  { alias: "degr\xE9", unit: "degree", caseSensitive: false },
+  { alias: "degr\xE9s", unit: "degree", caseSensitive: false },
+  { alias: "degre", unit: "degree", caseSensitive: false },
+  { alias: "degres", unit: "degree", caseSensitive: false },
+  { alias: "rad", unit: "radian", caseSensitive: false },
+  { alias: "radian", unit: "radian", caseSensitive: false },
+  { alias: "radians", unit: "radian", caseSensitive: false },
+  { alias: "tour", unit: "turn", caseSensitive: false },
+  { alias: "tours", unit: "turn", caseSensitive: false },
+  { alias: "tr", unit: "turn" },
+  // emitted symbol
+  // speed
+  { alias: "mph", unit: "mph", caseSensitive: false },
+  { alias: "kn", unit: "knot" },
+  { alias: "knot", unit: "knot", caseSensitive: false },
+  { alias: "knots", unit: "knot", caseSensitive: false },
+  { alias: "noeud", unit: "knot", caseSensitive: false },
+  { alias: "noeuds", unit: "knot", caseSensitive: false },
+  // currency words & symbols (ISO codes are aliased programmatically below)
+  { alias: "franc", unit: "CHF", caseSensitive: false },
+  { alias: "francs", unit: "CHF", caseSensitive: false },
+  { alias: "euro", unit: "EUR", caseSensitive: false },
+  { alias: "euros", unit: "EUR", caseSensitive: false },
+  { alias: "\u20AC", unit: "EUR" },
+  { alias: "dollar", unit: "USD", caseSensitive: false },
+  { alias: "dollars", unit: "USD", caseSensitive: false },
+  { alias: "$", unit: "USD" },
+  { alias: "\xA3", unit: "GBP" },
+  { alias: "yen", unit: "JPY", caseSensitive: false },
+  { alias: "\xA5", unit: "JPY" }
+];
+for (const def of DEFS) {
+  if (def.currency) ALIASES.push({ alias: def.currency, unit: def.id, caseSensitive: false });
+}
+var unitsById = new Map(DEFS.map((d2) => [d2.id, d2]));
+var exactAliases = /* @__PURE__ */ new Map();
+var ciAliases = /* @__PURE__ */ new Map();
+for (const decl of ALIASES) {
+  const def = unitsById.get(decl.unit);
+  if (!def) throw new Error(`unit registry: alias \u201C${decl.alias}\u201D points to unknown unit \u201C${decl.unit}\u201D`);
+  if (decl.caseSensitive === false) {
+    const key = decl.alias.toLowerCase();
+    if (ciAliases.has(key) && ciAliases.get(key) !== def) {
+      throw new Error(`unit registry: duplicate case-insensitive alias \u201C${decl.alias}\u201D`);
+    }
+    ciAliases.set(key, def);
+  } else {
+    if (exactAliases.has(decl.alias) && exactAliases.get(decl.alias) !== def) {
+      throw new Error(`unit registry: duplicate case-sensitive alias \u201C${decl.alias}\u201D`);
+    }
+    exactAliases.set(decl.alias, def);
+  }
+}
+var derivedCache = /* @__PURE__ */ new Map();
+var SUP_DIGITS = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
+var supInt = (e) => {
+  const abs3 = Math.abs(e);
+  const digits = String(abs3).split("").map((d2) => SUP_DIGITS[Number(d2)]).join("");
+  return `${e < 0 ? "\u207B" : ""}${digits}`;
+};
+var parseSupInt = (s2) => {
+  const neg = s2.startsWith("\u207B");
+  const digits = (neg ? s2.slice(1) : s2).split("").map((c2) => SUP_DIGITS.indexOf(c2)).join("");
+  return (neg ? -1 : 1) * Number(digits);
+};
+function siCaseAmbiguous(word) {
+  if (word === "Pm") return false;
+  if (word === word.toLowerCase()) return false;
+  const asWritten = (w2) => exactAliases.has(w2) || w2 === w2.toLowerCase() && ciAliases.has(w2);
+  if (asWritten(word)) return false;
+  const tailOk = (t2) => exactAliases.has(t2) || ciAliases.has(t2.toLowerCase());
+  if (/^[YZEPTGMRQkhdcmuµμnpfazyrq][\p{L}°µμ]/u.test(word) && tailOk(word.slice(1))) return true;
+  if (/^da[\p{L}°µμ]/u.test(word) && word.length > 3 && tailOk(word.slice(2))) return true;
+  return false;
+}
+var SI_HOMOGRAPHS = /* @__PURE__ */ new Set(["at", "as", "am", "us"]);
+var BINARY_RE = /^(Ki|Mi|Gi|Ti|Pi|Ei|Zi|Yi|Ri|Qi)(B|bit|bits|o|octet|octets)$/u;
+var PREFIX_NAMES = [
+  "yotta",
+  "zetta",
+  "exa",
+  "peta",
+  "tera",
+  "giga",
+  "mega",
+  "kilo",
+  "hecto",
+  "deca",
+  "deka",
+  "deci",
+  "centi",
+  "milli",
+  "micro",
+  "nano",
+  "pico",
+  "femto",
+  "atto",
+  "zepto",
+  "yocto",
+  "ronna",
+  "ronto",
+  "quetta",
+  "quecto",
+  "kibi",
+  "mebi",
+  "gibi",
+  "tebi",
+  "pebi",
+  "exbi",
+  "zebi",
+  "yobi",
+  "robi",
+  "quebi"
+];
+var BYTEISH = /* @__PURE__ */ new Set(["byte", "bytes", "octet", "octets", "bit", "bits"]);
+var isSiPrefixName = (w9) => PREFIX_NAMES.includes(w9.toLowerCase());
+var PLAUSIBLE_SI = /* @__PURE__ */ new Set(["Bq", "Sv", "Gy", "Wb", "cd", "lm", "lx", "sr", "kat", "Np", "C"]);
+var SPELLED_UNITS = /* @__PURE__ */ new Set([
+  "farad",
+  "farads",
+  "ohm",
+  "ohms",
+  "henry",
+  "henrys",
+  "henries",
+  "tesla",
+  "teslas",
+  "weber",
+  "webers",
+  "coulomb",
+  "coulombs",
+  "siemens",
+  "hertz",
+  "volt",
+  "volts",
+  "ampere",
+  "amperes",
+  "amp",
+  "amps"
+]);
+function plausibleUnitReason(word) {
+  return plausibleUnitReasonInner(word, 0);
+}
+function plausibleUnitReasonInner(word, depth) {
+  if (PLAUSIBLE_SI.has(word) && lookupUnit(word) === void 0) {
+    return "a standard SI unit the engine does not support yet";
+  }
+  if (word.length < 2 || word.length > 200 || SI_HOMOGRAPHS.has(word)) return null;
+  if (lookupUnit(word) !== void 0) return null;
+  if (PLAUSIBLE_SI.has(word)) return "a standard SI unit the engine does not support yet";
+  if (word === word.toLowerCase() && SPELLED_UNITS.has(word)) {
+    return "a spelled unit name the engine does not support yet";
+  }
+  {
+    let base = word;
+    for (; ; ) {
+      const next = base.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, "").replace(/\d+$/u, "");
+      if (next === base) break;
+      base = next;
+    }
+    if (base !== word && base.length >= 2) {
+      if (PLAUSIBLE_SI.has(base)) return "a standard SI unit the engine does not support yet";
+      if (/^[A-Z]{2,5}$/.test(base) && lookupUnit(base) === void 0) {
+        return "an unknown code with a numeric suffix is never prose";
+      }
+      if (lookupUnit(base) !== void 0) return "a unit glued to digits is never prose";
+      if (depth < 6) {
+        const r3 = plausibleUnitReasonInner(base, depth + 1);
+        if (r3 !== null) return r3;
+      }
+    }
+    if (word.includes("\xB7") && depth < 6) {
+      for (const seg of word.split("\xB7")) {
+        if (seg.length >= 2 && plausibleUnitReasonInner(seg, depth + 1) !== null) {
+          return "a compound joining a plausible unit is never prose";
+        }
+      }
+      return null;
+    }
+  }
+  if (BINARY_RE.test(word)) return "binary-prefixed units (KiB\u2026Yibit) are not supported";
+  {
+    const lower = word.toLowerCase();
+    for (const pn of PREFIX_NAMES) {
+      if (!lower.startsWith(pn)) continue;
+      const rest = word.slice(pn.length);
+      if (rest.length < 2) continue;
+      const restL = rest.toLowerCase();
+      if (BYTEISH.has(restL) || SPELLED_UNITS.has(restL) || lookupUnit(rest) !== void 0 || restL.endsWith("s") && lookupUnit(rest.slice(0, -1)) !== void 0) {
+        return "a spelled-out prefixed unit name is not supported";
+      }
+    }
+  }
+  {
+    const cm = new RegExp("^(\\p{Lu}{2,5})(\\p{L}{2,})$", "u").exec(word);
+    if (cm && lookupUnit(cm[1]) === void 0 && lookupUnit(cm[2]) !== void 0) {
+      return "a code glued to a unit is never prose";
+    }
+  }
+  const tails = [];
+  if (/^[YZEPTGMRQkhdcmuµμnpfazyrq][\p{L}°µμ]/u.test(word)) tails.push(word.slice(1));
+  if (/^da[\p{L}°µμ]/u.test(word) && word.length > 3) tails.push(word.slice(2));
+  for (const tail of tails) {
+    if (tail.length > 4 || NONPREFIXABLE_TAILS.has(tail.length === 1 ? tail : tail.toLowerCase())) continue;
+    if (PLAUSIBLE_SI.has(tail)) return "an SI prefix glued to a standard unsupported unit";
+    const tdef = lookupUnit(tail);
+    if (tdef === void 0) continue;
+    if (tdef.currency !== void 0 && tail === tail.toLowerCase()) continue;
+    return "an SI prefix glued to a registered unit is not supported";
+  }
+  {
+    const symbolic = new RegExp("\\p{Lu}", "u").test(word.slice(1));
+    const allLower = word === word.toLowerCase();
+    const okPart = (part, other) => symbolic || part.length > 1 || new RegExp("^\\p{Lu}$", "u").test(part) || part === other.slice(-1) && other.length <= 2;
+    const glueDef = (part) => {
+      const d2 = lookupUnit(part);
+      return d2 !== void 0 && !(d2.currency !== void 0 && part === part.toLowerCase());
+    };
+    for (let k2 = 1; k2 < word.length; k2++) {
+      const head = word.slice(0, k2);
+      if (!glueDef(head)) continue;
+      const rest = word.slice(k2);
+      if (glueDef(rest) && okPart(head, rest) && okPart(rest, head)) {
+        const shortLower = allLower && head.length >= 2 && head.length <= 3 && rest.length >= 2 && rest.length <= 3;
+        if (!shortLower) return "two units glued together are never prose";
+      }
+      if (new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(rest)) return "a unit glued to a code is never prose";
+    }
+    const memo = /* @__PURE__ */ new Map();
+    const walk = (i2) => {
+      if (i2 === word.length) return { parts: 0, long: false };
+      const hit = memo.get(i2);
+      if (hit !== void 0) return hit.parts < 0 ? null : hit;
+      let best = null;
+      for (let j2 = i2 + 1; j2 <= word.length; j2++) {
+        if (lookupUnit(word.slice(i2, j2)) === void 0) continue;
+        const sub2 = walk(j2);
+        if (sub2 === null) continue;
+        const cand = { parts: 1 + sub2.parts, long: sub2.long || j2 - i2 >= 4 };
+        if (best === null || cand.parts > best.parts || cand.parts === best.parts && cand.long) best = cand;
+      }
+      memo.set(i2, best ?? { parts: -1, long: false });
+      return best;
+    };
+    const seg = walk(0);
+    if (seg !== null && seg.parts >= 3 && (seg.long || word.length >= 6)) {
+      return "a chain of glued units is never prose";
+    }
+  }
+  return null;
+}
+var NONPREFIXABLE_TAILS = /* @__PURE__ */ new Set(["in", "ft", "mi", "yd", "oz", "lb", "am", "pm", "ha", "an", "a", "h", "j", "d"]);
+function parsePowerWord(word) {
+  const m2 = /^(.+?)(⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+|2|3)$/.exec(word);
+  if (!m2) return void 0;
+  const base = exactAliases.get(m2[1]) ?? (siCaseAmbiguous(m2[1]) ? void 0 : ciAliases.get(m2[1].toLowerCase()) ?? CAL_BY_SYMBOL[m2[1].toLowerCase()]);
+  const isDigit2 = m2[2] === "2" || m2[2] === "3";
+  if (!base || base.affine) return void 0;
+  if (isDigit2 && !(Object.keys(base.dim).length === 1 && base.dim["length"] === 1)) return void 0;
+  const n2 = isDigit2 ? Number(m2[2]) : parseSupInt(m2[2]);
+  if (!Number.isFinite(n2) || n2 === 0 || n2 === 1 || Math.abs(n2) > 1e6) return void 0;
+  return { base, n: n2 };
+}
+function lookupPowerUnit(word) {
+  const cached2 = derivedCache.get(word);
+  if (cached2) return cached2;
+  const parsed = parsePowerWord(word);
+  if (!parsed) return void 0;
+  const { base, n: n2 } = parsed;
+  if (Math.abs(n2) > 1e6 && !base.factor && !base.factorDec) return void 0;
+  const dim = {};
+  for (const [k2, v2] of Object.entries(base.dim)) dim[k2] = v2 * n2;
+  const def = {
+    id: `${base.id}^${n2}`,
+    symbol: `${base.symbol}${n2 === 2 ? "\xB2" : n2 === 3 ? "\xB3" : supInt(n2)}`,
+    dim,
+    ...base.factor && {
+      factor: n2 >= 0 ? { n: base.factor.n ** BigInt(n2), d: base.factor.d ** BigInt(n2) } : { n: base.factor.d ** BigInt(-n2), d: base.factor.n ** BigInt(-n2) }
+    },
+    ...base.factorDec && { factorDec: new DecC(base.factorDec).pow(n2).toFixed() },
+    ...base.factorPi && {
+      factorPi: {
+        n: (n2 >= 0 ? base.factorPi.n : base.factorPi.d) ** BigInt(Math.abs(n2)),
+        d: (n2 >= 0 ? base.factorPi.d : base.factorPi.n) ** BigInt(Math.abs(n2)),
+        exp: base.factorPi.exp * n2
+      }
+    }
+  };
+  derivedCache.set(word, def);
+  return def;
+}
+function unitComps(word) {
+  const one = (w2) => {
+    const direct = exactAliases.get(w2) ?? (siCaseAmbiguous(w2) ? void 0 : ciAliases.get(w2.toLowerCase()) ?? CAL_BY_SYMBOL[w2.toLowerCase()]);
+    if (direct) return direct.affine ? void 0 : { def: direct, exp: 1 };
+    const p2 = parsePowerWord(w2);
+    return p2 ? { def: p2.base, exp: p2.n } : void 0;
+  };
+  if (!word.includes("\xB7")) {
+    const c2 = one(word);
+    return c2 ? [c2] : void 0;
+  }
+  const out = [];
+  for (const part of word.split("\xB7")) {
+    const c2 = one(part);
+    if (!c2) return void 0;
+    const same = out.find((o2) => o2.def.id === c2.def.id);
+    if (same) same.exp += c2.exp;
+    else out.push(c2);
+  }
+  return out.filter((o2) => o2.exp !== 0);
+}
+function compoundUnitParts(word) {
+  if (!word.includes("\xB7")) return void 0;
+  const parts = word.split("\xB7");
+  const defs = [];
+  for (const p2 of parts) {
+    const d2 = exactAliases.get(p2) ?? (siCaseAmbiguous(p2) ? void 0 : ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2) ?? CAL_BY_SYMBOL[p2.toLowerCase()]);
+    if (!d2 || d2.affine) return void 0;
+    defs.push(d2);
+  }
+  return defs;
+}
+function lookupCompoundUnit(word) {
+  const cached2 = derivedCache.get(word);
+  if (cached2) return cached2;
+  const defs = compoundUnitParts(word);
+  if (!defs) return void 0;
+  let dim = {};
+  for (const d2 of defs) dim = dimAdd(dim, d2.dim, 1);
+  const pure = defs.every((d2) => d2.factor && !d2.currency && !d2.factorDec);
+  const def = {
+    id: defs.map((d2) => d2.id).join("\xB7"),
+    symbol: defs.map((d2) => d2.symbol).join("\xB7"),
+    dim,
+    ...pure && {
+      factor: defs.reduce((acc, d2) => ({ n: acc.n * d2.factor.n, d: acc.d * d2.factor.d }), { n: 1n, d: 1n })
+    }
+  };
+  derivedCache.set(word, def);
+  return def;
+}
+var CAL_UNIT_DEFS = {
+  day: { id: "cal.day", symbol: "jour", dim: { caldays: 1 }, factor: { n: 1n, d: 1n } },
+  week: { id: "cal.week", symbol: "semaine", dim: { caldays: 1 }, factor: { n: 7n, d: 1n } },
+  month: { id: "cal.month", symbol: "mois", dim: { calmonths: 1 }, factor: { n: 1n, d: 1n } },
+  year: { id: "cal.year", symbol: "an", dim: { calmonths: 1 }, factor: { n: 12n, d: 1n } }
+};
+var CAL_BY_SYMBOL = {
+  jour: CAL_UNIT_DEFS.day,
+  semaine: CAL_UNIT_DEFS.week,
+  mois: CAL_UNIT_DEFS.month,
+  an: CAL_UNIT_DEFS.year
+};
+function lookupUnit(word) {
+  const exact = lookupExact(word);
+  if (exact) return exact;
+  if (siCaseAmbiguous(word)) return void 0;
+  return ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word) ?? lookupCompoundUnit(word);
+}
+function lookupExact(word) {
+  return exactAliases.get(word);
+}
+var exactLower = /* @__PURE__ */ new Set();
+function unitWordCaseTwin(word) {
+  if (exactLower.size === 0) for (const k2 of exactAliases.keys()) exactLower.add(k2.toLowerCase());
+  const w2 = word.toLowerCase();
+  return exactLower.has(w2) || ciAliases.has(w2);
+}
+var ratEq = (a2, b2) => a2.n * b2.d === b2.n * a2.d;
+function findUnitByDimFactor(dim, factor) {
+  for (const def of DEFS) {
+    if (def.factor && !def.currency && dimEquals(def.dim, dim) && ratEq(def.factor, factor)) return def;
+  }
+  const exp2 = dim["length"];
+  if ((exp2 === 2 || exp2 === 3) && Object.keys(dim).length === 1) {
+    for (const base of ["m", "km", "cm", "mm"]) {
+      const p2 = lookupPowerUnit(`${base}${exp2}`);
+      if (p2?.factor && ratEq(p2.factor, factor)) return p2;
+    }
+  }
+  return void 0;
+}
+var isUnitWord = (word) => lookupUnit(word) !== void 0;
+var isCurrencyWord = (word) => lookupUnit(word)?.currency !== void 0;
+function dimAdd(a2, b2, sign2) {
+  const out = { ...a2 };
+  for (const [k2, v2] of Object.entries(b2)) {
+    const sum2 = (out[k2] ?? 0) + sign2 * v2;
+    if (sum2 === 0) delete out[k2];
+    else out[k2] = sum2;
+  }
+  return out;
+}
+var dimIsEmpty = (d2) => Object.keys(d2).length === 0;
+var dimEquals = (a2, b2) => dimIsEmpty(dimAdd(a2, b2, -1));
+function decToRational(v2) {
+  const s2 = v2.toFixed();
+  const neg = s2.startsWith("-");
+  const body = neg ? s2.slice(1) : s2;
+  const [int2, frac = ""] = body.split(".");
+  const n2 = BigInt(int2 + frac);
+  return { n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) };
+}
+var rationalToDec = (x2) => new DecC(x2.n.toString()).div(x2.d.toString());
+function convertExact(value, from, to) {
+  if (from.factorDec || to.factorDec) {
+    const fA2 = from.factorDec ? new DecC(from.factorDec) : rationalToDec(from.factor);
+    const fB2 = to.factorDec ? new DecC(to.factorDec) : rationalToDec(to.factor);
+    return value.times(fA2).div(fB2);
+  }
+  const v2 = decToRational(value);
+  if (from.affine || to.affine) {
+    const A2 = from.affine ?? tripleFromLinear(from);
+    const B2 = to.affine ?? tripleFromLinear(to);
+    const kn = A2.a * v2.n + A2.b * v2.d;
+    const kd = A2.c * v2.d;
+    const rn = kn * B2.c - B2.b * kd;
+    const rd = kd * B2.a;
+    return rationalToDec({ n: rn, d: rd });
+  }
+  const fA = from.factor;
+  const fB = to.factor;
+  return rationalToDec({ n: v2.n * fA.n * fB.d, d: v2.d * fA.d * fB.n });
+}
+var tripleFromLinear = (u2) => ({
+  a: u2.factor.n,
+  b: 0n,
+  c: u2.factor.d
+});
+Object.setPrototypeOf(CAL_BY_SYMBOL, null);
+Object.setPrototypeOf(CAL_UNIT_DEFS, null);
+
+// ../textual-calculator/core/packages/engine/src/pi-bounds.ts
+var cache9 = /* @__PURE__ */ new Map();
+var atanInverse9 = (q9, scale9) => {
+  const qq9 = q9 * q9;
+  let power9 = q9, odd9 = 1n, positive9 = true, lo9 = 0n, hi9 = 0n;
+  for (; ; ) {
+    const den9 = power9 * odd9;
+    const floor9 = scale9 / den9;
+    if (floor9 === 0n) {
+      if (positive9) hi9++;
+      else lo9--;
+      return { lo: lo9, hi: hi9 };
+    }
+    const ceil9 = floor9 + (scale9 % den9 === 0n ? 0n : 1n);
+    if (positive9) {
+      lo9 += floor9;
+      hi9 += ceil9;
+    } else {
+      lo9 -= ceil9;
+      hi9 -= floor9;
+    }
+    power9 *= qq9;
+    odd9 += 2n;
+    positive9 = !positive9;
+  }
+};
+var piBounds9 = (digits9) => {
+  if (!Number.isSafeInteger(digits9) || digits9 < 1 || digits9 > 6e3) throw new RangeError("pi precision");
+  const old9 = cache9.get(digits9);
+  if (old9 !== void 0) return old9;
+  const den9 = 10n ** BigInt(digits9 + 12);
+  const a9 = atanInverse9(5n, den9), b9 = atanInverse9(239n, den9);
+  const bounds9 = Object.freeze({ lo: 16n * a9.lo - 4n * b9.hi, hi: 16n * a9.hi - 4n * b9.lo, den: den9 });
+  cache9.set(digits9, bounds9);
+  return bounds9;
+};
+var piUnitInterval9 = (def9, precision9) => {
+  const recipe9 = def9.factorPi;
+  if (def9.constSym !== "\u03A0" && recipe9 === void 0) return null;
+  const p9 = piBounds9(precision9);
+  const Dlo9 = DecC.clone({ precision: precision9, rounding: 3 });
+  const Dhi9 = DecC.clone({ precision: precision9, rounding: 2 });
+  const lo9 = new Dlo9(p9.lo.toString()).div(p9.den.toString());
+  const hi9 = new Dhi9(p9.hi.toString()).div(p9.den.toString());
+  if (recipe9 === void 0) return [lo9, hi9];
+  if (recipe9.n <= 0n || recipe9.d <= 0n || !Number.isSafeInteger(recipe9.exp)) throw new Error("invalid pi unit recipe");
+  const a9 = new Dlo9(recipe9.n.toString()).div(recipe9.d.toString());
+  const b9 = new Dhi9(recipe9.n.toString()).div(recipe9.d.toString());
+  return recipe9.exp >= 0 ? [a9.times(lo9.pow(recipe9.exp)), b9.times(hi9.pow(recipe9.exp))] : [a9.div(hi9.pow(-recipe9.exp)), b9.div(lo9.pow(-recipe9.exp))];
+};
+
 // ../textual-calculator/core/packages/engine/src/rat.ts
 var bgcd = (a2, b2) => {
   a2 = a2 < 0n ? -a2 : a2;
@@ -23348,6 +24210,27 @@ var rFloor = (x2) => {
 };
 
 // ../textual-calculator/core/packages/engine/src/terms.ts
+var expandPiComps9 = (comps9) => {
+  let scale9 = { n: 1n, d: 1n };
+  let pi9 = 0;
+  const out9 = [];
+  for (const c9 of comps9) {
+    const recipe9 = c9.def.factorPi;
+    if (recipe9 !== void 0) {
+      scale9 = rMul(scale9, rPowInt({ n: recipe9.n, d: recipe9.d }, c9.exp));
+      pi9 += recipe9.exp * c9.exp;
+      out9.push({ def: {
+        id: `pi-base:${c9.def.id}`,
+        symbol: c9.def.symbol,
+        dim: c9.def.dim,
+        factor: { n: 1n, d: 1n }
+      }, exp: c9.exp });
+    } else if (c9.def.constSym === "\u03A0") pi9 += c9.exp;
+    else out9.push(c9);
+  }
+  if (pi9 !== 0) out9.push({ def: PI_ATOM, exp: pi9 });
+  return { scale: scale9, comps: out9 };
+};
 var canonComps = (list) => {
   const out = [];
   for (const c2 of list) {
@@ -23361,8 +24244,9 @@ var mkTerm = (x2, comps, aux) => ({ x: x2, comps, aux });
 var termCanon = (t2, thirty) => {
   const dims = /* @__PURE__ */ new Map();
   const sym = [];
-  let fold = { n: 1n, d: 1n };
-  for (const c2 of t2.comps) {
+  const expanded9 = expandPiComps9(t2.comps);
+  let fold = expanded9.scale;
+  for (const c2 of expanded9.comps) {
     const d2 = c2.def;
     if (d2.currency !== void 0) {
       sym.push(`C:${d2.currency}^${c2.exp}`);
@@ -23440,7 +24324,7 @@ var termVecInner = (t2, thirty) => {
   const bump = (k2, e) => {
     v2.set(k2, (v2.get(k2) ?? 0) + e);
   };
-  for (const c2 of t2.comps) {
+  for (const c2 of expandPiComps9(t2.comps).comps) {
     const d2 = c2.def;
     if (d2.currency !== void 0) {
       bump(`C:${d2.currency}`, c2.exp);
@@ -23566,9 +24450,14 @@ var polyDiv = (num9, den9, thirty) => {
 var termsProject = (list9, thirty) => {
   let acc9 = { n: 0n, d: 1n };
   for (const t9 of list9) {
-    let x9 = t9.x;
-    for (const c9 of t9.comps) {
+    const expanded9 = expandPiComps9(t9.comps);
+    let x9 = rMul(t9.x, expanded9.scale);
+    for (const c9 of expanded9.comps) {
       if (c9.def.currency !== void 0) return null;
+      if (c9.def.constSym === "\u03A0") {
+        if (x9.n === 0n) continue;
+        return null;
+      }
       if (c9.def.factorDec !== void 0) x9 = rMul(x9, rPowInt(decToRat(new DecC(c9.def.factorDec)), c9.exp));
       else if (c9.def.factor !== void 0) {
         let f9 = ratOfFactor(c9.def.factor);
@@ -23585,9 +24474,26 @@ var termsProject = (list9, thirty) => {
 
 // ../textual-calculator/core/packages/engine/src/shadow.ts
 var pureCurrencyLabelForReemit9 = (d9) => {
-  if (d9.currency === void 0 || d9.factor !== void 0 || d9.factorDec !== void 0 || d9.constSym !== void 0 || d9.affine !== void 0) return false;
+  if (d9.currency === void 0 || d9.factor !== void 0 || d9.factorDec !== void 0 || d9.factorPi !== void 0 || d9.constSym !== void 0 || d9.affine !== void 0) return false;
   const live9 = Object.entries(d9.dim).filter(([, x9]) => x9 !== 0);
   return live9.length === 0 || live9.length === 1 && live9[0][0] === "currency" && live9[0][1] === 1;
+};
+var piDifferenceDimensionCompatible9 = (terms9, thirty9) => {
+  let expected9;
+  for (const term9 of terms9) {
+    if (term9.x.n === 0n) continue;
+    const dims9 = /* @__PURE__ */ new Map();
+    for (const comp9 of term9.comps) for (const [axis9, power9] of Object.entries(comp9.def.dim)) {
+      const canonical9 = axis9 === "tempdelta" ? "temperature" : thirty9 && axis9 === "calmonths" ? "caldays" : axis9;
+      const exponent9 = (dims9.get(canonical9) ?? 0) + power9 * comp9.exp;
+      if (!Number.isFinite(exponent9)) return false;
+      if (exponent9 === 0) dims9.delete(canonical9);
+      else dims9.set(canonical9, exponent9);
+    }
+    if (expected9 !== void 0 && (expected9.size !== dims9.size || [...expected9].some(([axis9, power9]) => dims9.get(axis9) !== power9))) return false;
+    expected9 = dims9;
+  }
+  return true;
 };
 var projectIval = (list, thirty, prec, currencyAsOne = false) => {
   const Dlo = DecC.clone({ precision: prec, rounding: 3 });
@@ -23596,16 +24502,21 @@ var projectIval = (list, thirty, prec, currencyAsOne = false) => {
   let lo = new Dlo(0);
   let hi = new Dhi(0);
   for (const t2 of list) {
+    const expanded9 = expandPiComps9(t2.comps);
+    const coefficient9 = rMul(t2.x, expanded9.scale);
     let flo = new Dlo(1);
     let fhi = new Dhi(1);
-    for (const c2 of t2.comps) {
+    for (const c2 of expanded9.comps) {
       let blo;
       let bhi;
       if (c2.def.currency !== void 0) {
         if (currencyAsOne && pureCurrencyLabelForReemit9(c2.def)) continue;
         return null;
       }
-      if (c2.def.factorDec !== void 0) {
+      const pi9 = piUnitInterval9(c2.def, prec);
+      if (pi9 !== null) {
+        [blo, bhi] = pi9;
+      } else if (c2.def.factorDec !== void 0) {
         blo = new Dlo(c2.def.factorDec);
         bhi = new Dhi(c2.def.factorDec);
       } else if (c2.def.factor !== void 0) {
@@ -23626,9 +24537,9 @@ var projectIval = (list, thirty, prec, currencyAsOne = false) => {
         fhi = fhi.div(blo.pow(e));
       }
     }
-    const xlo = dec2(Dlo, t2.x.n, t2.x.d);
-    const xhi = dec2(Dhi, t2.x.n, t2.x.d);
-    if (t2.x.n >= 0n) {
+    const xlo = dec2(Dlo, coefficient9.n, coefficient9.d);
+    const xhi = dec2(Dhi, coefficient9.n, coefficient9.d);
+    if (coefficient9.n >= 0n) {
       lo = lo.plus(xlo.times(flo));
       hi = hi.plus(xhi.times(fhi));
     } else {
@@ -23699,6 +24610,7 @@ var snapDefCapRaw9 = (d9) => {
   const id9 = requireStringField9("id", d9.id);
   const sym9 = requireStringField9("symbol", d9.symbol);
   const f9 = d9.factor;
+  const fp9 = d9.factorPi;
   const fd0 = d9.factorDec;
   const fd9 = fd0 === void 0 ? void 0 : requireStringField9("factorDec", fd0);
   const cs0 = d9.constSym;
@@ -23712,12 +24624,15 @@ var snapDefCapRaw9 = (d9) => {
   const dim9 = {};
   for (const [k9, v9] of dimPairs9) dim9[k9] = v9;
   const fSnap9 = f9 === void 0 ? void 0 : Object.freeze({ n: requireBigintField9("factor.n", f9.n), d: requireBigintField9("factor.d", f9.d) });
+  const fpSnap9 = fp9 === void 0 ? void 0 : Object.freeze({ n: requireBigintField9("factorPi.n", fp9.n), d: requireBigintField9("factorPi.d", fp9.d), exp: requireNumberField9("factorPi.exp", fp9.exp) });
+  if (fpSnap9 !== void 0 && (fpSnap9.n <= 0n || fpSnap9.d <= 0n || !Number.isSafeInteger(fpSnap9.exp))) throw new Error("shadow capture: invalid factorPi");
   const aSnap9 = aff9 === void 0 ? void 0 : Object.freeze({ a: requireBigintField9("affine.a", aff9.a), b: requireBigintField9("affine.b", aff9.b), c: requireBigintField9("affine.c", aff9.c) });
   const snap9 = Object.freeze({
     id: id9,
     symbol: sym9,
     dim: Object.freeze(dim9),
     ...fSnap9 !== void 0 && { factor: fSnap9 },
+    ...fpSnap9 !== void 0 && { factorPi: fpSnap9 },
     ...fd9 !== void 0 && { factorDec: fd9 },
     ...cs9 !== void 0 && { constSym: cs9 },
     ...aSnap9 !== void 0 && { affine: aSnap9 },
@@ -23734,6 +24649,7 @@ var snapDefCapRaw9 = (d9) => {
     aSnap9 === void 0 ? ["u"] : ["s", aSnap9.a.toString(), aSnap9.b.toString(), aSnap9.c.toString()],
     opt9(cur9)
   ];
+  if (fpSnap9 !== void 0) sem9.push(["pi", fpSnap9.n.toString(), fpSnap9.d.toString(), String(fpSnap9.exp)]);
   SNAP_BRAND9.add(snap9);
   return { snap: snap9, sem: deepFreeze9(sem9), id9 };
 };
@@ -23953,6 +24869,10 @@ var ShadowFraction = class _ShadowFraction {
   static zero(thirty) {
     return new _ShadowFraction(SF_CTOR9, [], ONE_TERMS(), thirty);
   }
+  /** Source-owned mathematical constant. A written decimal never calls this. */
+  static piMultiple9(k9, thirty9) {
+    return new _ShadowFraction(SF_CTOR9, [mkTerm(rnorm(k9), [{ def: PI_ATOM, exp: 1 }], false)], ONE_TERMS(), thirty9);
+  }
   // ─── authority ────────────────────────────────────────────────────────────
   /** Does the NUMERATOR carry a captured-decimal (auxiliary) term? The reemit's
    * zero decision reads ONLY this — the denominator never requalifies it. */
@@ -23974,8 +24894,15 @@ var ShadowFraction = class _ShadowFraction {
     if (iv === null) return "unsupported";
     const [lo, hi] = iv;
     if (lo.gt(0) || hi.lt(0)) return "nonzero";
+    if (this.hasPi9()) {
+      for (const precision9 of [160, 320, 640, 1280, 2560, 5120]) {
+        const refined9 = projectIval(this.#num, this.#thirty, precision9);
+        if (refined9 === null) return "unsupported";
+        if (refined9[0].gt(0) || refined9[1].lt(0)) return "nonzero";
+      }
+    }
     const nx = termsProject(this.#num, this.#thirty);
-    if (nx === null) return "unsupported";
+    if (nx === null) return "undecidable";
     if (rnorm(nx).n !== 0n) return "nonzero";
     return this.numeratorAuxiliary() ? "auxiliary-zero" : "authoritative-zero";
   }
@@ -24113,12 +25040,28 @@ var ShadowFraction = class _ShadowFraction {
     if (!lo.gt(0) && !hi.lt(0)) return { kind: "straddle" };
     return { kind: "ok", lo, hi };
   }
+  /** Strict interval of the whole fraction. Division rounds outwards on
+   * all four endpoint pairs; provider labels never become numeric ×1. */
+  interval9(prec9) {
+    const n9 = this.numeratorInterval(prec9), d9 = this.denominatorInterval(prec9);
+    if (n9.kind !== "ok") return n9;
+    if (d9.kind !== "ok") return d9;
+    const Lo9 = DecC.clone({ precision: prec9, rounding: 3 });
+    const Hi9 = DecC.clone({ precision: prec9, rounding: 2 });
+    const lower9 = [n9.lo, n9.hi].flatMap((n2) => [d9.lo, d9.hi].map((d2) => new Lo9(n2.toString()).div(d2.toString())));
+    const upper9 = [n9.lo, n9.hi].flatMap((n2) => [d9.lo, d9.hi].map((d2) => new Hi9(n2.toString()).div(d2.toString())));
+    return { kind: "ok", lo: Lo9.min(...lower9), hi: Hi9.max(...upper9) };
+  }
   /** Exact rational numerator/denominator projection over the engine's rounded
    * constants (expensive for high-exponent factorDec — the interval is the
    * cheap path). Null when a component has no numeric recipe. */
   projectExact() {
     const nx = termsProject(this.#num, this.#thirty);
     const dx = termsProject(this.#den, this.#thirty);
+    if (nx !== null && nx.n === 0n && dx === null && this.hasPi9()) {
+      const divisor9 = new _ShadowFraction(SF_CTOR9, this.#den, ONE_TERMS(), this.#thirty);
+      if (divisor9.zeroState() === "nonzero") return { num: nx, den: { n: 1n, d: 1n } };
+    }
     if (nx === null || dx === null) return null;
     return { num: nx, den: dx };
   }
@@ -24177,7 +25120,38 @@ var ShadowFraction = class _ShadowFraction {
    * — this reproduces reemit's `approx9` gate WITHOUT the caller touching
    * terms/termsDen (audit interne #78 Phase 1p). */
   hasApproxFactor() {
-    return this.#num.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0)) || this.#den.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
+    return this.#num.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0 || c2.def.factorPi !== void 0 || c2.def.constSym === "\u03A0")) || this.#den.some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0 || c2.def.factorPi !== void 0 || c2.def.constSym === "\u03A0"));
+  }
+  hasPi9() {
+    return [this.#num, this.#den].some((face9) => face9.some((term9) => term9.comps.some((comp9) => comp9.def.constSym === "\u03A0" || comp9.def.factorPi !== void 0)));
+  }
+  /** Exact integer power, bounded by the existing algebra budgets. This
+   * pure-value operation does not transport a provider/CaptureAtom residue. */
+  powInteger9(exponent9) {
+    if (this.#prov9 !== null) return { kind: "unsupported" };
+    let n9 = exponent9 < 0n ? -exponent9 : exponent9;
+    if (n9 > 10000n) return { kind: "budget-exhausted" };
+    let base9 = this;
+    if (exponent9 < 0n) {
+      const inverse9 = this.invert();
+      if (inverse9.kind !== "ok") return inverse9;
+      base9 = inverse9.value;
+    }
+    let out9 = _ShadowFraction.scalar({ n: 1n, d: 1n }, false, this.#thirty);
+    while (n9 > 0n) {
+      if ((n9 & 1n) !== 0n) {
+        const product9 = out9.mul(base9);
+        if (product9.kind !== "ok") return product9;
+        out9 = product9.value;
+      }
+      n9 >>= 1n;
+      if (n9 > 0n) {
+        const square9 = base9.mul(base9);
+        if (square9.kind !== "ok") return square9;
+        base9 = square9.value;
+      }
+    }
+    return { kind: "ok", value: out9 };
   }
   /** REEMISSION-ONLY interval projection (audit interne #78 Phase 1p, option a):
    * numerator AND denominator brackets together, treating a CURRENCY comp as an
@@ -24197,10 +25171,13 @@ var ShadowFraction = class _ShadowFraction {
   /** Sign of a term list's projection: +1 / −1, or 0 when undecided/unsupported
    * (bracket straddles zero at prec 80, or a recipe-less comp). */
   #signOf(list) {
-    const iv = projectIval(list, this.#thirty, 80);
-    if (iv === null) return 0;
-    if (iv[0].gt(0)) return 1;
-    if (iv[1].lt(0)) return -1;
+    const pi9 = list.some((term9) => term9.comps.some((comp9) => comp9.def.constSym === "\u03A0" || comp9.def.factorPi !== void 0));
+    for (const precision9 of pi9 ? [80, 160, 320, 640, 1280, 2560, 5120] : [80]) {
+      const iv = projectIval(list, this.#thirty, precision9);
+      if (iv === null) return 0;
+      if (iv[0].gt(0)) return 1;
+      if (iv[1].lt(0)) return -1;
+    }
     return 0;
   }
   /** Ordered comparison this − other ∈ {−1, 0, 1}, or null when not provably
@@ -24214,6 +25191,22 @@ var ShadowFraction = class _ShadowFraction {
     const b2 = this.#distribute(other.#num, this.#den);
     if (a2 === null || b2 === null) return null;
     const s2 = termsCmp(a2, b2, this.#thirty);
+    if (s2 === null && (this.hasPi9() || other.hasPi9())) {
+      const num9 = mergeTerms(a2, b2, -1n, this.#thirty, true);
+      if (!piDifferenceDimensionCompatible9(num9, this.#thirty)) return null;
+      const den9 = this.#distribute(this.#den, other.#den);
+      if (den9 === null) return null;
+      const difference9 = new _ShadowFraction(SF_CTOR9, num9, den9, this.#thirty);
+      for (const precision9 of [80, 160, 320, 640, 1280, 2560, 5120]) {
+        const bracket9 = difference9.interval9(precision9);
+        if (bracket9.kind === "unsupported") return null;
+        if (bracket9.kind === "ok") {
+          if (bracket9.lo.gt(0)) return 1;
+          if (bracket9.hi.lt(0)) return -1;
+        }
+      }
+      return null;
+    }
     if (s2 === null) return null;
     if (s2 === 0) {
       return mergeTerms(a2, b2, -1n, this.#thirty, true).length === 0 ? 0 : null;
@@ -24545,7 +25538,7 @@ function fingerprintFromRT(rt2) {
   return legacyFingerprint(rt2.terms, rt2.termsDen);
 }
 function shadowApproxFromRT(rt2) {
-  const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0));
+  const has = (l2) => (l2 ?? []).some((t2) => t2.comps.some((c2) => c2.def.factorDec !== void 0 || c2.def.factorPi !== void 0 || c2.def.constSym === "\u03A0"));
   if (rt2 !== null) rt2 = shadowReadSlots9(rt2);
   return rt2 !== null && (has(rt2.terms) || has(rt2.termsDen));
 }
@@ -25781,7 +26774,7 @@ function DefineIntrinsic(e, r3) {
 function GetIntrinsic(e) {
   return t[e];
 }
-var r;
+var r2;
 var o;
 var n = "slot-epochNanoSeconds";
 var a = "slot-timezone-identifier";
@@ -25813,7 +26806,7 @@ var R = "slot-nanoseconds";
 var F = "slot-calendar-identifier";
 var Y = /* @__PURE__ */ new WeakMap();
 var P2 = /* @__PURE__ */ Symbol.for("@@Temporal__GetSlots");
-(r = globalThis)[P2] || (r[P2] = function _GetSlots(e) {
+(r2 = globalThis)[P2] || (r2[P2] = function _GetSlots(e) {
   return Y.get(e);
 });
 var Z = globalThis[P2];
@@ -30907,6 +31900,7 @@ var snapDef9 = (d9) => {
   const fd9 = d9.factorDec;
   const aff9 = d9.affine;
   const f9 = d9.factor;
+  const fp9 = d9.factorPi;
   const dim9 = {};
   for (const [k9, v9] of Object.entries(d9.dim)) dim9[requireCleanText9("dimAxis", k9)] = v9;
   const out9 = {
@@ -30914,6 +31908,7 @@ var snapDef9 = (d9) => {
     symbol: symbol9,
     dim: Object.freeze(dim9),
     ...f9 !== void 0 && { factor: Object.freeze({ n: f9.n, d: f9.d }) },
+    ...fp9 !== void 0 && { factorPi: Object.freeze({ n: fp9.n, d: fp9.d, exp: fp9.exp }) },
     ...fd9 !== void 0 && { factorDec: requireCleanText9("factorDec", fd9) },
     ...cs9 !== void 0 && { constSym: requireCleanText9("constSym", cs9) },
     ...aff9 !== void 0 && { affine: Object.freeze({ a: aff9.a, b: aff9.b, c: aff9.c }) },
@@ -30955,7 +31950,7 @@ var symTag9 = (d9, exp9) => {
 var normalComps9 = (comps9, thirty9) => {
   const dims9 = /* @__PURE__ */ new Map();
   const syms9 = [];
-  for (const c9 of comps9) {
+  for (const c9 of expandPiComps9(comps9).comps) {
     const d9 = c9.def;
     if (d9.currency !== void 0 || d9.constSym !== void 0 || d9.factorDec !== void 0 || d9.affine !== void 0) {
       const s9 = canonSymDef9(d9);
@@ -31903,12 +32898,25 @@ var authorityPatternMatches9 = (pair9, num9, den9) => stringSetsEqual9(pair9.aut
 var rewriteAuthorityPattern9 = (fraction9, numeratorKeys9, denominatorKeys9, carrier9) => {
   const thirty9 = fraction9.thirty9();
   const [num9, den9] = fractionFaces9(fraction9);
-  const rewrite9 = (terms9, keys9) => terms9.map((term9) => ({
-    x: term9.x,
-    comps: [...term9.comps],
-    aux: keys9.has(termCanon(term9, thirty9).key)
-  }));
-  const rebuilt9 = ShadowFraction.fromLegacy(rewrite9(num9, numeratorKeys9), rewrite9(den9, denominatorKeys9), thirty9);
+  const pair9 = requirePair9(carrier9);
+  const rewrite9 = (terms9, keys9, causal9) => {
+    const out9 = terms9.map((term9) => ({
+      x: term9.x,
+      comps: [...term9.comps],
+      aux: keys9.has(termCanon(term9, thirty9).key)
+    }));
+    const present9 = new Set(out9.map((term9) => termCanon(term9, thirty9).key));
+    for (const entry9 of causal9.entries) {
+      const comps9 = entry9.shape.comps.map((comp9) => ({ def: comp9.def, exp: comp9.exp }));
+      const key9 = termCanon({ x: { n: 0n, d: 1n }, comps: comps9, aux: true }, thirty9).key;
+      if (keys9.has(key9) && !present9.has(key9)) {
+        out9.push({ x: { n: 0n, d: 1n }, comps: comps9, aux: true });
+        present9.add(key9);
+      }
+    }
+    return out9;
+  };
+  const rebuilt9 = ShadowFraction.fromLegacy(rewrite9(num9, numeratorKeys9, pair9.causal.num), rewrite9(den9, denominatorKeys9, pair9.causal.den), thirty9);
   if (rebuilt9.kind !== "ok") throw new Error(`capture-authority: proved rewrite became ${rebuilt9.kind}`);
   void carrier9;
   return rebuilt9.value;
@@ -31947,6 +32955,10 @@ function captureFreeOutput9(fraction9, value9) {
   if (reduced9.kind === "error") return { ok: false, reason: reduced9.reason === "budget-exceeded" ? "face-mismatch" : "face-mismatch" };
   const captureFree9 = reduced9.kind === "capture-free-zero" || reduced9.captureFree;
   if (!captureFree9) return { ok: false, reason: "face-mismatch" };
+  const pair9 = requirePair9(value9);
+  if (fraction9.hasPi9() && captureValuationFacesMatch9(fraction9, pair9.valuation)) {
+    return { ok: true, value: rewriteAuthorityPattern9(fraction9, /* @__PURE__ */ new Set(), /* @__PURE__ */ new Set(), value9) };
+  }
   const scalar9 = fraction9.reduceScalar();
   const exact9 = scalar9.kind === "reduced" ? null : fraction9.projectExact();
   if (scalar9.kind !== "reduced" && exact9 === null) return { ok: false, reason: "face-mismatch" };
@@ -32287,6 +33299,9 @@ var carrierKey9 = (value9) => {
   let v9;
   let vx9;
   let base9;
+  let n9;
+  let d9;
+  let origin9;
   let dim9;
   let symbol9;
   let def9;
@@ -32299,6 +33314,11 @@ var carrierKey9 = (value9) => {
   let termsDen9;
   try {
     t9 = Reflect.get(carrier9, "t");
+    if (t9 === "f") {
+      n9 = Reflect.get(carrier9, "n");
+      d9 = Reflect.get(carrier9, "d");
+      origin9 = Reflect.get(carrier9, "origin");
+    }
     v9 = Reflect.get(carrier9, "v");
     vx9 = Reflect.get(carrier9, "vx");
     base9 = Reflect.get(carrier9, "base");
@@ -32315,14 +33335,20 @@ var carrierKey9 = (value9) => {
   } catch {
     return null;
   }
-  if (t9 !== "d" && t9 !== "q" || typeof v9 !== "object" || v9 === null || capped92 !== true || !Array.isArray(capF9) || capF9.length === 0 || terms9 !== void 0 || termsDen9 !== void 0) return null;
+  if (t9 !== "d" && t9 !== "q" && t9 !== "f" || t9 !== "f" && (typeof v9 !== "object" || v9 === null) || capped92 !== true || !Array.isArray(capF9) || terms9 !== void 0 || termsDen9 !== void 0) return null;
   let shown9;
   let exact9;
   try {
-    shown9 = v9.toString();
-    const vxRat9 = vx9 === void 0 ? null : readRat9(vx9);
-    if (vx9 !== void 0 && vxRat9 === null) return null;
-    exact9 = vxRat9 ?? rnorm(decToRat(v9));
+    if (t9 === "f") {
+      if (typeof n9 !== "bigint" || typeof d9 !== "bigint" || d9 === 0n || origin9 !== "literal" && origin9 !== "derived") return null;
+      exact9 = rnorm({ n: n9, d: d9 });
+      shown9 = `${n9}/${d9}`;
+    } else {
+      shown9 = v9.toString();
+      const vxRat9 = vx9 === void 0 ? null : readRat9(vx9);
+      if (vx9 !== void 0 && vxRat9 === null) return null;
+      exact9 = vxRat9 ?? rnorm(decToRat(v9));
+    }
   } catch {
     return null;
   }
@@ -32412,6 +33438,8 @@ var carrierKey9 = (value9) => {
       rateSem9,
       hasOwn9(carrier9, "chosen") ? `chosen:${String(chosen9)}` : "chosen:absent"
     );
+  } else if (t9 === "f") {
+    envelope9.push("f", String(origin9));
   } else {
     envelope9.push("d", hasOwn9(carrier9, "base") ? `base:${String(base9)}` : "base:absent");
   }
@@ -32517,810 +33545,6 @@ function bindCaptureBoundedReserve9(causes9, output9, step9) {
 }
 Object.freeze(CaptureBoundedCause9.prototype);
 Object.freeze(CaptureBoundedCause9);
-
-// ../textual-calculator/core/packages/engine/src/units.ts
-var r2 = (n2, d2 = 1n) => ({ n: BigInt(n2), d: BigInt(d2) });
-var PI_ATOM = {
-  id: "const:pi",
-  symbol: "\u03A0",
-  dim: {},
-  constSym: "\u03A0",
-  factorDec: "3.141592653589793238462643383279502884197"
-};
-var DEFS = [
-  // length (base m)
-  { id: "m", symbol: "m", dim: { length: 1 }, factor: r2(1) },
-  { id: "km", symbol: "km", dim: { length: 1 }, factor: r2(1e3) },
-  { id: "cm", symbol: "cm", dim: { length: 1 }, factor: r2(1, 100) },
-  { id: "mm", symbol: "mm", dim: { length: 1 }, factor: r2(1, 1e3) },
-  { id: "mi", symbol: "mi", dim: { length: 1 }, factor: r2(1609344, 1e3) },
-  { id: "ft", symbol: "ft", dim: { length: 1 }, factor: r2(3048, 1e4) },
-  { id: "inch", symbol: "in", dim: { length: 1 }, factor: r2(254, 1e4) },
-  { id: "yard", symbol: "yd", dim: { length: 1 }, factor: r2(9144, 1e4) },
-  // mass (base kg)
-  { id: "kg", symbol: "kg", dim: { mass: 1 }, factor: r2(1) },
-  { id: "g", symbol: "g", dim: { mass: 1 }, factor: r2(1, 1e3) },
-  { id: "mg", symbol: "mg", dim: { mass: 1 }, factor: r2(1, 1e6) },
-  { id: "tonne", symbol: "t", dim: { mass: 1 }, factor: r2(1e3) },
-  { id: "lb", symbol: "lb", dim: { mass: 1 }, factor: r2(45359237, 1e8) },
-  { id: "oz", symbol: "oz", dim: { mass: 1 }, factor: r2(28349523125n, 1000000000000n) },
-  // temperature (base K) — K and R are LINEAR (zero offset: true ratio
-  // scales); °C/°F carry affine triples K = (a·v + b)/c and refuse ×/÷
-  { id: "kelvin", symbol: "K", dim: { temperature: 1 }, factor: r2(1) },
-  { id: "celsius", symbol: "\xB0C", dim: { temperature: 1 }, affine: { a: 100n, b: 27315n, c: 100n } },
-  { id: "fahrenheit", symbol: "\xB0F", dim: { temperature: 1 }, affine: { a: 500n, b: 229835n, c: 900n } },
-  { id: "rankine", symbol: "R", dim: { temperature: 1 }, factor: r2(5, 9) },
-  // temperature DELTAS (auditor: absolute temperatures and thermal offsets
-  // must not share a type) — own dimension, linear, base ΔK
-  { id: "deltaK", symbol: "\u0394K", dim: { tempdelta: 1 }, factor: r2(1) },
-  { id: "deltaC", symbol: "\u0394\xB0C", dim: { tempdelta: 1 }, factor: r2(1) },
-  { id: "deltaF", symbol: "\u0394\xB0F", dim: { tempdelta: 1 }, factor: r2(5, 9) },
-  // information (base B, SI decimal multiples)
-  { id: "B", symbol: "B", dim: { information: 1 }, factor: r2(1) },
-  { id: "KB", symbol: "KB", dim: { information: 1 }, factor: r2(1e3) },
-  { id: "MB", symbol: "MB", dim: { information: 1 }, factor: r2(1e6) },
-  { id: "GB", symbol: "GB", dim: { information: 1 }, factor: r2(1e9) },
-  { id: "TB", symbol: "TB", dim: { information: 1 }, factor: r2(1000000000000n) },
-  { id: "bit", symbol: "bit", dim: { information: 1 }, factor: r2(1, 8) },
-  { id: "Mb", symbol: "Mb", dim: { information: 1 }, factor: r2(125e3) },
-  // time (base s) — h/min/s are UNITS; day/week/month/year stay CALENDAR timespans
-  { id: "second", symbol: "s", dim: { time: 1 }, factor: r2(1) },
-  { id: "minute", symbol: "min", dim: { time: 1 }, factor: r2(60) },
-  { id: "hour", symbol: "h", dim: { time: 1 }, factor: r2(3600) },
-  // volume (base m³, consistent with length³ exponent lookup)
-  { id: "litre", symbol: "l", dim: { length: 3 }, factor: r2(1, 1e3) },
-  { id: "microgram", symbol: "\xB5g", dim: { mass: 1 }, factor: r2(1, 1e9) },
-  { id: "micrometre", symbol: "\xB5m", dim: { length: 1 }, factor: r2(1, 1e6) },
-  { id: "microlitre", symbol: "\xB5l", dim: { length: 3 }, factor: r2(1, 1e9) },
-  { id: "microsecond", symbol: "\xB5s", dim: { time: 1 }, factor: r2(1, 1e6) },
-  { id: "nanosecond", symbol: "ns", dim: { time: 1 }, factor: r2(1, 1e9) },
-  { id: "hertz", symbol: "Hz", dim: { time: -1 }, factor: r2(1, 1) },
-  { id: "kilohertz", symbol: "kHz", dim: { time: -1 }, factor: r2(1e3, 1) },
-  { id: "megahertz", symbol: "MHz", dim: { time: -1 }, factor: r2(1e6, 1) },
-  { id: "gigahertz", symbol: "GHz", dim: { time: -1 }, factor: r2(1e9, 1) },
-  { id: "terahertz", symbol: "THz", dim: { time: -1 }, factor: r2(1e12, 1) },
-  { id: "millisecond", symbol: "ms", dim: { time: 1 }, factor: r2(1, 1e3) },
-  { id: "nanometre", symbol: "nm", dim: { length: 1 }, factor: r2(1, 1e9) },
-  { id: "newton", symbol: "N", dim: { mass: 1, length: 1, time: -2 }, factor: r2(1, 1) },
-  { id: "pascal", symbol: "Pa", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1, 1) },
-  { id: "kilopascal", symbol: "kPa", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1e3, 1) },
-  { id: "bar", symbol: "bar", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1e5, 1) },
-  { id: "ampere", symbol: "A", dim: { current: 1 }, factor: r2(1, 1) },
-  { id: "milliampere", symbol: "mA", dim: { current: 1 }, factor: r2(1, 1e3) },
-  { id: "microampere", symbol: "\xB5A", dim: { current: 1 }, factor: r2(1, 1e6) },
-  { id: "kiloampere", symbol: "kA", dim: { current: 1 }, factor: r2(1e3, 1) },
-  { id: "volt", symbol: "V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1) },
-  { id: "kilovolt", symbol: "kV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1e3, 1) },
-  { id: "microvolt", symbol: "\xB5V", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1e6) },
-  { id: "picowatt", symbol: "pW", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1, 1000000000000n) },
-  { id: "farad", symbol: "F", dim: { mass: -1, length: -2, time: 4, current: 2 }, factor: r2(1, 1) },
-  { id: "picofarad", symbol: "pF", dim: { mass: -1, length: -2, time: 4, current: 2 }, factor: r2(1, 1000000000000n) },
-  { id: "millivolt", symbol: "mV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1e3) },
-  { id: "picovolt", symbol: "pV", dim: { mass: 1, length: 2, time: -3, current: -1 }, factor: r2(1, 1000000000000n) },
-  { id: "milliwatt", symbol: "mW", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1, 1e3) },
-  { id: "ohm", symbol: "\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1, 1) },
-  { id: "kilohm", symbol: "k\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1e3, 1) },
-  { id: "megohm", symbol: "M\u03A9", dim: { mass: 1, length: 2, time: -3, current: -2 }, factor: r2(1e6, 1) },
-  { id: "mole", symbol: "mol", dim: { amount: 1 }, factor: r2(1, 1) },
-  // pH — the ㏗ ligature maps here; a registered atom, never silent prose
-  { id: "pH", symbol: "pH", dim: { acidity: 1 }, factor: r2(1, 1) },
-  { id: "ml", symbol: "ml", dim: { length: 3 }, factor: r2(1, 1e6) },
-  { id: "cl", symbol: "cl", dim: { length: 3 }, factor: r2(1, 1e5) },
-  { id: "dl", symbol: "dl", dim: { length: 3 }, factor: r2(1, 1e4) },
-  { id: "gallon", symbol: "gal", dim: { length: 3 }, factor: r2(3785411784n, 1000000000000n) },
-  // area extras (m²/km²/… come from the exponent lookup)
-  { id: "hectare", symbol: "ha", dim: { length: 2 }, factor: r2(1e4) },
-  { id: "acre", symbol: "acre", dim: { length: 2 }, factor: r2(40468564224n, 10000000n) },
-  // energy (base J)
-  { id: "joule", symbol: "J", dim: { mass: 1, length: 2, time: -2 }, factor: r2(1) },
-  { id: "kJ", symbol: "kJ", dim: { mass: 1, length: 2, time: -2 }, factor: r2(1e3) },
-  { id: "MJ", symbol: "MJ", dim: { mass: 1, length: 2, time: -2 }, factor: r2(1e6) },
-  { id: "cal", symbol: "cal", dim: { mass: 1, length: 2, time: -2 }, factor: r2(4184, 1e3) },
-  { id: "kcal", symbol: "kcal", dim: { mass: 1, length: 2, time: -2 }, factor: r2(4184) },
-  { id: "Wh", symbol: "Wh", dim: { mass: 1, length: 2, time: -2 }, factor: r2(3600) },
-  { id: "kWh", symbol: "kWh", dim: { mass: 1, length: 2, time: -2 }, factor: r2(36e5) },
-  // power (base W)
-  { id: "watt", symbol: "W", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1) },
-  { id: "kW", symbol: "kW", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1e3) },
-  { id: "MW", symbol: "MW", dim: { mass: 1, length: 2, time: -3 }, factor: r2(1e6) },
-  // pressure (base Pa)
-  { id: "pascal", symbol: "Pa", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1) },
-  { id: "hPa", symbol: "hPa", dim: { mass: 1, length: -1, time: -2 }, factor: r2(100) },
-  { id: "mbar", symbol: "mbar", dim: { mass: 1, length: -1, time: -2 }, factor: r2(100) },
-  { id: "bar", symbol: "bar", dim: { mass: 1, length: -1, time: -2 }, factor: r2(1e5) },
-  { id: "psi", symbol: "psi", dim: { mass: 1, length: -1, time: -2 }, factor: r2(44482216152605n * 100000000n, 64516n * 10000000000000n) },
-  // angle (base degree; radian is irrational → decimal factor)
-  { id: "degree", symbol: "\xB0", dim: { angle: 1 }, factor: r2(1) },
-  { id: "radian", symbol: "rad", dim: { angle: 1 }, factorDec: "57.29577951308232087679815481410517033241" },
-  { id: "turn", symbol: "tr", dim: { angle: 1 }, factor: r2(360) },
-  // speed
-  { id: "mph", symbol: "mph", dim: { length: 1, time: -1 }, factor: r2(1609344, 36e5) },
-  { id: "knot", symbol: "kn", dim: { length: 1, time: -1 }, factor: r2(1852, 3600) },
-  // currency (one shared dimension; conversion only via RateProvider)
-  ...[
-    "CHF",
-    "EUR",
-    "USD",
-    "GBP",
-    "JPY",
-    "AED",
-    "AUD",
-    "BGN",
-    "BRL",
-    "CAD",
-    "CNY",
-    "CZK",
-    "DKK",
-    "HKD",
-    "HUF",
-    "IDR",
-    "ILS",
-    "INR",
-    "ISK",
-    "KRW",
-    "MXN",
-    "MYR",
-    "NOK",
-    "NZD",
-    "PHP",
-    "PLN",
-    "RON",
-    "RSD",
-    "RUB",
-    "SAR",
-    "SEK",
-    "SGD",
-    "THB",
-    "TRY",
-    "TWD",
-    "ZAR",
-    "BTC",
-    "ETH"
-  ].map((code) => ({ id: code, symbol: code, dim: { currency: 1 }, currency: code }))
-];
-var ALIASES = [
-  { alias: "m", unit: "m" },
-  // lowercase only: 'M' is the million scalar
-  { alias: "metre", unit: "m", caseSensitive: false },
-  { alias: "metres", unit: "m", caseSensitive: false },
-  { alias: "meter", unit: "m", caseSensitive: false },
-  { alias: "meters", unit: "m", caseSensitive: false },
-  { alias: "m\xE8tre", unit: "m", caseSensitive: false },
-  { alias: "m\xE8tres", unit: "m", caseSensitive: false },
-  { alias: "km", unit: "km", caseSensitive: false },
-  { alias: "kilom\xE8tre", unit: "km", caseSensitive: false },
-  { alias: "kilom\xE8tres", unit: "km", caseSensitive: false },
-  { alias: "kilometer", unit: "km", caseSensitive: false },
-  { alias: "kilometers", unit: "km", caseSensitive: false },
-  { alias: "cm", unit: "cm", caseSensitive: false },
-  { alias: "centim\xE8tre", unit: "cm", caseSensitive: false },
-  { alias: "centim\xE8tres", unit: "cm", caseSensitive: false },
-  { alias: "centimetre", unit: "cm", caseSensitive: false },
-  { alias: "centimetres", unit: "cm", caseSensitive: false },
-  { alias: "centimeter", unit: "cm", caseSensitive: false },
-  { alias: "centimeters", unit: "cm", caseSensitive: false },
-  { alias: "mm", unit: "mm" },
-  { alias: "millim\xE8tre", unit: "mm", caseSensitive: false },
-  { alias: "millim\xE8tres", unit: "mm", caseSensitive: false },
-  { alias: "millimetre", unit: "mm", caseSensitive: false },
-  { alias: "millimetres", unit: "mm", caseSensitive: false },
-  { alias: "millimeter", unit: "mm", caseSensitive: false },
-  { alias: "millimeters", unit: "mm", caseSensitive: false },
-  { alias: "mi", unit: "mi" },
-  { alias: "mile", unit: "mi", caseSensitive: false },
-  { alias: "miles", unit: "mi", caseSensitive: false },
-  { alias: "yd", unit: "yard", caseSensitive: false },
-  { alias: "yard", unit: "yard", caseSensitive: false },
-  { alias: "yards", unit: "yard", caseSensitive: false },
-  { alias: "ft", unit: "ft", caseSensitive: false },
-  { alias: "foot", unit: "ft", caseSensitive: false },
-  { alias: "feet", unit: "ft", caseSensitive: false },
-  { alias: "pied", unit: "ft", caseSensitive: false },
-  { alias: "pieds", unit: "ft", caseSensitive: false },
-  { alias: "inch", unit: "inch", caseSensitive: false },
-  { alias: "inches", unit: "inch", caseSensitive: false },
-  { alias: "in", unit: "inch" },
-  // emitted symbol — the parser gives conversion "in <unit>" precedence
-  { alias: "pouce", unit: "inch", caseSensitive: false },
-  { alias: "pouces", unit: "inch", caseSensitive: false },
-  { alias: "kg", unit: "kg", caseSensitive: false },
-  { alias: "kilo", unit: "kg", caseSensitive: false },
-  { alias: "kilos", unit: "kg", caseSensitive: false },
-  { alias: "kilogramme", unit: "kg", caseSensitive: false },
-  { alias: "kilogrammes", unit: "kg", caseSensitive: false },
-  { alias: "kilogram", unit: "kg", caseSensitive: false },
-  { alias: "kilograms", unit: "kg", caseSensitive: false },
-  { alias: "g", unit: "g" },
-  { alias: "gramme", unit: "g", caseSensitive: false },
-  { alias: "grammes", unit: "g", caseSensitive: false },
-  { alias: "gram", unit: "g", caseSensitive: false },
-  { alias: "grams", unit: "g", caseSensitive: false },
-  { alias: "mg", unit: "mg" },
-  { alias: "tonne", unit: "tonne", caseSensitive: false },
-  { alias: "tonnes", unit: "tonne", caseSensitive: false },
-  { alias: "ton", unit: "tonne", caseSensitive: false },
-  { alias: "t", unit: "tonne" },
-  // lowercase exact: the engine EMITS "t" — every emitted symbol must re-lex
-  { alias: "lb", unit: "lb", caseSensitive: false },
-  { alias: "lbs", unit: "lb", caseSensitive: false },
-  { alias: "livre", unit: "lb", caseSensitive: false },
-  { alias: "livres", unit: "lb", caseSensitive: false },
-  { alias: "oz", unit: "oz", caseSensitive: false },
-  { alias: "K", unit: "kelvin" },
-  { alias: "kelvin", unit: "kelvin", caseSensitive: false },
-  { alias: "\xB0C", unit: "celsius" },
-  { alias: "celsius", unit: "celsius", caseSensitive: false },
-  { alias: "\xB0F", unit: "fahrenheit" },
-  { alias: "fahrenheit", unit: "fahrenheit", caseSensitive: false },
-  { alias: "R", unit: "rankine" },
-  { alias: "rankine", unit: "rankine", caseSensitive: false },
-  { alias: "\u0394K", unit: "deltaK" },
-  { alias: "\u0394\xB0C", unit: "deltaC" },
-  { alias: "\u0394\xB0F", unit: "deltaF" },
-  { alias: "deltaK", unit: "deltaK", caseSensitive: false },
-  { alias: "deltaC", unit: "deltaC", caseSensitive: false },
-  { alias: "deltaF", unit: "deltaF", caseSensitive: false },
-  { alias: "B", unit: "B" },
-  { alias: "byte", unit: "B", caseSensitive: false },
-  { alias: "bytes", unit: "B", caseSensitive: false },
-  { alias: "octet", unit: "B", caseSensitive: false },
-  { alias: "octets", unit: "B", caseSensitive: false },
-  { alias: "KB", unit: "KB" },
-  { alias: "MB", unit: "MB" },
-  { alias: "GB", unit: "GB" },
-  { alias: "TB", unit: "TB" },
-  { alias: "Mb", unit: "Mb" },
-  { alias: "bit", unit: "bit", caseSensitive: false },
-  { alias: "bits", unit: "bit", caseSensitive: false },
-  // time
-  { alias: "s", unit: "second" },
-  { alias: "sec", unit: "second", caseSensitive: false },
-  { alias: "seconde", unit: "second", caseSensitive: false },
-  { alias: "secondes", unit: "second", caseSensitive: false },
-  { alias: "second", unit: "second", caseSensitive: false },
-  { alias: "seconds", unit: "second", caseSensitive: false },
-  { alias: "sekunde", unit: "second", caseSensitive: false },
-  { alias: "sekunden", unit: "second", caseSensitive: false },
-  { alias: "min", unit: "minute", caseSensitive: false },
-  { alias: "minute", unit: "minute", caseSensitive: false },
-  { alias: "minutes", unit: "minute", caseSensitive: false },
-  { alias: "minuten", unit: "minute", caseSensitive: false },
-  { alias: "h", unit: "hour" },
-  { alias: "hr", unit: "hour", caseSensitive: false },
-  { alias: "hrs", unit: "hour", caseSensitive: false },
-  { alias: "hour", unit: "hour", caseSensitive: false },
-  { alias: "hours", unit: "hour", caseSensitive: false },
-  { alias: "heure", unit: "hour", caseSensitive: false },
-  { alias: "heures", unit: "hour", caseSensitive: false },
-  { alias: "stunde", unit: "hour", caseSensitive: false },
-  { alias: "stunden", unit: "hour", caseSensitive: false },
-  // volume
-  { alias: "l", unit: "litre" },
-  { alias: "L", unit: "litre" },
-  { alias: "\xB5g", unit: "microgram" },
-  { alias: "\u03BCg", unit: "microgram" },
-  { alias: "\xB5m", unit: "micrometre" },
-  { alias: "\u03BCm", unit: "micrometre" },
-  { alias: "\xB5l", unit: "microlitre" },
-  { alias: "\u03BCl", unit: "microlitre" },
-  { alias: "\xB5s", unit: "microsecond" },
-  { alias: "\u03BCs", unit: "microsecond" },
-  { alias: "ns", unit: "nanosecond" },
-  { alias: "Hz", unit: "hertz" },
-  { alias: "hertz", unit: "hertz", caseSensitive: false },
-  { alias: "kHz", unit: "kilohertz" },
-  { alias: "MHz", unit: "megahertz" },
-  { alias: "GHz", unit: "gigahertz" },
-  { alias: "THz", unit: "terahertz" },
-  { alias: "ms", unit: "millisecond" },
-  { alias: "nm", unit: "nanometre" },
-  { alias: "N", unit: "newton" },
-  { alias: "Pa", unit: "pascal" },
-  { alias: "kPa", unit: "kilopascal" },
-  { alias: "bar", unit: "bar", caseSensitive: false },
-  { alias: "A", unit: "ampere" },
-  { alias: "mA", unit: "milliampere" },
-  { alias: "\xB5A", unit: "microampere" },
-  { alias: "\u03BCA", unit: "microampere" },
-  { alias: "kA", unit: "kiloampere" },
-  { alias: "V", unit: "volt" },
-  { alias: "kV", unit: "kilovolt" },
-  { alias: "\xB5V", unit: "microvolt" },
-  { alias: "\u03BCV", unit: "microvolt" },
-  { alias: "pW", unit: "picowatt" },
-  { alias: "F", unit: "farad" },
-  { alias: "pF", unit: "picofarad" },
-  { alias: "mV", unit: "millivolt" },
-  { alias: "pV", unit: "picovolt" },
-  { alias: "mW", unit: "milliwatt" },
-  { alias: "\u03A9", unit: "ohm" },
-  { alias: "ohm", unit: "ohm", caseSensitive: false },
-  { alias: "k\u03A9", unit: "kilohm" },
-  { alias: "M\u03A9", unit: "megohm" },
-  { alias: "mol", unit: "mole" },
-  { alias: "pH", unit: "pH" },
-  { alias: "litre", unit: "litre", caseSensitive: false },
-  { alias: "litres", unit: "litre", caseSensitive: false },
-  { alias: "liter", unit: "litre", caseSensitive: false },
-  { alias: "liters", unit: "litre", caseSensitive: false },
-  { alias: "ml", unit: "ml" },
-  { alias: "cl", unit: "cl" },
-  { alias: "dl", unit: "dl" },
-  { alias: "mL", unit: "ml" },
-  { alias: "cL", unit: "cl" },
-  { alias: "dL", unit: "dl" },
-  // SI capital-L variants
-  { alias: "gallon", unit: "gallon", caseSensitive: false },
-  { alias: "gallons", unit: "gallon", caseSensitive: false },
-  { alias: "gal", unit: "gallon", caseSensitive: false },
-  // emitted symbol
-  // area
-  { alias: "ha", unit: "hectare", caseSensitive: false },
-  { alias: "hectare", unit: "hectare", caseSensitive: false },
-  { alias: "hectares", unit: "hectare", caseSensitive: false },
-  { alias: "acre", unit: "acre", caseSensitive: false },
-  { alias: "acres", unit: "acre", caseSensitive: false },
-  // energy
-  { alias: "J", unit: "joule" },
-  { alias: "joule", unit: "joule", caseSensitive: false },
-  { alias: "joules", unit: "joule", caseSensitive: false },
-  { alias: "kJ", unit: "kJ" },
-  { alias: "kj", unit: "kJ" },
-  { alias: "MJ", unit: "MJ" },
-  { alias: "cal", unit: "cal", caseSensitive: false },
-  { alias: "calorie", unit: "cal", caseSensitive: false },
-  { alias: "calories", unit: "cal", caseSensitive: false },
-  { alias: "kcal", unit: "kcal", caseSensitive: false },
-  { alias: "Wh", unit: "Wh" },
-  { alias: "kWh", unit: "kWh" },
-  { alias: "kwh", unit: "kWh" },
-  // power
-  { alias: "W", unit: "watt" },
-  { alias: "watt", unit: "watt", caseSensitive: false },
-  { alias: "watts", unit: "watt", caseSensitive: false },
-  { alias: "kW", unit: "kW" },
-  { alias: "kw", unit: "kW" },
-  { alias: "MW", unit: "MW" },
-  // pressure
-  { alias: "Pa", unit: "pascal" },
-  { alias: "pascal", unit: "pascal", caseSensitive: false },
-  { alias: "pascals", unit: "pascal", caseSensitive: false },
-  { alias: "hPa", unit: "hPa" },
-  { alias: "hpa", unit: "hPa" },
-  { alias: "mbar", unit: "mbar", caseSensitive: false },
-  { alias: "bar", unit: "bar", caseSensitive: false },
-  { alias: "bars", unit: "bar", caseSensitive: false },
-  { alias: "psi", unit: "psi", caseSensitive: false },
-  // angle
-  { alias: "\xB0", unit: "degree" },
-  { alias: "deg", unit: "degree", caseSensitive: false },
-  { alias: "degree", unit: "degree", caseSensitive: false },
-  { alias: "degrees", unit: "degree", caseSensitive: false },
-  { alias: "degr\xE9", unit: "degree", caseSensitive: false },
-  { alias: "degr\xE9s", unit: "degree", caseSensitive: false },
-  { alias: "degre", unit: "degree", caseSensitive: false },
-  { alias: "degres", unit: "degree", caseSensitive: false },
-  { alias: "rad", unit: "radian", caseSensitive: false },
-  { alias: "radian", unit: "radian", caseSensitive: false },
-  { alias: "radians", unit: "radian", caseSensitive: false },
-  { alias: "tour", unit: "turn", caseSensitive: false },
-  { alias: "tours", unit: "turn", caseSensitive: false },
-  { alias: "tr", unit: "turn" },
-  // emitted symbol
-  // speed
-  { alias: "mph", unit: "mph", caseSensitive: false },
-  { alias: "kn", unit: "knot" },
-  { alias: "knot", unit: "knot", caseSensitive: false },
-  { alias: "knots", unit: "knot", caseSensitive: false },
-  { alias: "noeud", unit: "knot", caseSensitive: false },
-  { alias: "noeuds", unit: "knot", caseSensitive: false },
-  // currency words & symbols (ISO codes are aliased programmatically below)
-  { alias: "franc", unit: "CHF", caseSensitive: false },
-  { alias: "francs", unit: "CHF", caseSensitive: false },
-  { alias: "euro", unit: "EUR", caseSensitive: false },
-  { alias: "euros", unit: "EUR", caseSensitive: false },
-  { alias: "\u20AC", unit: "EUR" },
-  { alias: "dollar", unit: "USD", caseSensitive: false },
-  { alias: "dollars", unit: "USD", caseSensitive: false },
-  { alias: "$", unit: "USD" },
-  { alias: "\xA3", unit: "GBP" },
-  { alias: "yen", unit: "JPY", caseSensitive: false },
-  { alias: "\xA5", unit: "JPY" }
-];
-for (const def of DEFS) {
-  if (def.currency) ALIASES.push({ alias: def.currency, unit: def.id, caseSensitive: false });
-}
-var unitsById = new Map(DEFS.map((d2) => [d2.id, d2]));
-var exactAliases = /* @__PURE__ */ new Map();
-var ciAliases = /* @__PURE__ */ new Map();
-for (const decl of ALIASES) {
-  const def = unitsById.get(decl.unit);
-  if (!def) throw new Error(`unit registry: alias \u201C${decl.alias}\u201D points to unknown unit \u201C${decl.unit}\u201D`);
-  if (decl.caseSensitive === false) {
-    const key = decl.alias.toLowerCase();
-    if (ciAliases.has(key) && ciAliases.get(key) !== def) {
-      throw new Error(`unit registry: duplicate case-insensitive alias \u201C${decl.alias}\u201D`);
-    }
-    ciAliases.set(key, def);
-  } else {
-    if (exactAliases.has(decl.alias) && exactAliases.get(decl.alias) !== def) {
-      throw new Error(`unit registry: duplicate case-sensitive alias \u201C${decl.alias}\u201D`);
-    }
-    exactAliases.set(decl.alias, def);
-  }
-}
-var derivedCache = /* @__PURE__ */ new Map();
-var SUP_DIGITS = "\u2070\xB9\xB2\xB3\u2074\u2075\u2076\u2077\u2078\u2079";
-var supInt = (e) => {
-  const abs3 = Math.abs(e);
-  const digits = String(abs3).split("").map((d2) => SUP_DIGITS[Number(d2)]).join("");
-  return `${e < 0 ? "\u207B" : ""}${digits}`;
-};
-var parseSupInt = (s2) => {
-  const neg = s2.startsWith("\u207B");
-  const digits = (neg ? s2.slice(1) : s2).split("").map((c2) => SUP_DIGITS.indexOf(c2)).join("");
-  return (neg ? -1 : 1) * Number(digits);
-};
-function siCaseAmbiguous(word) {
-  if (word === "Pm") return false;
-  if (word === word.toLowerCase()) return false;
-  const asWritten = (w2) => exactAliases.has(w2) || w2 === w2.toLowerCase() && ciAliases.has(w2);
-  if (asWritten(word)) return false;
-  const tailOk = (t2) => exactAliases.has(t2) || ciAliases.has(t2.toLowerCase());
-  if (/^[YZEPTGMRQkhdcmuµμnpfazyrq][\p{L}°µμ]/u.test(word) && tailOk(word.slice(1))) return true;
-  if (/^da[\p{L}°µμ]/u.test(word) && word.length > 3 && tailOk(word.slice(2))) return true;
-  return false;
-}
-var SI_HOMOGRAPHS = /* @__PURE__ */ new Set(["at", "as", "am", "us"]);
-var BINARY_RE = /^(Ki|Mi|Gi|Ti|Pi|Ei|Zi|Yi|Ri|Qi)(B|bit|bits|o|octet|octets)$/u;
-var PREFIX_NAMES = [
-  "yotta",
-  "zetta",
-  "exa",
-  "peta",
-  "tera",
-  "giga",
-  "mega",
-  "kilo",
-  "hecto",
-  "deca",
-  "deka",
-  "deci",
-  "centi",
-  "milli",
-  "micro",
-  "nano",
-  "pico",
-  "femto",
-  "atto",
-  "zepto",
-  "yocto",
-  "ronna",
-  "ronto",
-  "quetta",
-  "quecto",
-  "kibi",
-  "mebi",
-  "gibi",
-  "tebi",
-  "pebi",
-  "exbi",
-  "zebi",
-  "yobi",
-  "robi",
-  "quebi"
-];
-var BYTEISH = /* @__PURE__ */ new Set(["byte", "bytes", "octet", "octets", "bit", "bits"]);
-var isSiPrefixName = (w9) => PREFIX_NAMES.includes(w9.toLowerCase());
-var PLAUSIBLE_SI = /* @__PURE__ */ new Set(["Bq", "Sv", "Gy", "Wb", "cd", "lm", "lx", "sr", "kat", "Np", "C"]);
-var SPELLED_UNITS = /* @__PURE__ */ new Set([
-  "farad",
-  "farads",
-  "ohm",
-  "ohms",
-  "henry",
-  "henrys",
-  "henries",
-  "tesla",
-  "teslas",
-  "weber",
-  "webers",
-  "coulomb",
-  "coulombs",
-  "siemens",
-  "hertz",
-  "volt",
-  "volts",
-  "ampere",
-  "amperes",
-  "amp",
-  "amps"
-]);
-function plausibleUnitReason(word) {
-  return plausibleUnitReasonInner(word, 0);
-}
-function plausibleUnitReasonInner(word, depth) {
-  if (PLAUSIBLE_SI.has(word) && lookupUnit(word) === void 0) {
-    return "a standard SI unit the engine does not support yet";
-  }
-  if (word.length < 2 || word.length > 200 || SI_HOMOGRAPHS.has(word)) return null;
-  if (lookupUnit(word) !== void 0) return null;
-  if (PLAUSIBLE_SI.has(word)) return "a standard SI unit the engine does not support yet";
-  if (word === word.toLowerCase() && SPELLED_UNITS.has(word)) {
-    return "a spelled unit name the engine does not support yet";
-  }
-  {
-    let base = word;
-    for (; ; ) {
-      const next = base.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+$/u, "").replace(/\d+$/u, "");
-      if (next === base) break;
-      base = next;
-    }
-    if (base !== word && base.length >= 2) {
-      if (PLAUSIBLE_SI.has(base)) return "a standard SI unit the engine does not support yet";
-      if (/^[A-Z]{2,5}$/.test(base) && lookupUnit(base) === void 0) {
-        return "an unknown code with a numeric suffix is never prose";
-      }
-      if (lookupUnit(base) !== void 0) return "a unit glued to digits is never prose";
-      if (depth < 6) {
-        const r3 = plausibleUnitReasonInner(base, depth + 1);
-        if (r3 !== null) return r3;
-      }
-    }
-    if (word.includes("\xB7") && depth < 6) {
-      for (const seg of word.split("\xB7")) {
-        if (seg.length >= 2 && plausibleUnitReasonInner(seg, depth + 1) !== null) {
-          return "a compound joining a plausible unit is never prose";
-        }
-      }
-      return null;
-    }
-  }
-  if (BINARY_RE.test(word)) return "binary-prefixed units (KiB\u2026Yibit) are not supported";
-  {
-    const lower = word.toLowerCase();
-    for (const pn of PREFIX_NAMES) {
-      if (!lower.startsWith(pn)) continue;
-      const rest = word.slice(pn.length);
-      if (rest.length < 2) continue;
-      const restL = rest.toLowerCase();
-      if (BYTEISH.has(restL) || SPELLED_UNITS.has(restL) || lookupUnit(rest) !== void 0 || restL.endsWith("s") && lookupUnit(rest.slice(0, -1)) !== void 0) {
-        return "a spelled-out prefixed unit name is not supported";
-      }
-    }
-  }
-  {
-    const cm = new RegExp("^(\\p{Lu}{2,5})(\\p{L}{2,})$", "u").exec(word);
-    if (cm && lookupUnit(cm[1]) === void 0 && lookupUnit(cm[2]) !== void 0) {
-      return "a code glued to a unit is never prose";
-    }
-  }
-  const tails = [];
-  if (/^[YZEPTGMRQkhdcmuµμnpfazyrq][\p{L}°µμ]/u.test(word)) tails.push(word.slice(1));
-  if (/^da[\p{L}°µμ]/u.test(word) && word.length > 3) tails.push(word.slice(2));
-  for (const tail of tails) {
-    if (tail.length > 4 || NONPREFIXABLE_TAILS.has(tail.length === 1 ? tail : tail.toLowerCase())) continue;
-    if (PLAUSIBLE_SI.has(tail)) return "an SI prefix glued to a standard unsupported unit";
-    const tdef = lookupUnit(tail);
-    if (tdef === void 0) continue;
-    if (tdef.currency !== void 0 && tail === tail.toLowerCase()) continue;
-    return "an SI prefix glued to a registered unit is not supported";
-  }
-  {
-    const symbolic = new RegExp("\\p{Lu}", "u").test(word.slice(1));
-    const allLower = word === word.toLowerCase();
-    const okPart = (part, other) => symbolic || part.length > 1 || new RegExp("^\\p{Lu}$", "u").test(part) || part === other.slice(-1) && other.length <= 2;
-    const glueDef = (part) => {
-      const d2 = lookupUnit(part);
-      return d2 !== void 0 && !(d2.currency !== void 0 && part === part.toLowerCase());
-    };
-    for (let k2 = 1; k2 < word.length; k2++) {
-      const head = word.slice(0, k2);
-      if (!glueDef(head)) continue;
-      const rest = word.slice(k2);
-      if (glueDef(rest) && okPart(head, rest) && okPart(rest, head)) {
-        const shortLower = allLower && head.length >= 2 && head.length <= 3 && rest.length >= 2 && rest.length <= 3;
-        if (!shortLower) return "two units glued together are never prose";
-      }
-      if (new RegExp("^\\p{Lu}[\\p{Lu}\\p{N}]+$", "u").test(rest)) return "a unit glued to a code is never prose";
-    }
-    const memo = /* @__PURE__ */ new Map();
-    const walk = (i2) => {
-      if (i2 === word.length) return { parts: 0, long: false };
-      const hit = memo.get(i2);
-      if (hit !== void 0) return hit.parts < 0 ? null : hit;
-      let best = null;
-      for (let j2 = i2 + 1; j2 <= word.length; j2++) {
-        if (lookupUnit(word.slice(i2, j2)) === void 0) continue;
-        const sub2 = walk(j2);
-        if (sub2 === null) continue;
-        const cand = { parts: 1 + sub2.parts, long: sub2.long || j2 - i2 >= 4 };
-        if (best === null || cand.parts > best.parts || cand.parts === best.parts && cand.long) best = cand;
-      }
-      memo.set(i2, best ?? { parts: -1, long: false });
-      return best;
-    };
-    const seg = walk(0);
-    if (seg !== null && seg.parts >= 3 && (seg.long || word.length >= 6)) {
-      return "a chain of glued units is never prose";
-    }
-  }
-  return null;
-}
-var NONPREFIXABLE_TAILS = /* @__PURE__ */ new Set(["in", "ft", "mi", "yd", "oz", "lb", "am", "pm", "ha", "an", "a", "h", "j", "d"]);
-function parsePowerWord(word) {
-  const m2 = /^(.+?)(⁻?[⁰¹²³⁴⁵⁶⁷⁸⁹]+|2|3)$/.exec(word);
-  if (!m2) return void 0;
-  const base = exactAliases.get(m2[1]) ?? (siCaseAmbiguous(m2[1]) ? void 0 : ciAliases.get(m2[1].toLowerCase()) ?? CAL_BY_SYMBOL[m2[1].toLowerCase()]);
-  const isDigit2 = m2[2] === "2" || m2[2] === "3";
-  if (!base || base.affine) return void 0;
-  if (isDigit2 && !(Object.keys(base.dim).length === 1 && base.dim["length"] === 1)) return void 0;
-  const n2 = isDigit2 ? Number(m2[2]) : parseSupInt(m2[2]);
-  if (!Number.isFinite(n2) || n2 === 0 || n2 === 1 || Math.abs(n2) > 1e6) return void 0;
-  return { base, n: n2 };
-}
-function lookupPowerUnit(word) {
-  const cached2 = derivedCache.get(word);
-  if (cached2) return cached2;
-  const parsed = parsePowerWord(word);
-  if (!parsed) return void 0;
-  const { base, n: n2 } = parsed;
-  if (Math.abs(n2) > 1e6 && !base.factor && !base.factorDec) return void 0;
-  const dim = {};
-  for (const [k2, v2] of Object.entries(base.dim)) dim[k2] = v2 * n2;
-  const def = {
-    id: `${base.id}^${n2}`,
-    symbol: `${base.symbol}${n2 === 2 ? "\xB2" : n2 === 3 ? "\xB3" : supInt(n2)}`,
-    dim,
-    ...base.factor && {
-      factor: n2 >= 0 ? { n: base.factor.n ** BigInt(n2), d: base.factor.d ** BigInt(n2) } : { n: base.factor.d ** BigInt(-n2), d: base.factor.n ** BigInt(-n2) }
-    },
-    ...base.factorDec && { factorDec: new DecC(base.factorDec).pow(n2).toFixed() }
-  };
-  derivedCache.set(word, def);
-  return def;
-}
-function unitComps(word) {
-  const one = (w2) => {
-    const direct = exactAliases.get(w2) ?? (siCaseAmbiguous(w2) ? void 0 : ciAliases.get(w2.toLowerCase()) ?? CAL_BY_SYMBOL[w2.toLowerCase()]);
-    if (direct) return direct.affine ? void 0 : { def: direct, exp: 1 };
-    const p2 = parsePowerWord(w2);
-    return p2 ? { def: p2.base, exp: p2.n } : void 0;
-  };
-  if (!word.includes("\xB7")) {
-    const c2 = one(word);
-    return c2 ? [c2] : void 0;
-  }
-  const out = [];
-  for (const part of word.split("\xB7")) {
-    const c2 = one(part);
-    if (!c2) return void 0;
-    const same = out.find((o2) => o2.def.id === c2.def.id);
-    if (same) same.exp += c2.exp;
-    else out.push(c2);
-  }
-  return out.filter((o2) => o2.exp !== 0);
-}
-function compoundUnitParts(word) {
-  if (!word.includes("\xB7")) return void 0;
-  const parts = word.split("\xB7");
-  const defs = [];
-  for (const p2 of parts) {
-    const d2 = exactAliases.get(p2) ?? (siCaseAmbiguous(p2) ? void 0 : ciAliases.get(p2.toLowerCase()) ?? lookupPowerUnit(p2) ?? CAL_BY_SYMBOL[p2.toLowerCase()]);
-    if (!d2 || d2.affine) return void 0;
-    defs.push(d2);
-  }
-  return defs;
-}
-function lookupCompoundUnit(word) {
-  const cached2 = derivedCache.get(word);
-  if (cached2) return cached2;
-  const defs = compoundUnitParts(word);
-  if (!defs) return void 0;
-  let dim = {};
-  for (const d2 of defs) dim = dimAdd(dim, d2.dim, 1);
-  const pure = defs.every((d2) => d2.factor && !d2.currency && !d2.factorDec);
-  const def = {
-    id: defs.map((d2) => d2.id).join("\xB7"),
-    symbol: defs.map((d2) => d2.symbol).join("\xB7"),
-    dim,
-    ...pure && {
-      factor: defs.reduce((acc, d2) => ({ n: acc.n * d2.factor.n, d: acc.d * d2.factor.d }), { n: 1n, d: 1n })
-    }
-  };
-  derivedCache.set(word, def);
-  return def;
-}
-var CAL_UNIT_DEFS = {
-  day: { id: "cal.day", symbol: "jour", dim: { caldays: 1 }, factor: { n: 1n, d: 1n } },
-  week: { id: "cal.week", symbol: "semaine", dim: { caldays: 1 }, factor: { n: 7n, d: 1n } },
-  month: { id: "cal.month", symbol: "mois", dim: { calmonths: 1 }, factor: { n: 1n, d: 1n } },
-  year: { id: "cal.year", symbol: "an", dim: { calmonths: 1 }, factor: { n: 12n, d: 1n } }
-};
-var CAL_BY_SYMBOL = {
-  jour: CAL_UNIT_DEFS.day,
-  semaine: CAL_UNIT_DEFS.week,
-  mois: CAL_UNIT_DEFS.month,
-  an: CAL_UNIT_DEFS.year
-};
-function lookupUnit(word) {
-  const exact = lookupExact(word);
-  if (exact) return exact;
-  if (siCaseAmbiguous(word)) return void 0;
-  return ciAliases.get(word.toLowerCase()) ?? lookupPowerUnit(word) ?? lookupCompoundUnit(word);
-}
-function lookupExact(word) {
-  return exactAliases.get(word);
-}
-var exactLower = /* @__PURE__ */ new Set();
-function unitWordCaseTwin(word) {
-  if (exactLower.size === 0) for (const k2 of exactAliases.keys()) exactLower.add(k2.toLowerCase());
-  const w2 = word.toLowerCase();
-  return exactLower.has(w2) || ciAliases.has(w2);
-}
-var ratEq = (a2, b2) => a2.n * b2.d === b2.n * a2.d;
-function findUnitByDimFactor(dim, factor) {
-  for (const def of DEFS) {
-    if (def.factor && !def.currency && dimEquals(def.dim, dim) && ratEq(def.factor, factor)) return def;
-  }
-  const exp2 = dim["length"];
-  if ((exp2 === 2 || exp2 === 3) && Object.keys(dim).length === 1) {
-    for (const base of ["m", "km", "cm", "mm"]) {
-      const p2 = lookupPowerUnit(`${base}${exp2}`);
-      if (p2?.factor && ratEq(p2.factor, factor)) return p2;
-    }
-  }
-  return void 0;
-}
-var isUnitWord = (word) => lookupUnit(word) !== void 0;
-var isCurrencyWord = (word) => lookupUnit(word)?.currency !== void 0;
-function dimAdd(a2, b2, sign2) {
-  const out = { ...a2 };
-  for (const [k2, v2] of Object.entries(b2)) {
-    const sum2 = (out[k2] ?? 0) + sign2 * v2;
-    if (sum2 === 0) delete out[k2];
-    else out[k2] = sum2;
-  }
-  return out;
-}
-var dimIsEmpty = (d2) => Object.keys(d2).length === 0;
-var dimEquals = (a2, b2) => dimIsEmpty(dimAdd(a2, b2, -1));
-function decToRational(v2) {
-  const s2 = v2.toFixed();
-  const neg = s2.startsWith("-");
-  const body = neg ? s2.slice(1) : s2;
-  const [int2, frac = ""] = body.split(".");
-  const n2 = BigInt(int2 + frac);
-  return { n: neg ? -n2 : n2, d: 10n ** BigInt(frac.length) };
-}
-var rationalToDec = (x2) => new DecC(x2.n.toString()).div(x2.d.toString());
-function convertExact(value, from, to) {
-  if (from.factorDec || to.factorDec) {
-    const fA2 = from.factorDec ? new DecC(from.factorDec) : rationalToDec(from.factor);
-    const fB2 = to.factorDec ? new DecC(to.factorDec) : rationalToDec(to.factor);
-    return value.times(fA2).div(fB2);
-  }
-  const v2 = decToRational(value);
-  if (from.affine || to.affine) {
-    const A2 = from.affine ?? tripleFromLinear(from);
-    const B2 = to.affine ?? tripleFromLinear(to);
-    const kn = A2.a * v2.n + A2.b * v2.d;
-    const kd = A2.c * v2.d;
-    const rn = kn * B2.c - B2.b * kd;
-    const rd = kd * B2.a;
-    return rationalToDec({ n: rn, d: rd });
-  }
-  const fA = from.factor;
-  const fB = to.factor;
-  return rationalToDec({ n: v2.n * fA.n * fB.d, d: v2.d * fA.d * fB.n });
-}
-var tripleFromLinear = (u2) => ({
-  a: u2.factor.n,
-  b: 0n,
-  c: u2.factor.d
-});
-Object.setPrototypeOf(CAL_BY_SYMBOL, null);
-Object.setPrototypeOf(CAL_UNIT_DEFS, null);
 
 // ../textual-calculator/core/packages/engine/src/evaluator.ts
 var B1_MECHANISM_ROUTE9 = /* @__PURE__ */ Symbol("b1-mechanism-route");
@@ -34550,7 +34774,7 @@ var candidateReemit9 = (rt2, thirty) => {
   }
   const approx9 = shadow.hasApproxFactor();
   const capped92 = rt2.capped === true;
-  if (approx9 && !capped92) {
+  if (approx9 && (!capped92 || shadow.hasPi9())) {
     let fRat9 = { n: 1n, d: 1n };
     let affine9 = null;
     const fdDisp9 = [];
@@ -34593,8 +34817,9 @@ var candidateReemit9 = (rt2, thirty) => {
         let FdLo9 = new Dlo9(1);
         let FdHi9 = new Dhi9(1);
         for (const c9 of fdDisp9) {
-          const blo9 = new Dlo9(c9.def.factorDec);
-          const bhi9 = new Dhi9(c9.def.factorDec);
+          const pi9 = piUnitInterval9(c9.def, prec9);
+          const blo9 = pi9?.[0] ?? new Dlo9(c9.def.factorDec);
+          const bhi9 = pi9?.[1] ?? new Dhi9(c9.def.factorDec);
           if (c9.exp >= 0) {
             FdLo9 = FdLo9.times(blo9.pow(c9.exp));
             FdHi9 = FdHi9.times(bhi9.pow(c9.exp));
@@ -34642,6 +34867,21 @@ var candidateReemit9 = (rt2, thirty) => {
       }
       if (r9.kind === "retry") continue;
       if (sd40(r9.iv[0]) === sd40(r9.iv[1])) {
+        if (capped92) {
+          const lo9 = decToRat(r9.iv[0]), hi9 = decToRat(r9.iv[1]);
+          const center9 = rDiv(rAdd(lo9, hi9), { n: 2n, d: 1n });
+          const radius9 = rDiv(rSub(hi9, lo9), { n: 2n, d: 1n });
+          const prior9 = capFOf9(rt2) ?? [];
+          const bound9 = capFBound9(prior9);
+          if (bound9.n !== 0n && rCmp(rMul(radius9, { n: 10n ** 20n, d: 1n }), bound9) > 0) continue;
+          const totalBound9 = rAdd(bound9, radius9);
+          if (totalBound9.n !== 0n && rCmp(rMul(totalBound9, R10P41), rAbs9M(center9)) > 0) {
+            return { kind: "inexact", why: CAP_CANCEL_MSG };
+          }
+          const display9 = new DecC(sd40(r9.iv[0]));
+          if (rt2.v.eq(display9)) return { kind: "unchanged" };
+          return { kind: "reemit-bounded", v: display9, center: rt2.vx ?? decToRat(rt2.v), capF: prior9 };
+        }
         valD9 = r9.iv[0];
         break;
       }
@@ -34692,6 +34932,8 @@ var applyCandReemit9 = (rt2, res) => {
       delete out.vx;
       return out;
     }
+    case "reemit-bounded":
+      return capStamp9(editRuntimeCopy9(copyRuntimeRT9(rt2), { v: res.v, vx: res.center, capped: true }), { capF: res.capF });
     case "reemit-exact":
       return editRuntimeCopy9(copyRuntimeRT9(rt2), { ...qv(res.val) });
     case "inexact":
@@ -34891,12 +35133,12 @@ var b1ObservePublication9 = (ctx9, event9) => {
   }
   const observe9 = ctx9.__b1RoutePublication9;
   if (observe9 === void 0) return;
-  const cache9 = /* @__PURE__ */ new WeakMap();
+  const cache92 = /* @__PURE__ */ new WeakMap();
   const snapshot9 = (rt9) => {
-    const old9 = cache9.get(rt9);
+    const old9 = cache92.get(rt9);
     if (old9 !== void 0) return old9;
     const out9 = b1ObserverRT9(rt9, ctx9.monthToDays === "30");
-    cache9.set(rt9, out9);
+    cache92.set(rt9, out9);
     return out9;
   };
   observe9(Object.freeze({
@@ -34925,7 +35167,14 @@ var b1ExactCarrier9 = (captured9, exact9) => {
     source9 = editRuntimeCopy9(copyRuntimeRT9(source9), { def: captured9.envelope.numComps[0].def });
   }
   const value9 = qv(exact9);
-  if (source9.t === "f") return makeFrac(value9.vx?.n ?? exact9.n, value9.vx?.d ?? exact9.d, source9.origin);
+  if (source9.t === "f") {
+    const out9 = makeFrac(value9.vx?.n ?? exact9.n, value9.vx?.d ?? exact9.d, source9.origin);
+    if (out9.t === "e") return out9;
+    return editRuntimeCopy9(copyRuntimeRT9(out9), {
+      ...source9.capped !== void 0 && { capped: source9.capped },
+      ...capFOf9(source9) !== void 0 && { capF: capFOf9(source9) }
+    });
+  }
   if (source9.t === "d" || source9.t === "p" || source9.t === "q") {
     const { v: _oldV9, vx: _oldVx9, ...tail9 } = source9;
     return value9.vx === void 0 ? completeNumericShell9(copyNumericShell9(tail9), { v: value9.v }) : completeNumericShell9(copyNumericShell9(tail9), { v: value9.v, vx: value9.vx });
@@ -36968,6 +37217,62 @@ var engineExactRat = (q9, thirty) => {
   if (n9.n === 0n && !structZero9) return null;
   return rDiv(n9, d9);
 };
+var piNumerical9 = (rt9, thirty9) => {
+  if (rt9.t !== "d" && rt9.t !== "f" && (rt9.t !== "q" || !dimIsEmpty(rt9.dim))) return null;
+  const sf9 = shadowFromRT(rt9, thirty9);
+  if (sf9.kind !== "ok" || !sf9.value.hasPi9()) return null;
+  if (sf9.value.reduceScalar().kind === "reduced") return null;
+  const tolerance9 = { n: 1n, d: 10n ** 70n };
+  for (const precision9 of [100, 200, 400, 800, 1600, 3200, 5120]) {
+    const iv9 = sf9.value.interval9(precision9);
+    if (iv9.kind === "unsupported") return err("inexact", "the symbolic argument has no certified numerical projection");
+    if (iv9.kind !== "ok") continue;
+    const lo9 = decToRat(iv9.lo), hi9 = decToRat(iv9.hi);
+    const radius9 = rDiv(rSub(hi9, lo9), { n: 2n, d: 1n });
+    const center9 = rDiv(rAdd(lo9, hi9), { n: 2n, d: 1n });
+    if (rCmp(radius9, tolerance9) > 0) continue;
+    if ([0n, 1n, -1n].some((anchor9) => rCmp(radius9, rMul(rAbs9M(rSub(center9, { n: anchor9, d: 1n })), tolerance9)) >= 0)) continue;
+    const out9 = createDecimalRT9({ ...qv(center9), vx: center9, capped: true });
+    const prior9 = capFOf9(rt9);
+    const old9 = rt9.t === "q" ? qx(rt9) : numRat(rt9);
+    if ((prior9?.length ?? 0) > 0 && old9.n === 0n) {
+      return err("inexact", "the symbolic argument uncertainty cannot be transported from a zero reading");
+    }
+    const carried9 = prior9 === void 0 || prior9.length === 0 ? [] : capFScale9(prior9, rDiv(center9, old9));
+    out9.capF = capFAdd9(carried9, [{
+      s: `pi-input:${precision9}:${sf9.value.semanticKey() ?? fingerprintFromRT(rt9)}`,
+      x: { n: 1n, d: 1n },
+      b: radius9
+    }], 1n);
+    return out9;
+  }
+  return err("inexact", "the symbolic argument needs more precision than the certified \u03A0 projection supports");
+};
+var piTrigExact9 = (fn9, rt9, thirty9) => {
+  if (!["sin", "cos", "tan"].includes(fn9) || rt9.capped === true || (capFOf9(rt9)?.length ?? 0) > 0) return null;
+  const sf9 = shadowFromRT(rt9, thirty9);
+  if (sf9.kind !== "ok" || !sf9.value.hasPi9() || sf9.value.provResidue9() !== null) return null;
+  const multiple9 = sf9.value.div(ShadowFraction.piMultiple9({ n: 1n, d: 1n }, thirty9));
+  if (multiple9.kind !== "ok") return null;
+  const coefficient9 = multiple9.value.reduceScalar();
+  if (coefficient9.kind !== "reduced") return null;
+  const quadrants9 = rMul(coefficient9.x, { n: 2n, d: 1n });
+  if (quadrants9.d !== 1n) return null;
+  const quadrant9 = Number((quadrants9.n % 4n + 4n) % 4n);
+  if (fn9 === "tan" && quadrant9 % 2 === 1) return err("inexact", "tan this close to a pole is not decidable at the engine\u2019s precision");
+  const value9 = fn9 === "sin" ? [0, 1, 0, -1][quadrant9] : fn9 === "cos" ? [1, 0, -1, 0][quadrant9] : 0;
+  return stampAuth9(createDecimalRT9({ v: new DecC(value9) }), AUTH9);
+};
+var piFractionOrder9 = (a9, b9, thirty9) => {
+  const sa9 = shadowFromRT(a9, thirty9), sb9 = shadowFromRT(b9, thirty9);
+  if (sa9.kind !== "ok" || sb9.kind !== "ok" || !sa9.value.hasPi9() && !sb9.value.hasPi9()) return fracCmpRT(a9, b9, thirty9);
+  const ca9 = captureBoundResidue9(sa9.value), cb9 = captureBoundResidue9(sb9.value);
+  if (ca9.ok && cb9.ok && ca9.provider === null && cb9.provider === null && ca9.authority !== null && cb9.authority !== null && captureBoundCanonKey9(ca9.authority) === captureBoundCanonKey9(cb9.authority)) {
+    const difference9 = captureSub9(ca9.authority, cb9.authority);
+    if (difference9.kind === "purged" && difference9.fraction.zeroState() === "authoritative-zero") return 0;
+  }
+  return sa9.value.compare(sb9.value);
+};
 var carrierFaithful = (q9, thirty) => {
   if (readLegacyShadowNumerator9(q9) === void 0 && readLegacyShadowDenominator9(q9) === void 0) return true;
   if (fracReduce(q9, thirty) !== null) return true;
@@ -36983,6 +37288,8 @@ var capturedExponentFaithful9 = (captured9, thirty9) => {
   const materialized9 = materializeB1CapturedOperand9(captured9);
   if (materialized9 === null) return false;
   const carrier9 = materialized9.t === "d" || materialized9.t === "f" ? promoteShadowScalar9(materialized9) : materialized9;
+  const pi9 = piNumerical9(carrier9, thirty9);
+  if (pi9 !== null) return pi9.t !== "e";
   return carrier9.t !== "q" || !dimIsEmpty(carrier9.dim) || carrierFaithful(carrier9, thirty9);
 };
 var pctFactorFrac = (p9, mode9, thirty) => {
@@ -37163,7 +37470,14 @@ function addSummableInner(acc, v2, ctx, onEffectiveRhs9) {
         return { kind: "unavailable", reason: "non-numeric-mechanism" };
       }
       const exact9 = rAdd(capture9.left.exactRead, capture9.right.exactRead);
-      return b1NumericFrame9(dOf9(exact9), exact9);
+      let shell9 = dOf9(exact9);
+      if (capture9.left.boundedCause !== void 0 || capture9.right.boundedCause !== void 0) {
+        const gate9 = capAddGate9(capture9.left.rt, capture9.right.rt, exact9, 1n);
+        const frame92 = b1NumericFrame9(shell9, exact9);
+        if (gate9.err?.t === "e" && frame92.kind === "numeric") return { ...frame92, preSiteRefusal: gate9.err };
+        shell9 = capStamp9(editRuntimeCopy9(copyRuntimeRT9(shell9), { capped: true }), gate9);
+      }
+      return b1NumericFrame9(shell9, exact9);
     };
     const owned9 = b1PreOwn9(
       ctx,
@@ -37746,12 +38060,12 @@ var b1CopyCapF9 = (raw9) => {
 var b1CaptureEnvelope9 = (q9, pool9) => {
   const mechanism9 = selectB1UnitEnvelope9(q9);
   if (mechanism9.kind === "invalid-unit-envelope") return mechanism9;
-  const cache9 = /* @__PURE__ */ new Map();
+  const cache92 = /* @__PURE__ */ new Map();
   const snapDef92 = (raw9) => {
-    let out9 = cache9.get(raw9);
+    let out9 = cache92.get(raw9);
     if (out9 === void 0) {
       out9 = snapshotUnitDefInPool9(pool9, raw9);
-      cache9.set(raw9, out9);
+      cache92.set(raw9, out9);
     }
     return out9;
   };
@@ -37884,7 +38198,7 @@ var b1CaptureOperand9 = (source9, thirty9, pool9 = createUnitDefSnapshotPool9())
       if (vx9 === void 0 && sourceLexical9 === null) throw new Error("B1 capture: unsealed decimal carrier");
       const exact9 = vx9 ?? sourceLexical9.exactRead;
       const base9 = t9 === "d" ? source9.base : void 0;
-      const out9 = t9 === "d" ? createDecimalRT9({ v: v9, ...base9 !== void 0 && { base: base9 }, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } }) : createPercentageRT9({ v: v9, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } });
+      const out9 = t9 === "d" ? createDecimalRT9({ v: v9, ...base9 !== void 0 && { base: base9 }, ...Object.hasOwn(source9, "vx") && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } }) : createPercentageRT9({ v: v9, ...vx9 !== void 0 && { vx: vx9 }, ...capped92 !== void 0 && { capped: capped92 } });
       const capturedRT9 = common9(out9);
       return Object.freeze({
         kind: "ok",
@@ -38134,10 +38448,24 @@ var b1ThermalOperand9 = (source9) => {
   const thermalScale9 = def9.affine === void 0 ? ratOfFactor(def9.factor) : rnorm({ n: def9.affine.a, d: def9.affine.c });
   if (decoration9.length > 0 && def9.affine !== void 0) return null;
   const scale9 = rMul(thermalScale9, decorationScale9);
-  const exactK9 = def9.affine === void 0 ? rMul(source9.exactRead, scale9) : rnorm({
+  let exactK9 = def9.affine === void 0 ? rMul(source9.exactRead, scale9) : rnorm({
     n: def9.affine.a * source9.exactRead.n + def9.affine.b * source9.exactRead.d,
     d: def9.affine.c * source9.exactRead.d
   });
+  if (source9.shadow.kind === "ok" && source9.shadow.value.hasPi9() && source9.rt.capped !== true && (capFOf9(source9.rt)?.length ?? 0) === 0) {
+    let canonicalReading9 = null;
+    for (const precision9 of [100, 200, 400, 800, 1600, 3200, 5120]) {
+      const iv9 = source9.shadow.value.interval9(precision9);
+      if (iv9.kind === "unsupported") return null;
+      if (iv9.kind !== "ok") continue;
+      const low9 = new DecC(iv9.lo.toString()).toSignificantDigits(60).toString();
+      if (low9 !== new DecC(iv9.hi.toString()).toSignificantDigits(60).toString()) continue;
+      canonicalReading9 = decToRat(new DecC(low9));
+      break;
+    }
+    if (canonicalReading9 === null) return null;
+    exactK9 = canonicalReading9;
+  }
   return Object.freeze({ source: source9, role: absolute9 ? "absolute" : "delta", def: def9, scaleToK: scale9, exactK: exactK9 });
 };
 var b1ThermalDisplayExact9 = (kelvin9, target9) => {
@@ -38164,6 +38492,9 @@ var b1ThermalCapConverted9 = (operand9, target9) => {
   return capScaleConv9(out9, source9, ratio9);
 };
 var b1ThermalLinearCaptured9 = (operand9, pool9) => {
+  if (operand9.source.shadow.kind === "no-shadow" && operand9.source.envelope?.numComps.some((c9) => c9.def.factorPi !== void 0)) {
+    return operand9.source;
+  }
   const targetRaw9 = lookupUnit(operand9.role === "absolute" ? "K" : "\u0394K");
   if (targetRaw9 === void 0) throw new Error("B1 thermal registry target missing");
   const target9 = snapshotUnitDefInPool9(pool9, targetRaw9);
@@ -38399,7 +38730,8 @@ var classifyB1ScalarOwner9 = (op9, capture9, options9 = {}) => {
   const capped92 = left9.capped === true || right9.capped === true;
   const certifiedBound9 = left9.capped === true && (leftCapF9?.length ?? 0) > 0 || right9.capped === true && (rightCapF9?.length ?? 0) > 0;
   const ownsCertifiedBound9 = options9.certifiedBoundedCenter === true && (op9 === "+" || op9 === "-") && capped92 && certifiedBound9;
-  const ownsAuthenticatedReserve9 = options9.authenticatedBoundedReserve === true && (op9 === "+" || op9 === "-" || op9 === "*") && (capture9.left.boundedCause !== void 0 || capture9.right.boundedCause !== void 0);
+  const ownsAuthenticatedReserve9 = options9.authenticatedBoundedReserve === true && (capture9.left.boundedCause !== void 0 || capture9.right.boundedCause !== void 0);
+  if (ownsAuthenticatedReserve9 && op9 === "/" && right9.capped === true) return { kind: "pre-site-refusal" };
   if (!ownsCertifiedBound9 && !ownsAuthenticatedReserve9 && (capped92 || leftCapF9 !== void 0 || rightCapF9 !== void 0)) {
     return { kind: "capped" };
   }
@@ -38420,8 +38752,9 @@ var classifyB1ScalarOwner9 = (op9, capture9, options9 = {}) => {
     const gate9 = capAddGate9(left9, right9, norm9, op9 === "+" ? 1n : -1n);
     if (gate9.err !== void 0) return { kind: "pre-site-refusal" };
     shell9 = capStamp9(editRuntimeCopy9(copyRuntimeRT9(shell9), { capped: true }), gate9);
-  } else if (ownsAuthenticatedReserve9 && op9 === "*") {
-    shell9 = capProdTransport9(editRuntimeCopy9(copyRuntimeRT9(shell9), { capped: true }), [left9, right9], "b1:bounded:*");
+  } else if (ownsAuthenticatedReserve9 && (op9 === "*" || op9 === "/")) {
+    shell9 = capProdTransport9(editRuntimeCopy9(copyRuntimeRT9(shell9), { capped: true }), [left9, right9], `b1:bounded:${op9}`);
+    if (capFOf9(shell9) === void 0) shell9.capF = [];
   }
   return { kind: "owned", exactRead: norm9, shell: shell9 };
 };
@@ -38507,21 +38840,30 @@ var b1PercentagePrepared9 = (capture9, op9, nativeOperandReads9 = false) => {
   }
   const lx9 = left9.exactRead;
   const rx9 = right9.exactRead;
+  const cappedDivisor9 = nativeOperandReads9 && op9 === "/" && leftPct9 && rightRT9.capped === true;
   const projectedZeroInverse9 = op9 === "/" && rx9?.n === 0n && right9.shadow.kind === "ok";
-  if (lx9 === null || rx9 === null || op9 === "/" && rx9.n === 0n && !projectedZeroInverse9) {
+  if (lx9 === null || rx9 === null || op9 === "/" && rx9.n === 0n && !projectedZeroInverse9 && !cappedDivisor9) {
     return { kind: "unavailable", reason: "non-numeric-mechanism" };
   }
-  const exact9 = op9 === "+" ? rAdd(lx9, rx9) : op9 === "-" ? rSub(lx9, rx9) : op9 === "*" ? rMul(lx9, rx9) : projectedZeroInverse9 ? { n: 0n, d: 1n } : rDiv(lx9, rx9);
+  const exact9 = op9 === "+" ? rAdd(lx9, rx9) : op9 === "-" ? rSub(lx9, rx9) : op9 === "*" ? rMul(lx9, rx9) : projectedZeroInverse9 || cappedDivisor9 ? { n: 0n, d: 1n } : rDiv(lx9, rx9);
   const outputPct9 = leftPct9 && rightPct9 && op9 !== "/" || leftPct9 && rightScalar9;
   const shown9 = qv(exact9);
-  const shell9 = outputPct9 ? createPercentageRT9({ v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } }) : createDecimalRT9({ v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } });
+  let shell9 = outputPct9 ? createPercentageRT9({ v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } }) : createDecimalRT9({ v: shown9.v, ...shown9.vx !== void 0 && { vx: shown9.vx } });
+  const signedReserve9 = nativeOperandReads9 && (op9 === "+" || op9 === "-") ? capAddGate9(leftRT9, rightRT9, exact9, op9 === "+" ? 1n : -1n) : void 0;
+  if (signedReserve9?.capF !== void 0) {
+    shell9 = capStamp9(editRuntimeCopy9(copyRuntimeRT9(shell9), {
+      ...(leftRT9.capped === true || rightRT9.capped === true) && { capped: true }
+    }), signedReserve9);
+  }
   const rightInput9 = nativeOperandReads9 && right9.causalScale !== void 0 ? Object.freeze({ ...right9, exactRead: capture9.right.exactRead }) : right9;
   return Object.freeze({
     kind: "prepared",
     capture: Object.freeze({ kind: "ok", left: left9, right: rightInput9 }),
     frame: Object.freeze({
       ...b1NumericFrame9(shell9, exact9),
-      ...projectedZeroInverse9 && { projectedZeroInverse: true }
+      ...projectedZeroInverse9 && { projectedZeroInverse: true },
+      ...cappedDivisor9 && { preSiteRefusal: err("inexact", "division by a capped value is not decidable \u2014 exactness was dropped upstream") },
+      ...signedReserve9?.err?.t === "e" && { preSiteRefusal: signedReserve9.err }
     })
   });
 };
@@ -38614,7 +38956,11 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       return ast.auth === void 0 ? createDecimalRT9({ v: ast.dec }) : stampAuth9(createDecimalRT9({ v: ast.dec }), ast.auth ? AUTH9 : AUX9);
     case "mathConst": {
       const piDec$ = new DecC(PI_ATOM.factorDec);
-      return stampAuth9(createDecimalRT9({ v: ast.name === "pi" ? piDec$ : piDec$.times(2) }), AUX9);
+      const k9 = ast.name === "pi" ? 1n : 2n;
+      return replaceShadowFromFraction9(
+        createDecimalRT9({ v: piDec$.times(k9.toString()) }),
+        ShadowFraction.piMultiple9({ n: k9, d: 1n }, ctx.monthToDays === "30")
+      );
     }
     case "frac": {
       const f0 = makeFrac(ast.num, ast.den, "literal");
@@ -38652,6 +38998,11 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         for (let k9 = 0; k9 < values.length; k9++) {
           const v9 = values[k9];
           if (isCarrier(v9) || v9.t !== "d" && v9.t !== "f") continue;
+          const promoted9 = promoteShadowScalar9(v9);
+          if (isCarrier(promoted9)) {
+            values[k9] = promoted9;
+            continue;
+          }
           const x9 = numRat(v9);
           values[k9] = rebuildQuantityRT9({
             ...qv(x9),
@@ -38784,7 +39135,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               scal9.push({ x: qx(cK), rt: val, k: cK });
             }
             scal9.sort((a9, b9) => {
-              const e9 = fracCmpRT(a9.k, b9.k, ctx.monthToDays === "30");
+              const e9 = piFractionOrder9(a9.k, b9.k, ctx.monthToDays === "30");
               if (e9 !== null) return e9;
               return rCmp(a9.x, b9.x);
             });
@@ -38792,7 +39143,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             for (const m8 of scal9.length % 2 === 1 ? [mid9] : [mid9 - 1, mid9]) {
               for (let j9 = 0; j9 < scal9.length; j9++) {
                 if (j9 === m8 || rCmp(scal9[j9].x, scal9[m8].x) !== 0) continue;
-                if (fracCmpRT(scal9[j9].k, scal9[m8].k, ctx.monthToDays === "30") === null) {
+                if (piFractionOrder9(scal9[j9].k, scal9[m8].k, ctx.monthToDays === "30") === null) {
                   return err("inexact", "cannot order these values exactly \u2014 the median tie is not decidable");
                 }
               }
@@ -38908,7 +39259,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           }
           items.sort((a2, b2) => {
             if (a2.rt.t === "q" && b2.rt.t === "q") {
-              const e9 = fracCmpRT(a2.rt, b2.rt, ctx.monthToDays === "30");
+              const e9 = piFractionOrder9(a2.rt, b2.rt, ctx.monthToDays === "30");
               if (e9 !== null) return e9;
             }
             return rCmp(a2.x, b2.x);
@@ -38920,7 +39271,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               if (rCmp(items[j9].x, items[m9].x) !== 0) continue;
               const u9 = items[j9].rt;
               const w9 = items[m9].rt;
-              if (fracCmpRT(u9, w9, ctx.monthToDays === "30") === null) {
+              if (piFractionOrder9(u9, w9, ctx.monthToDays === "30") === null) {
                 return err("inexact", "cannot order these values exactly \u2014 the median tie is not decidable");
               }
             }
@@ -39903,7 +40254,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
           const publishCandidateRatio9 = (ownedRatio92) => {
             const ratioP9 = candidateRatioAsPercentage9(ownedRatio92);
             if (ratioP9.t === "e") return ratioP9;
-            return routeScale9(
+            const scaled9 = routeScale9(
               ctx,
               "whatPctOfX100",
               ratioP9,
@@ -39914,6 +40265,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
               F_EXACT9,
               () => ratioP9
             );
+            return emitB1PercentageOutput9(ctx, [ownedRatio92, ratioP9], scaled9);
           };
           const bq9 = qx(base);
           const fBw9 = shadowFracViewIfNeeded9([base, part], base, ctx);
@@ -40224,6 +40576,10 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       };
       const firstErr9 = evaluated9.find((v9) => v9.t === "e");
       if (firstErr9) return finishB1FunctionOutput9(firstErr9);
+      if (evaluated9.length === 1) {
+        const exactPi9 = piTrigExact9(ast.fn, evaluated9[0], ctx.monthToDays === "30");
+        if (exactPi9 !== null) return finishB1FunctionOutput9(exactPi9);
+      }
       if (ast.fn === "abs" || ast.fn === "min" || ast.fn === "max") {
         const fn$ = ast.fn;
         const t30$ = ctx.monthToDays === "30";
@@ -40262,7 +40618,8 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             });
           };
           const t30d = ctx.monthToDays === "30";
-          const cmp0 = (b0) => fracCmpRT(dq0, lift0(b0), t30d);
+          const domainShadow9 = shadowFromRT(dq0, t30d);
+          const cmp0 = (b0) => domainShadow9.kind === "ok" && domainShadow9.value.hasPi9() ? domainShadow9.value.compare(ShadowFraction.scalar(b0, false, t30d)) : fracCmpRT(dq0, lift0(b0), t30d);
           const structSign0 = (() => {
             const num0 = readLegacyShadowNumerator9(dq0) ?? [];
             const den0 = readLegacyShadowDenominator9(dq0);
@@ -40306,8 +40663,17 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       }
       const rts = [];
       let fnCapped9 = false;
+      let piInput9 = false;
       for (let ai9 = 0; ai9 < evaluated9.length; ai9++) {
         let v2 = evaluated9[ai9];
+        if (TRANSCENDENTAL_FNS.has(ast.fn)) {
+          const pi9 = piNumerical9(v2, ctx.monthToDays === "30");
+          if (pi9?.t === "e") return finishB1FunctionOutput9(pi9);
+          if (pi9 !== null) {
+            v2 = pi9;
+            piInput9 = true;
+          }
+        }
         if (v2.t === "q" && dimIsEmpty(v2.dim)) {
           const t30v9 = ctx.monthToDays === "30";
           const vFold9 = isCarrier(v2) ? v2 : foldIrrationalResidueRaw(v2, t30v9, ctx, "fnArgProbe");
@@ -40349,7 +40715,7 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         if (v2.capped === true) fnCapped9 = true;
         rts.push(v2);
       }
-      const exact = applyExactFunction(ast.fn, rts);
+      const exact = piInput9 ? null : applyExactFunction(ast.fn, rts);
       let res9;
       if (exact !== null) {
         res9 = exact;
@@ -40833,18 +41199,18 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
         }
         if (ctx.__b1ProductionCausal9 !== void 0 && powerCapture9 !== void 0 && powerExponentCapture9 !== void 0) {
           const exponent9 = powerExponent9 ?? null;
-          boundedPower9 = powerCapture9.kind === "ok" && (powerCapture9.boundedCause !== void 0 || exponent9 !== null && exponent9.d !== 1n && eligibility9?.kind === "causal");
+          boundedPower9 = powerCapture9.kind === "ok" && (powerCapture9.boundedCause !== void 0 || powerExponentCapture9.kind === "ok" && powerExponentCapture9.boundedCause !== void 0 || exponent9 !== null && exponent9.d !== 1n && eligibility9?.kind === "causal");
           if (!boundedPower9) {
             return b1TransformProduction9(ctx, {
               site: "power",
               host: "evalAst",
               capture: powerCapture9,
-              frameOp: exponent9?.d === 1n ? { kind: "pow", exponent: exponent9 } : { kind: "refuse", code: "b1-transform-refused", detail: "power:non-integer-exponent" },
+              frameOp: powerExponentCapture9.kind === "ok" && powerExponentCapture9.rt.capped === true && l2.t === "q" && !dimIsEmpty(l2.dim) ? { kind: "refuse", code: "inexact", detail: "integrality cannot be proven from a capped value \u2014 exactness was dropped upstream" } : exponent9?.d === 1n ? { kind: "pow", exponent: exponent9 } : { kind: "refuse", code: "b1-transform-refused", detail: "power:non-integer-exponent" },
               meta: { kind: "causal-unary", op: "pow", exponent: exponent9, exponentCapture: powerExponentCapture9 }
             }, (legacyCtx9) => evalAstInner(ast, env, legacyCtx9, eagerOperands9));
           }
         }
-        if (powerCapture9 !== void 0 && powerExponentCapture9 !== void 0 && powerExponent9 !== null && powerExponent9 !== void 0 && powerExponent9.d === 1n && powerExponent9.n < 0n && left9.kind === "ok" && left9.exactRead?.n === 0n) {
+        if (ctx.__b1ProductionCausal9 === void 0 && powerCapture9 !== void 0 && powerExponentCapture9 !== void 0 && powerExponent9 !== null && powerExponent9 !== void 0 && powerExponent9.d === 1n && powerExponent9.n < 0n && left9.kind === "ok" && left9.exactRead?.n === 0n) {
           const legacyZero9 = ctx.__b1EligibilityPartition9 !== true ? err("not-understood", "exact arithmetic: zero denominator") : (() => {
             const legacyCtx9 = ctx.__convAuth9 === true ? { ...ctx, __convAuth9: false } : ctx;
             const exponentInt9 = Number(powerExponent9.n);
@@ -40979,6 +41345,16 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
       }
       const lPreCap9 = l2.capped === true;
       const rPreCap9 = r3.capped === true;
+      if (ast.op === "^") {
+        const exponent9 = piNumerical9(r3, ctx.monthToDays === "30");
+        if (exponent9?.t === "e") return exponent9;
+        if (exponent9 !== null) r3 = exponent9;
+        if ((r3.t === "d" || r3.t === "f") && numRat(r3).d !== 1n) {
+          const base9 = piNumerical9(l2, ctx.monthToDays === "30");
+          if (base9?.t === "e") return base9;
+          if (base9 !== null) l2 = base9;
+        }
+      }
       if (ast.op === "^" && r3.t === "q" && dimIsEmpty(r3.dim)) {
         const rProv$9 = capFOf9(r3);
         const rxOld$9 = qx(r3);
@@ -41424,7 +41800,13 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
                   return finishAdd9("evalAst-add", combineQuantities(one9, raw9, "*", addMechanismCtx9));
                 }
                 const dec9 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
-                return finishAdd9("evalAst-add", b1QValue9(l2, dec9, { terms: merged }));
+                const sum9 = b1QValue9(l2, dec9, { terms: merged });
+                if (merged.some((t9) => t9.comps.some((c9) => c9.def.factorPi !== void 0))) {
+                  const gate9 = capAddGate9(l2, rhsQ9, dec9, ast.op === "+" ? 1n : -1n);
+                  if (gate9.err !== void 0) return finishAddRefusal9("evalAst-add", gate9.err);
+                  return finishAdd9("evalAst-add", capStamp9(sum9, gate9));
+                }
+                return finishAdd9("evalAst-add", sum9);
               }
               {
                 const dec8 = ast.op === "+" ? rAdd(qx(l2), xr) : rSub(qx(l2), xr);
@@ -42349,6 +42731,18 @@ function evalAstInner(ast, env, ctx = {}, binaryOperands9, inputRT9, callOperand
             return err("inexact", "a power whose domain depends on a capped value is not decidable");
           }
           const capIP9 = l2.capped === true || r3.capped === true;
+          if (ast.op === "^" && b3.d === 1n && !capIP9) {
+            const symbolic9 = shadowFromRT(l2, ctx.monthToDays === "30");
+            if (symbolic9.kind === "ok" && symbolic9.value.hasPi9()) {
+              const powered9 = symbolic9.value.powInteger9(b3.n);
+              if (powered9.kind === "division-by-zero") return err("division-by-zero");
+              if (powered9.kind !== "ok") return err("inexact", `symbolic power: ${powered9.kind}`);
+              const seed9 = l2.t === "d" ? l2.v : ratToDec(a3);
+              const reading9 = seed9.pow(b3.n.toString());
+              if (!isRepresentable(reading9)) return err("inexact", "result exceeds the representable range (10^\xB19999)");
+              return replaceShadowFromFraction9(createDecimalRT9({ v: reading9 }), powered9.value);
+            }
+          }
           if (ast.op === "^" && b3.d === 1n && capIP9 && (b3.n < 0n ? -b3.n : b3.n) * BigInt(a3.n.toString().length + a3.d.toString().length) > 4000n && (b3.n < 0n ? -b3.n : b3.n) <= 10000n) {
             const k9 = Number(b3.n);
             if (k9 < 0 && a3.n === 0n) return err("division-by-zero");
@@ -45773,12 +46167,12 @@ var captureCleanLiftSeed9 = (rt9, exactReadOverride9, authority9, selectedOverri
   const q9 = rt9;
   const mechanism9 = selectedOverride9 ?? selectB1UnitEnvelope9(q9);
   if (mechanism9.kind === "invalid-unit-envelope") return { ok: false, reason: "invalid-unit-envelope" };
-  const cache9 = /* @__PURE__ */ new Map();
+  const cache92 = /* @__PURE__ */ new Map();
   const snapDef92 = (raw9) => {
-    let snap9 = cache9.get(raw9);
+    let snap9 = cache92.get(raw9);
     if (snap9 === void 0) {
       snap9 = snapshotUnitDefForReemit9(raw9);
-      cache9.set(raw9, snap9);
+      cache92.set(raw9, snap9);
     }
     return snap9;
   };
@@ -46351,6 +46745,19 @@ var carryTransform9 = (captured9, out9, _factor9, thirty9, inspected9, orientati
   const existingOut9 = existingOutputResidueFromShadow9(outShadow9);
   if (existingOut9.kind === "error") return existingOut9;
   if (outRT9.t === "e") return { kind: "ok", rt: outRT9 };
+  if (captured9.boundedCause !== void 0 && _factor9 !== null && orientation9 === "preserve" && authority9.kind === "preserve") {
+    const source9 = captureBoundedReserve9(input9);
+    if (!source9.ok || source9.value === null || source9.value.cause !== captured9.boundedCause || captured9.exactRead === null) {
+      return { kind: "error", reason: "missing-operation-authority" };
+    }
+    const bound9 = bindCaptureBoundedReserve9([source9.value.cause], outRT9, {
+      kind: "binary",
+      op: "*",
+      leftExact: captured9.exactRead,
+      rightExact: _factor9
+    });
+    return bound9.ok ? { kind: "ok", rt: outRT9, ownedCausalEffect9: "bound" } : { kind: "error", reason: bound9.reason };
+  }
   if (authority9.kind === "join" && authority9.factorCapture !== void 0) {
     const baseLift9 = inspected9.kind === "shadow" ? { ok: true, fraction: inspected9.fraction } : liftKnownCleanB1Operand9(
       input9,
@@ -46996,7 +47403,8 @@ var applyOwnedB1Transform9 = (call9, thirty9, options9 = {}) => {
   const exponentInput9 = (call9.meta.kind === "causal-unary" || call9.meta.kind === "bounded-numeric") && call9.meta.op === "pow" ? inspectCapturedTransformInput9(call9.meta.exponentCapture, thirty9, exposeEffect9) : null;
   const providerEdgeInput9 = call9.meta.kind === "fx" && [...call9.meta.num, ...call9.meta.den].some((atoms9) => atoms9.length > 0);
   const boundedInput9 = call9.capture.kind === "ok" && call9.capture.boundedCause !== void 0;
-  const causalInput9 = exposeEffect9 && (boundedInput9 || transformInputHasCausalAxis9(inspected9) || factorInput9 !== null && transformInputHasCausalAxis9(factorInput9) || exponentInput9 !== null && transformInputHasCausalAxis9(exponentInput9) || providerEdgeInput9);
+  const boundedExponent9 = (call9.meta.kind === "causal-unary" || call9.meta.kind === "bounded-numeric") && call9.meta.op === "pow" && call9.meta.exponentCapture.kind === "ok" && call9.meta.exponentCapture.boundedCause !== void 0;
+  const causalInput9 = exposeEffect9 && (boundedInput9 || transformInputHasCausalAxis9(inspected9) || factorInput9 !== null && transformInputHasCausalAxis9(factorInput9) || exponentInput9 !== null && transformInputHasCausalAxis9(exponentInput9) || boundedExponent9 || providerEdgeInput9);
   const candidateShell9 = call9.frame.kind === "captured-output" ? call9.frame.shell : null;
   if (candidateShell9 === null) {
     const refused9 = { kind: "error", reason: "invalid-authority-state" };
@@ -47009,6 +47417,10 @@ var applyOwnedB1Transform9 = (call9, thirty9, options9 = {}) => {
     return causalEffect92 === "unexpected-loss" ? Object.freeze({ kind: "error", reason: "missing-operation-authority", causalEffect: causalEffect92, causalInput: causalInput9 }) : Object.freeze({ ...core92, causalEffect: causalEffect92, causalInput: causalInput9 });
   }
   if (call9.site === "unaryNeg" || call9.site === "power") {
+    if (call9.site === "power" && boundedExponent9 && candidateShell9.t === "e") {
+      const refused9 = { kind: "ok", rt: candidateShell9, ownedCausalEffect9: "refused" };
+      return exposeEffect9 ? Object.freeze({ ...refused9, causalEffect: "refused", causalInput: causalInput9 }) : refused9;
+    }
     if (call9.site === "power" && exponentInput9 !== null) {
       if (exponentInput9.kind === "error") return exposeEffect9 ? Object.freeze({ ...exponentInput9, causalEffect: "refused", causalInput: causalInput9 }) : exponentInput9;
       if (transformInputHasCausalAxis9(exponentInput9)) {
@@ -47115,6 +47527,11 @@ function applyB1Compose9(res, frame) {
     }
     const p9 = res.fraction.projectExact();
     if (p9 === null || p9.den.n === 0n) {
+      if (res.fraction.hasPi9()) return { rt: {
+        t: "e",
+        code: "inexact",
+        detail: "a timespan count carrying an irreducible shadow is not exact"
+      } };
       return { rt: { t: "e", code: "b1-compose-refused", detail: "calendar:projection-undecidable" } };
     }
     const x9 = rnorm({ n: p9.num.n * p9.den.d, d: p9.num.d * p9.den.n });
@@ -47135,7 +47552,11 @@ function applyB1Compose9(res, frame) {
     return { rt: { t: "e", code: "b1-compose-refused", detail: `authority:${zeroAuthority9.reason}` } };
   }
   const calendarRate9 = captureOnlyCalendarRateShell9(fraction9, frame);
-  const exact9 = zeroAuthority9.kind === "authoritative-zero" ? { n: 0n, d: 1n } : calendarRate9 !== null ? calendarRate9.exact : survivingMonomial9 !== null && frame.shell.t !== "q" ? rnorm(survivingMonomial9.x) : rnorm(frame.exactRead);
+  const piCause9 = fraction9.hasPi9() ? captureBoundResidue9(fraction9) : null;
+  const piValuation9 = piCause9?.ok === true && piCause9.authority !== null && piCause9.provider === null ? captureBoundReduce9(piCause9.authority) : null;
+  const piNominalZero9 = piCause9?.ok === true && piCause9.authority !== null && piCause9.provider === null && mergeTerms([...fractionFaces9(fraction9)[0]], [], 1n, fraction9.thirty9(), true).every((term9) => rnorm(term9.x).n === 0n);
+  const piRead9 = piNominalZero9 ? { n: 0n, d: 1n } : piValuation9?.kind === "reduced" ? piValuation9.quotient : null;
+  const exact9 = zeroAuthority9.kind === "authoritative-zero" ? { n: 0n, d: 1n } : piRead9 !== null ? piRead9 : calendarRate9 !== null ? calendarRate9.exact : survivingMonomial9 !== null && frame.shell.t !== "q" ? rnorm(survivingMonomial9.x) : rnorm(frame.exactRead);
   const approx9 = fraction9.hasApproxFactor();
   const exactDecFull9 = ratToDec(exact9);
   const v9 = approx9 ? exactDecFull9.toSignificantDigits(40) : exactDecFull9;
@@ -47147,7 +47568,7 @@ function applyB1Compose9(res, frame) {
   const { foldA9: _consumedAuthority9, ...bare9 } = shadowless9;
   const seed9 = bare9.t === "f" ? bare9 : editRuntimeCopy9(copyRuntimeRT9(bare9), { v: v9 });
   if (seed9.t !== "f") {
-    if (!exactDec9) seed9.vx = exact9;
+    if (!exactDec9 || seed9.vx !== void 0) seed9.vx = exact9;
   }
   return { rt: replaceShadowFromFraction9(seed9, fraction9) };
 }
@@ -47319,6 +47740,9 @@ var materializeCleanFrame9 = (frame9, joined9) => {
   const exact9 = rnorm(frame9.exactRead);
   if (frame9.shell.t === "f") {
     const out9 = exact9.d === 1n ? createDecimalRT9({ v: ratToDec(exact9) }) : captureFractionRT9({ n: exact9.n, d: exact9.d, origin: frame9.shell.origin });
+    if (frame9.shell.capped !== void 0) Object.assign(out9, { capped: frame9.shell.capped });
+    const capF9 = frame9.shell.capF;
+    if (capF9 !== void 0) Object.assign(out9, { capF: capF9 });
     return { rt: stampJoinedAuthority9(out9, joined9) };
   }
   const reading9 = ratToDec(exact9);
@@ -47354,10 +47778,21 @@ var atomCause9 = (captured9) => {
   }
 };
 var composeBoundedReserve9 = (op9, capture9, left9, right9, frame9) => {
-  if (op9 === "/" || frame9.kind !== "numeric" || frame9.shell.t !== "d") return { kind: "not-applicable" };
+  if (frame9.kind !== "numeric" || frame9.shell.t !== "d" && frame9.shell.t !== "f") return { kind: "not-applicable" };
+  if (op9 === "/" && (capture9.right.rt.capped === true || right9.kind !== "clean" || right9.sourceRT !== null || capture9.right.exactRead?.n === 0n)) return { kind: "not-applicable" };
   if (left9.boundedCause === null && right9.boundedCause === null) return { kind: "not-applicable" };
   const leftCause9 = boundedCauseOfOperand9(capture9.left, left9);
   const rightCause9 = boundedCauseOfOperand9(capture9.right, right9);
+  if (leftCause9 !== null && rightCause9 !== null && left9.kind === "clean" && right9.kind === "clean") {
+    const output92 = materializeCleanFrame9(frame9, void 0).rt;
+    const bound92 = bindCaptureBoundedReserve9([leftCause9, rightCause9], output92, {
+      kind: "binary",
+      op: op9,
+      leftExact: capture9.left.exactRead,
+      rightExact: capture9.right.exactRead
+    });
+    return bound92.ok ? { kind: "bound", rt: output92 } : { kind: "refused", reason: bound92.reason };
+  }
   if (leftCause9 === null === (rightCause9 === null)) return { kind: "not-applicable" };
   const other9 = leftCause9 === null ? left9 : right9;
   const otherCapture9 = leftCause9 === null ? capture9.left : capture9.right;
@@ -47402,6 +47837,7 @@ var candidateB1ComposeInner9 = (op9, capture9, frame9, thirty9, causalAuthority9
   const left9 = captureComposeOperand9(capture9.left);
   const right9 = captureComposeOperand9(capture9.right);
   const operandHasCausalAxis9 = (operand9) => {
+    if (operand9.boundedCause !== null) return true;
     if (operand9.kind === "clean") return operand9.sourceRT !== null;
     const decoded9 = captureBoundResidue9(operand9.fraction);
     return decoded9.ok && (decoded9.authority !== null || decoded9.provider !== null);
@@ -47587,9 +48023,11 @@ var candidateB1ComposeInner9 = (op9, capture9, frame9, thirty9, causalAuthority9
       }, "refused");
     }
     const purgedAuthoritativeZero9 = canonicalPurgedZero9 && detailed9.causalEffect === "purged" && detailed9.result.kind === "ok" && detailed9.result.fraction.provResidue9() === null && detailed9.result.fraction.zeroState() === "authoritative-zero";
-    const materializeFrame9 = purgedAuthoritativeZero9 && frame9.kind === "numeric" ? { ...frame9, exactRead: { n: 0n, d: 1n } } : frame9;
+    const piScalar9 = detailed9.causalEffect === "purged" && detailed9.result.kind === "ok" && detailed9.result.fraction.provResidue9() === null && frame9.kind === "numeric" && frame9.shell.t === "d" && (leftFraction9.hasPi9() || rightFraction9.hasPi9()) ? detailed9.result.fraction.reduceScalar() : null;
+    const purgedPiScalar9 = piScalar9?.kind === "reduced" ? piScalar9.x : null;
+    const materializeFrame9 = (purgedAuthoritativeZero9 || purgedPiScalar9 !== null) && frame9.kind === "numeric" ? { ...frame9, exactRead: purgedPiScalar9 ?? { n: 0n, d: 1n } } : frame9;
     let materialized9 = applyB1Compose9(detailed9.result, materializeFrame9).rt;
-    if (purgedAuthoritativeZero9 && materialized9.t !== "e") {
+    if ((purgedAuthoritativeZero9 || purgedPiScalar9 !== null) && materialized9.t !== "e") {
       materialized9 = stampAuth9(
         stripShadowFromRT9(materialized9),
         AUTH9
